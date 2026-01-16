@@ -144,9 +144,14 @@ Filters:
 
 ### llm.md
 
-- Manifest-only (pointer document): lists chunk refs and provenance in path order.
-- Does not inline chunk bodies by default (avoids “ingest everything at once”).
-- Chunk references (`ref`) are derived from the stable chunk `id`:
+- **Semantic outline manifest**: hierarchical list of chunks with rich context for agent scanning.
+- **Does not inline chunk bodies** (avoids "ingest everything at once").
+- **Format**: File headers show `### path (kind, N lines)`, chunks show `- ref (lines) semantic-label`
+- **Semantic labels**:
+  - Code chunks: function/class symbols (e.g., `` `loginUser()` ``)
+  - Markdown chunks: heading breadcrumbs (e.g., `API Reference > Authentication`)
+  - Fallback: slug derived from filename or first heading
+- **Chunk references** (`ref`) are derived from the stable chunk `id`:
   - default: first 12 hex chars of `id`
   - if a collision occurs, the prefix is deterministically extended (16/20/…).
 
