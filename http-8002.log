@@ -1,0 +1,15 @@
+::1 - - [14/Jan/2026 16:03:26] "GET / HTTP/1.1" 200 -
+::1 - - [14/Jan/2026 17:52:31] "GET / HTTP/1.1" 200 -
+::1 - - [14/Jan/2026 17:52:31] "GET /styles.css HTTP/1.1" 200 -
+::1 - - [14/Jan/2026 17:52:31] "GET /app.js HTTP/1.1" 200 -
+::1 - - [14/Jan/2026 17:52:31] code 404, message File not found
+::1 - - [14/Jan/2026 17:52:31] "GET /favicon.ico HTTP/1.1" 404 -
+::1 - - [14/Jan/2026 17:52:31] "GET /worker.js HTTP/1.1" 200 -
+::1 - - [14/Jan/2026 17:52:31] "GET /pkg/ingestor_wasm.js HTTP/1.1" 200 -
+::1 - - [14/Jan/2026 17:52:31] "GET /pkg/ingestor_wasm_bg.wasm HTTP/1.1" 200 -
+::1 - - [14/Jan/2026 17:52:32] "GET / HTTP/1.1" 200 -
+::1 - - [14/Jan/2026 17:52:32] "GET /styles.css HTTP/1.1" 200 -
+::1 - - [14/Jan/2026 17:52:32] "GET /app.js HTTP/1.1" 200 -
+::1 - - [14/Jan/2026 17:52:32] code 404, message File not found
+::1 - - [14/Jan/2026 17:52:32] "GET /favicon.ico HTTP/1.1" 404 -
+::1 - - [14/Jan/2026 18:07:20] "HEAD / HTTP/1.1" 200 -

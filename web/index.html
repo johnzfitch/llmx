@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LLMX Ingestor</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Local-first ingestion</p>
+        <h1>LLMX Ingestor</h1>
+        <p class="lead">
+          Private, deterministic chunking and search for large folders.
+        </p>
+      </div>
+      <div class="hero-card">
+        <div class="hero-stat">
+          <span class="label">Index</span>
+          <span id="index-id" class="value">Not built</span>
+        </div>
+        <div class="hero-stat">
+          <span class="label">Chunks</span>
+          <span id="chunk-count" class="value">0</span>
+        </div>
+        <div class="hero-stat">
+          <span class="label">Warnings</span>
+          <span id="warning-count" class="value">0</span>
+        </div>
+      </div>
+    </header>
+
+    <section class="panel" id="ingest-panel">
+      <div class="panel-header">
+        <h2>Ingest</h2>
+        <p>Select a folder (supported browsers) or select/drop files. Only whitelisted extensions are read.</p>
+      </div>
+      <div class="actions">
+        <button id="select-folder" class="primary">Select folder</button>
+        <button id="select-files">Select files</button>
+        <input id="folder-input" type="file" webkitdirectory directory multiple hidden />
+        <input
+          id="files-input"
+          type="file"
+          multiple
+          accept=".md,.markdown,.json,.txt,.js,.ts,.tsx,.html,.htm,.png,.jpg,.jpeg,.webp,.gif,.bmp"
+          hidden
+        />
+        <div id="drop-zone" class="drop-zone">
+          <span>Drop files here</span>
+        </div>
+      </div>
+      <div class="status" id="ingest-status">Idle</div>
+      <div class="warning-list" id="warning-list"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <h2>Search</h2>
+        <p>Keyword search with filters.</p>
+      </div>
+      <div class="filters">
+        <input id="query" type="search" placeholder="Search terms" />
+        <input id="path-filter" type="text" placeholder="Path prefix" />
+        <select id="file-filter">
+          <option value="">All files</option>
+        </select>
+        <select id="outline-filter">
+          <option value="">All outlines</option>
+        </select>
+        <select id="symbol-filter">
+          <option value="">All symbols</option>
+        </select>
+        <select id="kind-filter">
+          <option value="">All types</option>
+          <option value="markdown">Markdown</option>
+          <option value="json">JSON</option>
+          <option value="java_script">JavaScript</option>
+          <option value="html">HTML</option>
+          <option value="text">Text</option>
+          <option value="image">Image</option>
+        </select>
+        <button id="run-search">Search</button>
+      </div>
+      <div id="results" class="results"></div>
+      <div id="chunk-view" class="chunk-view" hidden>
+        <div class="chunk-header">
+          <strong id="chunk-title"></strong>
+          <button id="close-chunk">Close</button>
+        </div>
+        <pre id="chunk-content"></pre>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <h2>Export</h2>
+        <p>LLM-friendly bundles and local index storage.</p>
+      </div>
+      <div class="actions">
+        <button id="export-llm">Download llm.md</button>
+        <button id="export-zip">Download export.zip</button>
+        <button id="save-index">Save index locally</button>
+      </div>
+      <div class="saved-indexes">
+        <select id="saved-indexes">
+          <option value="">No saved indexes</option>
+        </select>
+        <button id="load-saved-index">Load saved</button>
+        <button id="delete-saved-index">Delete saved</button>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

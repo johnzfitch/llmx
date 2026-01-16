@@ -1,0 +1,8 @@
+/target/
+/web/pkg/
+/http.log
+
+# Local exports (examples are fine, but don't commit by default)
+/llm.md
+/chunks/
+/*.zip

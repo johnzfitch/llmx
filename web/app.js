@@ -1,0 +1,968 @@
+const state = {
+  backend: null,
+  workerReady: false,
+  indexLoaded: false,
+  busy: false,
+  indexId: null,
+  files: [],
+  searchSeq: 0,
+};
+
+const elements = {
+  status: document.getElementById("ingest-status"),
+  selectFolder: document.getElementById("select-folder"),
+  selectFiles: document.getElementById("select-files"),
+  folderInput: document.getElementById("folder-input"),
+  filesInput: document.getElementById("files-input"),
+  dropZone: document.getElementById("drop-zone"),
+  query: document.getElementById("query"),
+  pathFilter: document.getElementById("path-filter"),
+  fileFilter: document.getElementById("file-filter"),
+  outlineFilter: document.getElementById("outline-filter"),
+  symbolFilter: document.getElementById("symbol-filter"),
+  kindFilter: document.getElementById("kind-filter"),
+  runSearch: document.getElementById("run-search"),
+  results: document.getElementById("results"),
+  chunkView: document.getElementById("chunk-view"),
+  chunkTitle: document.getElementById("chunk-title"),
+  chunkContent: document.getElementById("chunk-content"),
+  closeChunk: document.getElementById("close-chunk"),
+  exportLlm: document.getElementById("export-llm"),
+  exportZip: document.getElementById("export-zip"),
+  saveIndex: document.getElementById("save-index"),
+  indexId: document.getElementById("index-id"),
+  chunkCount: document.getElementById("chunk-count"),
+  warningCount: document.getElementById("warning-count"),
+  warningList: document.getElementById("warning-list"),
+  savedIndexes: document.getElementById("saved-indexes"),
+  loadSavedIndex: document.getElementById("load-saved-index"),
+  deleteSavedIndex: document.getElementById("delete-saved-index"),
+};
+
+const ALLOWED_EXTENSIONS = [
+  ".md",
+  ".markdown",
+  ".json",
+  ".txt",
+  ".js",
+  ".ts",
+  ".tsx",
+  ".html",
+  ".htm",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".webp",
+  ".gif",
+  ".bmp",
+];
+const SKIP_DIRS = [".git", "node_modules", "target", "dist", "build", ".cache"];
+const DEFAULT_LIMITS = {
+  maxFileBytes: 10 * 1024 * 1024,
+  maxTotalBytes: 50 * 1024 * 1024,
+};
+
+function setStatus(message) {
+  elements.status.textContent = message;
+}
+
+function hasFolderPickerSupport() {
+  const supportsDirectoryPicker = typeof window.showDirectoryPicker === "function";
+  const supportsWebkitDirectory = elements.folderInput && "webkitdirectory" in elements.folderInput;
+  return supportsDirectoryPicker || supportsWebkitDirectory;
+}
+
+function configureFolderPickerUi() {
+  if (hasFolderPickerSupport()) {
+    return;
+  }
+  elements.selectFolder.disabled = true;
+  elements.selectFolder.title = "Folder selection is not supported in this browser. Use Select files or drag-and-drop.";
+}
+
+let workerCallId = 0;
+const pendingCalls = new Map();
+
+function formatErrorForUi(error) {
+  const message = error instanceof Error ? error.message : String(error || "Unknown error");
+  const cleaned = message.replace(/\s+/g, " ").trim();
+  return cleaned.length > 240 ? `${cleaned.slice(0, 237)}...` : cleaned;
+}
+
+function rejectAllPendingWorkerCalls(message) {
+  for (const pending of pendingCalls.values()) {
+    pending.reject(new Error(message));
+  }
+  pendingCalls.clear();
+}
+
+function callWorker(op, payload, transfer) {
+  if (!state.backend) {
+    return Promise.reject(new Error("Backend not initialized"));
+  }
+  return state.backend.call(op, payload, transfer);
+}
+
+function createWorkerBackend() {
+  const worker = new Worker(new URL("./worker.js", import.meta.url), { type: "module" });
+  worker.onmessage = (event) => {
+    const msg = event.data || {};
+    const pending = pendingCalls.get(msg.id);
+    if (!pending) {
+      return;
+    }
+    pendingCalls.delete(msg.id);
+    if (msg.ok) {
+      pending.resolve(msg.data);
+    } else {
+      pending.reject(new Error(msg.error || "Worker error"));
+    }
+  };
+  worker.onerror = (event) => {
+    const message = event?.message ? `Worker error: ${event.message}` : "Worker error";
+    rejectAllPendingWorkerCalls(message);
+    setStatus(message);
+  };
+  worker.onmessageerror = () => {
+    const message = "Worker message error (structured clone failed).";
+    rejectAllPendingWorkerCalls(message);
+    setStatus(message);
+  };
+
+  return {
+    kind: "worker",
+    call(op, payload, transfer) {
+      const id = ++workerCallId;
+      return new Promise((resolve, reject) => {
+        pendingCalls.set(id, { resolve, reject });
+        worker.postMessage({ id, op, payload }, transfer || []);
+      });
+    },
+    terminate() {
+      rejectAllPendingWorkerCalls("Worker terminated.");
+      worker.terminate();
+    },
+  };
+}
+
+async function createLocalBackend() {
+  const wasmModule = await import("./pkg/ingestor_wasm.js");
+  await wasmModule.default();
+  const WasmIngestor = wasmModule.Ingestor;
+  let ingestor = null;
+
+  return {
+    kind: "local",
+    async call(op, payload) {
+      switch (op) {
+        case "ping":
+          return { ready: true };
+        case "ingest": {
+          const files = (payload.files || []).map((file) => ({
+            path: file.path,
+            data: new Uint8Array(file.data),
+            mtime_ms: file.mtime_ms ?? null,
+            fingerprint_sha256: file.fingerprint_sha256 ?? null,
+          }));
+          ingestor = WasmIngestor.ingest(files, null);
+          return { indexId: ingestor.indexId() };
+        }
+        case "updateSelective": {
+          if (!ingestor) throw new Error("No index loaded");
+          const files = (payload.files || []).map((file) => ({
+            path: file.path,
+            data: new Uint8Array(file.data),
+            mtime_ms: file.mtime_ms ?? null,
+            fingerprint_sha256: file.fingerprint_sha256 ?? null,
+          }));
+          await ingestor.updateSelective(files, payload.keepPaths || [], null);
+          return { updated: true };
+        }
+        case "loadIndexJson":
+          ingestor = WasmIngestor.fromIndexJson(payload.json);
+          return { loaded: true };
+        case "exportIndexJson":
+          if (!ingestor) throw new Error("No index loaded");
+          return { json: ingestor.exportIndexJson() };
+        case "stats":
+          if (!ingestor) throw new Error("No index loaded");
+          return { stats: await ingestor.stats() };
+        case "warnings":
+          if (!ingestor) throw new Error("No index loaded");
+          return { warnings: await ingestor.warnings() };
+        case "search":
+          if (!ingestor) throw new Error("No index loaded");
+          return { results: await ingestor.search(payload.query, payload.filters, payload.limit) };
+        case "getChunk":
+          if (!ingestor) throw new Error("No index loaded");
+          return { chunk: await ingestor.getChunk(payload.chunkId) };
+        case "listOutline":
+          if (!ingestor) throw new Error("No index loaded");
+          return { outline: await ingestor.listOutline(payload.path) };
+        case "listSymbols":
+          if (!ingestor) throw new Error("No index loaded");
+          return { symbols: await ingestor.listSymbols(payload.path) };
+        case "exportLlm":
+          if (!ingestor) throw new Error("No index loaded");
+          return { content: ingestor.exportLlm() };
+        case "exportZip":
+          if (!ingestor) throw new Error("No index loaded");
+          return { bytes: ingestor.exportZip() };
+        case "files":
+          if (!ingestor) throw new Error("No index loaded");
+          return { files: await ingestor.files() };
+        case "indexId":
+          if (!ingestor) throw new Error("No index loaded");
+          return { indexId: ingestor.indexId() };
+        default:
+          throw new Error(`Unknown op: ${op}`);
+      }
+    },
+    terminate() {},
+  };
+}
+
+async function initWorker() {
+  let initError = null;
+
+  try {
+    state.backend = createWorkerBackend();
+    const result = await callWorker("ping", {});
+    if (!result.ready) {
+      throw new Error("Worker did not initialize");
+    }
+    state.workerReady = true;
+    setStatus("Ready for ingestion.");
+    await populateSavedIndexes();
+    return;
+  } catch (error) {
+    initError = error;
+    try {
+      state.backend?.terminate?.();
+    } catch {}
+    state.backend = null;
+  }
+
+  const local = await createLocalBackend();
+  const result = await local.call("ping", {});
+  if (!result.ready) {
+    throw new Error("WASM did not initialize");
+  }
+  state.backend = local;
+  state.workerReady = true;
+  const reason = initError ? ` (${formatErrorForUi(initError)})` : "";
+  setStatus(`Ready for ingestion (worker disabled)${reason}.`);
+  await populateSavedIndexes();
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeunload", () => {
+    if (state.backend) {
+      state.backend.terminate();
+    }
+  });
+}
+
+function isAllowedPath(path) {
+  const lower = path.toLowerCase();
+  if (SKIP_DIRS.some((dir) => lower.includes(`/${dir}/`) || lower.startsWith(`${dir}/`))) {
+    return false;
+  }
+  return ALLOWED_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
+async function collectFilesFromInput(fileList) {
+  const entries = [];
+  let totalBytes = 0;
+  let skippedLarge = 0;
+  let skippedTotal = 0;
+  for (const file of fileList) {
+    const path = file.webkitRelativePath || file.name;
+    if (!isAllowedPath(path)) {
+      continue;
+    }
+    if (file.size > DEFAULT_LIMITS.maxFileBytes) {
+      skippedLarge += 1;
+      continue;
+    }
+    if (totalBytes + file.size > DEFAULT_LIMITS.maxTotalBytes) {
+      skippedTotal += 1;
+      continue;
+    }
+    entries.push({ path, file });
+    totalBytes += file.size;
+  }
+  return { entries, skippedLarge, skippedTotal };
+}
+
+async function collectFilesFromHandle(handle, basePath = "", budget = null) {
+  const entries = [];
+  const shared = budget || {
+    totalBytes: 0,
+    skippedLarge: 0,
+    skippedTotal: 0,
+  };
+  for await (const [name, entry] of handle.entries()) {
+    if (entry.kind === "directory") {
+      if (SKIP_DIRS.includes(name)) {
+        continue;
+      }
+      const nested = await collectFilesFromHandle(entry, `${basePath}${name}/`, shared);
+      entries.push(...nested.entries);
+      continue;
+    }
+    const path = `${basePath}${name}`;
+    if (!isAllowedPath(path)) {
+      continue;
+    }
+    const file = await entry.getFile();
+    if (file.size > DEFAULT_LIMITS.maxFileBytes) {
+      shared.skippedLarge += 1;
+      continue;
+    }
+    if (shared.totalBytes + file.size > DEFAULT_LIMITS.maxTotalBytes) {
+      shared.skippedTotal += 1;
+      continue;
+    }
+    entries.push({ path, file });
+    shared.totalBytes += file.size;
+  }
+  return { entries, skippedLarge: shared.skippedLarge, skippedTotal: shared.skippedTotal };
+}
+
+function isImagePath(path) {
+  const lower = path.toLowerCase();
+  return (
+    lower.endsWith(".png") ||
+    lower.endsWith(".jpg") ||
+    lower.endsWith(".jpeg") ||
+    lower.endsWith(".webp") ||
+    lower.endsWith(".gif") ||
+    lower.endsWith(".bmp")
+  );
+}
+
+function hexEncode(bytes) {
+  let out = "";
+  for (const b of bytes) {
+    out += b.toString(16).padStart(2, "0");
+  }
+  return out;
+}
+
+async function sha256Hex(data) {
+  const buffer = data instanceof ArrayBuffer ? data : data.buffer;
+  const digest = await crypto.subtle.digest("SHA-256", buffer);
+  return hexEncode(new Uint8Array(digest));
+}
+
+async function fingerprintFile(file) {
+  const size = file.size;
+  const headLen = 4096;
+  const tailLen = 4096;
+  if (size <= headLen + tailLen) {
+    const full = await file.arrayBuffer();
+    return sha256Hex(full);
+  }
+  const head = await file.slice(0, headLen).arrayBuffer();
+  const tail = await file.slice(size - tailLen, size).arrayBuffer();
+
+  const sizeBytes = new Uint8Array(8);
+  const view = new DataView(sizeBytes.buffer);
+  view.setBigUint64(0, BigInt(size), true);
+
+  const combined = new Uint8Array(sizeBytes.byteLength + head.byteLength + tail.byteLength);
+  combined.set(sizeBytes, 0);
+  combined.set(new Uint8Array(head), sizeBytes.byteLength);
+  combined.set(new Uint8Array(tail), sizeBytes.byteLength + head.byteLength);
+  return sha256Hex(combined);
+}
+
+async function runIngest(entries, collectedMeta) {
+  if (!state.workerReady) {
+    setStatus("Backend not ready.");
+    return;
+  }
+  if (!entries.length) {
+    setStatus(`No supported files found. Accepted: ${ALLOWED_EXTENSIONS.join(", ")}`);
+    return;
+  }
+  const skippedLarge = collectedMeta?.skippedLarge || 0;
+  const skippedTotal = collectedMeta?.skippedTotal || 0;
+  const skippedNote =
+    skippedLarge || skippedTotal
+      ? ` (skipped: ${skippedLarge} too large, ${skippedTotal} over total cap)`
+      : "";
+
+  const prevByPath = new Map((state.files || []).map((meta) => [meta.path, meta]));
+  const currentPaths = new Set(entries.map((e) => e.path));
+  let removedCount = 0;
+  if (state.indexLoaded) {
+    for (const path of prevByPath.keys()) {
+      if (!currentPaths.has(path)) {
+        removedCount += 1;
+      }
+    }
+  }
+
+  try {
+    state.busy = true;
+
+    if (!state.indexLoaded) {
+      setStatus(`Ingesting ${entries.length} files${skippedNote}...`);
+      const files = [];
+      for (const entry of entries) {
+        const data = await entry.file.arrayBuffer();
+        files.push({
+          path: entry.path,
+          data,
+          mtime_ms: Number.isFinite(entry.file.lastModified) ? entry.file.lastModified : null,
+          fingerprint_sha256: null,
+        });
+      }
+      const transfer = files.map((f) => f.data);
+      await callWorker("ingest", { files }, state.backend?.kind === "worker" ? transfer : undefined);
+    } else {
+      let unchanged = 0;
+      let changed = 0;
+      let added = 0;
+      const keepPaths = [];
+      const files = [];
+
+      for (const entry of entries) {
+        const prev = prevByPath.get(entry.path);
+        const isImage = isImagePath(entry.path);
+        if (!prev) {
+          added += 1;
+          const data = await entry.file.arrayBuffer();
+          files.push({
+            path: entry.path,
+            data,
+            mtime_ms: Number.isFinite(entry.file.lastModified) ? entry.file.lastModified : null,
+            fingerprint_sha256: await fingerprintFile(entry.file),
+          });
+          continue;
+        }
+
+        if (isImage) {
+          // Always include image bytes so `export.zip` always contains the assets.
+          const data = await entry.file.arrayBuffer();
+          files.push({
+            path: entry.path,
+            data,
+            mtime_ms: Number.isFinite(entry.file.lastModified) ? entry.file.lastModified : null,
+            fingerprint_sha256: prev.fingerprint_sha256 || (await fingerprintFile(entry.file)),
+          });
+          continue;
+        }
+
+        const prevBytes = prev.bytes ?? null;
+        if (prevBytes !== null && prevBytes !== entry.file.size) {
+          changed += 1;
+          const data = await entry.file.arrayBuffer();
+          files.push({
+            path: entry.path,
+            data,
+            mtime_ms: Number.isFinite(entry.file.lastModified) ? entry.file.lastModified : null,
+            fingerprint_sha256: await fingerprintFile(entry.file),
+          });
+          continue;
+        }
+
+        const prevFp = prev.fingerprint_sha256 || null;
+        if (prevFp) {
+          const fp = await fingerprintFile(entry.file);
+          if (fp === prevFp) {
+            unchanged += 1;
+            keepPaths.push(entry.path);
+          } else {
+            changed += 1;
+            const data = await entry.file.arrayBuffer();
+            files.push({
+              path: entry.path,
+              data,
+              mtime_ms: Number.isFinite(entry.file.lastModified) ? entry.file.lastModified : null,
+              fingerprint_sha256: fp,
+            });
+          }
+          continue;
+        }
+
+        // Fallback: if we don't have a fingerprint in the cache yet, be conservative and re-read once.
+        changed += 1;
+        const data = await entry.file.arrayBuffer();
+        files.push({
+          path: entry.path,
+          data,
+          mtime_ms: Number.isFinite(entry.file.lastModified) ? entry.file.lastModified : null,
+          fingerprint_sha256: await fingerprintFile(entry.file),
+        });
+      }
+
+      setStatus(
+        `Updating index: ${unchanged} unchanged, ${changed} changed, ${added} new, ${removedCount} removed${skippedNote}...`
+      );
+      const transfer = files.map((f) => f.data);
+      await callWorker(
+        "updateSelective",
+        { files, keepPaths },
+        state.backend?.kind === "worker" ? transfer : undefined
+      );
+    }
+
+    const statsResult = await callWorker("stats", {});
+    const warningsResult = await callWorker("warnings", {});
+    const filesResult = await callWorker("files", {});
+
+    const idResult = await callWorker("indexId", {});
+    state.indexId = idResult.indexId || null;
+    state.files = filesResult.files || [];
+
+    elements.indexId.textContent = state.indexId || "(unknown)";
+    elements.chunkCount.textContent = statsResult.stats.total_chunks;
+    elements.warningCount.textContent = warningsResult.warnings.length;
+    renderWarnings(warningsResult.warnings);
+    populateFileFilter();
+    await updateOutlineSymbols();
+    await populateSavedIndexes();
+    state.indexLoaded = true;
+    setStatus("Index ready.");
+  } catch (error) {
+    setStatus(`Ingestion failed: ${formatErrorForUi(error)}`);
+  } finally {
+    state.busy = false;
+  }
+}
+
+function renderWarnings(warnings) {
+  elements.warningList.replaceChildren();
+  if (!warnings.length) {
+    return;
+  }
+  for (const warning of warnings) {
+    const div = document.createElement("div");
+    div.textContent = `${warning.path}: ${warning.message}`;
+    elements.warningList.appendChild(div);
+  }
+}
+
+elements.selectFolder.addEventListener("click", async () => {
+  const supportsDirectoryPicker = typeof window.showDirectoryPicker === "function";
+  const supportsWebkitDirectory = elements.folderInput && "webkitdirectory" in elements.folderInput;
+
+  if (supportsDirectoryPicker) {
+    try {
+      const handle = await window.showDirectoryPicker();
+      const collected = await collectFilesFromHandle(handle);
+      await runIngest(collected.entries, collected);
+      return;
+    } catch (error) {
+      setStatus("Folder selection cancelled.");
+      return;
+    }
+  }
+
+  if (supportsWebkitDirectory) {
+    elements.folderInput.click();
+    return;
+  }
+
+  setStatus("Folder selection is not supported in this browser. Use Select files or drag-and-drop.");
+});
+
+elements.selectFiles.addEventListener("click", () => {
+  elements.filesInput.click();
+});
+
+elements.folderInput.addEventListener("change", async (event) => {
+  const collected = await collectFilesFromInput(event.target.files || []);
+  await runIngest(collected.entries, collected);
+});
+
+elements.filesInput.addEventListener("change", async (event) => {
+  const collected = await collectFilesFromInput(event.target.files || []);
+  await runIngest(collected.entries, collected);
+});
+
+elements.dropZone.addEventListener("dragover", (event) => {
+  event.preventDefault();
+  elements.dropZone.classList.add("active");
+});
+
+elements.dropZone.addEventListener("dragleave", () => {
+  elements.dropZone.classList.remove("active");
+});
+
+elements.dropZone.addEventListener("drop", async (event) => {
+  event.preventDefault();
+  elements.dropZone.classList.remove("active");
+  const collected = await collectFilesFromInput(event.dataTransfer.files || []);
+  await runIngest(collected.entries, collected);
+});
+
+elements.fileFilter.addEventListener("change", async () => {
+  await updateOutlineSymbols();
+  scheduleSearch();
+});
+
+elements.runSearch.addEventListener("click", async () => {
+  await runSearch();
+});
+
+elements.query.addEventListener("keydown", async (event) => {
+  if (event.key === "Enter") {
+    await runSearch();
+  }
+});
+
+elements.query.addEventListener("input", () => {
+  scheduleSearch();
+});
+
+elements.pathFilter.addEventListener("input", () => {
+  scheduleSearch();
+});
+
+elements.kindFilter.addEventListener("change", () => {
+  scheduleSearch();
+});
+
+elements.outlineFilter.addEventListener("change", () => {
+  scheduleSearch();
+});
+
+elements.symbolFilter.addEventListener("change", () => {
+  scheduleSearch();
+});
+
+elements.closeChunk.addEventListener("click", () => {
+  elements.chunkView.hidden = true;
+});
+
+elements.exportLlm.addEventListener("click", () => {
+  if (!state.indexLoaded) {
+    setStatus("No index to export.");
+    return;
+  }
+  callWorker("exportLlm", {})
+    .then(({ content }) => {
+      downloadFile("llm.md", content, "text/markdown");
+    })
+    .catch(() => setStatus("Export failed."));
+});
+
+elements.exportZip.addEventListener("click", () => {
+  if (!state.indexLoaded) {
+    setStatus("No index to export.");
+    return;
+  }
+  callWorker("exportZip", {})
+    .then(({ bytes }) => {
+      downloadFile("export.zip", bytes, "application/zip");
+    })
+    .catch(() => setStatus("Export failed."));
+});
+
+elements.saveIndex.addEventListener("click", async () => {
+  if (!state.indexLoaded) {
+    setStatus("No index to save.");
+    return;
+  }
+  try {
+    const { json } = await callWorker("exportIndexJson", {});
+    await saveIndex(state.indexId || "index", json);
+    await populateSavedIndexes();
+    setStatus("Index saved locally.");
+  } catch {
+    setStatus("Index save failed.");
+  }
+});
+
+async function runSearch() {
+  if (!state.indexLoaded) {
+    setStatus("No index loaded.");
+    return;
+  }
+  const query = elements.query.value.trim();
+  if (!query) {
+    elements.results.replaceChildren();
+    elements.chunkView.hidden = true;
+    setStatus("Index ready.");
+    return;
+  }
+  const filters = {
+    path_exact: elements.fileFilter.value || null,
+    path_prefix: elements.fileFilter.value ? null : selectPathPrefix(),
+    kind: elements.kindFilter.value || null,
+    heading_prefix: elements.outlineFilter.value || null,
+    symbol_prefix: elements.symbolFilter.value || null,
+  };
+  const seq = ++state.searchSeq;
+  elements.runSearch.disabled = true;
+  setStatus("Searching...");
+  try {
+    const { results } = await callWorker("search", { query, filters, limit: 20 });
+    if (seq !== state.searchSeq) {
+      return;
+    }
+    renderResults(results);
+    setStatus(`Found ${results.length} results.`);
+  } catch (error) {
+    if (seq === state.searchSeq) {
+      setStatus("Search failed.");
+    }
+  } finally {
+    if (seq === state.searchSeq) {
+      elements.runSearch.disabled = false;
+    }
+  }
+}
+
+function renderResults(results) {
+  elements.results.replaceChildren();
+  if (!results.length) {
+    const empty = document.createElement("div");
+    empty.textContent = "No matches.";
+    elements.results.appendChild(empty);
+    return;
+  }
+  for (const result of results) {
+    const item = document.createElement("div");
+    item.className = "result-item";
+
+    const title = document.createElement("strong");
+    title.textContent = result.path;
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    const heading = result.heading_path.length ? ` | ${result.heading_path.join("/")}` : "";
+    const ref = result.chunk_ref ? ` | ${result.chunk_ref}` : "";
+    meta.textContent = `Lines ${result.start_line}-${result.end_line}${ref}${heading}`;
+
+    const snippet = document.createElement("div");
+    snippet.textContent = result.snippet;
+
+    const button = document.createElement("button");
+    button.textContent = "View chunk";
+    button.addEventListener("click", async () => {
+      const { chunk } = await callWorker("getChunk", { chunkId: result.chunk_id });
+      if (!chunk) {
+        return;
+      }
+      const ref = chunk.short_id ? ` | Ref: ${chunk.short_id}` : "";
+      const label = chunk.slug ? ` | ${chunk.slug}` : "";
+      elements.chunkTitle.textContent = `${chunk.path} (${chunk.start_line}-${chunk.end_line})${ref}${label}`;
+      elements.chunkContent.textContent = chunk.content;
+      elements.chunkView.hidden = false;
+    });
+
+    item.appendChild(title);
+    item.appendChild(meta);
+    item.appendChild(snippet);
+    item.appendChild(button);
+    elements.results.appendChild(item);
+  }
+}
+
+function downloadFile(name, content, type) {
+  let blob;
+  if (content instanceof Uint8Array || Array.isArray(content)) {
+    blob = new Blob([content], { type });
+  } else {
+    blob = new Blob([content], { type });
+  }
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function populateFileFilter() {
+  elements.fileFilter.replaceChildren();
+  const option = document.createElement("option");
+  option.value = "";
+  option.textContent = "All files";
+  elements.fileFilter.appendChild(option);
+  for (const file of state.files || []) {
+    const item = document.createElement("option");
+    item.value = file.path;
+    item.textContent = file.path;
+    elements.fileFilter.appendChild(item);
+  }
+}
+
+async function updateOutlineSymbols() {
+  elements.outlineFilter.replaceChildren();
+  elements.symbolFilter.replaceChildren();
+  const outlineOption = document.createElement("option");
+  outlineOption.value = "";
+  outlineOption.textContent = "All outlines";
+  elements.outlineFilter.appendChild(outlineOption);
+  const symbolOption = document.createElement("option");
+  symbolOption.value = "";
+  symbolOption.textContent = "All symbols";
+  elements.symbolFilter.appendChild(symbolOption);
+  const path = elements.fileFilter.value;
+  if (!state.indexLoaded || !path) {
+    return;
+  }
+  try {
+    const { outline: outlines } = await callWorker("listOutline", { path });
+    const { symbols } = await callWorker("listSymbols", { path });
+    for (const outline of outlines) {
+      const option = document.createElement("option");
+      option.value = outline;
+      option.textContent = outline;
+      elements.outlineFilter.appendChild(option);
+    }
+    for (const symbol of symbols) {
+      const option = document.createElement("option");
+      option.value = symbol;
+      option.textContent = symbol;
+      elements.symbolFilter.appendChild(option);
+    }
+  } catch (error) {
+    setStatus("Outline/symbol lookup failed.");
+  }
+}
+
+function selectPathPrefix() {
+  if (elements.fileFilter.value) {
+    return elements.fileFilter.value;
+  }
+  const manual = elements.pathFilter.value.trim();
+  return manual || null;
+}
+
+function openDb() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open("llmx-ingestor", 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains("indexes")) {
+        db.createObjectStore("indexes", { keyPath: "id" });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+let searchTimer = null;
+function scheduleSearch() {
+  if (!state.indexLoaded || state.busy) {
+    return;
+  }
+  if (searchTimer) {
+    clearTimeout(searchTimer);
+  }
+  searchTimer = setTimeout(async () => {
+    searchTimer = null;
+    await runSearch();
+  }, 200);
+}
+
+async function saveIndex(id, json) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("indexes", "readwrite");
+    tx.objectStore("indexes").put({ id, json, saved_at: new Date().toISOString() });
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function listIndexes() {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("indexes", "readonly");
+    const request = tx.objectStore("indexes").getAll();
+    request.onsuccess = () => resolve(request.result || []);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function deleteIndex(id) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("indexes", "readwrite");
+    tx.objectStore("indexes").delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function populateSavedIndexes() {
+  if (!elements.savedIndexes) {
+    return;
+  }
+  const records = await listIndexes();
+  records.sort((a, b) => (b.saved_at || "").localeCompare(a.saved_at || ""));
+  elements.savedIndexes.replaceChildren();
+  const empty = document.createElement("option");
+  empty.value = "";
+  empty.textContent = records.length ? "Select saved index" : "No saved indexes";
+  elements.savedIndexes.appendChild(empty);
+  for (const record of records) {
+    const option = document.createElement("option");
+    option.value = record.id;
+    option.textContent = `${record.id} (${record.saved_at || "unknown"})`;
+    elements.savedIndexes.appendChild(option);
+  }
+}
+
+elements.loadSavedIndex?.addEventListener("click", async () => {
+  const id = elements.savedIndexes.value;
+  if (!id) {
+    return;
+  }
+  const records = await listIndexes();
+  const record = records.find((r) => r.id === id);
+  if (!record) {
+    setStatus("Saved index not found.");
+    return;
+  }
+  try {
+    state.busy = true;
+    await callWorker("loadIndexJson", { json: record.json });
+    const idResult = await callWorker("indexId", {});
+    const statsResult = await callWorker("stats", {});
+    const warningsResult = await callWorker("warnings", {});
+    const filesResult = await callWorker("files", {});
+    state.indexId = idResult.indexId || null;
+    state.files = filesResult.files || [];
+    state.indexLoaded = true;
+    elements.indexId.textContent = state.indexId || "(unknown)";
+    elements.chunkCount.textContent = statsResult.stats.total_chunks;
+    elements.warningCount.textContent = warningsResult.warnings.length;
+    renderWarnings(warningsResult.warnings);
+    populateFileFilter();
+    await updateOutlineSymbols();
+    setStatus("Loaded saved index.");
+  } catch {
+    setStatus("Failed to load saved index.");
+  } finally {
+    state.busy = false;
+  }
+});
+
+elements.deleteSavedIndex?.addEventListener("click", async () => {
+  const id = elements.savedIndexes.value;
+  if (!id) {
+    return;
+  }
+  try {
+    await deleteIndex(id);
+    await populateSavedIndexes();
+    setStatus("Deleted saved index.");
+  } catch {
+    setStatus("Failed to delete saved index.");
+  }
+});
+
+configureFolderPickerUi();
+initWorker().catch((error) => {
+  setStatus(`Failed to start backend: ${formatErrorForUi(error)}`);
+});
