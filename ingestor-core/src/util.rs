@@ -11,7 +11,7 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 
 pub fn estimate_tokens(text: &str) -> usize {
     let chars = text.chars().count();
-    (chars + 3) / 4
+    chars.div_ceil(4)
 }
 
 pub fn detect_kind(path: &str) -> ChunkKind {
@@ -118,11 +118,10 @@ pub fn tokenize(text: &str) -> Vec<String> {
             buf_too_long = false;
         }
     }
-    if !buf.is_empty() {
-        if !buf_too_long && !is_noise_token(&buf) {
+    if !buf.is_empty()
+        && !buf_too_long && !is_noise_token(&buf) {
             tokens.push(buf);
         }
-    }
     tokens
 }
 

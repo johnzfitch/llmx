@@ -2,6 +2,11 @@ use crate::model::{Chunk, FileMeta, IndexStats, SearchFilters, SearchResult, Ter
 use crate::util::{snippet, tokenize};
 use std::collections::{BTreeMap, HashMap};
 
+#[cfg(feature = "embeddings")]
+use crate::embeddings::cosine_similarity;
+#[cfg(feature = "embeddings")]
+use std::collections::HashSet;
+
 pub fn build_inverted_index(chunks: &[Chunk]) -> BTreeMap<String, TermEntry> {
     let mut term_map: BTreeMap<String, Vec<(String, usize, usize)>> = BTreeMap::new();
     for chunk in chunks {
@@ -195,4 +200,130 @@ pub fn list_symbols(chunks: &[Chunk], path: &str) -> Vec<String> {
         }
     }
     seen.keys().cloned().collect()
+}
+
+/// Vector search using cosine similarity.
+///
+/// Returns chunks sorted by similarity to query embedding (highest first).
+#[cfg(feature = "embeddings")]
+pub fn vector_search(
+    chunks: &[Chunk],
+    chunk_refs: &BTreeMap<String, String>,
+    embeddings: &[Vec<f32>],
+    query_embedding: &[f32],
+    filters: &SearchFilters,
+    limit: usize,
+) -> Vec<SearchResult> {
+    if embeddings.len() != chunks.len() {
+        return Vec::new();
+    }
+
+    let mut results: Vec<(usize, f32)> = Vec::new();
+
+    for (idx, chunk) in chunks.iter().enumerate() {
+        if !passes_filters(chunk, filters) {
+            continue;
+        }
+
+        let similarity = cosine_similarity(&embeddings[idx], query_embedding);
+        results.push((idx, similarity));
+    }
+
+    results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    results.truncate(limit);
+
+    results
+        .into_iter()
+        .map(|(idx, score)| {
+            let chunk = &chunks[idx];
+            let chunk_ref = chunk_refs
+                .get(chunk.id.as_str())
+                .cloned()
+                .unwrap_or_else(|| chunk.short_id.clone());
+            SearchResult {
+                chunk_id: chunk.id.clone(),
+                chunk_ref,
+                score,
+                path: chunk.path.clone(),
+                start_line: chunk.start_line,
+                end_line: chunk.end_line,
+                snippet: snippet(&chunk.content, 200),
+                heading_path: chunk.heading_path.clone(),
+            }
+        })
+        .collect()
+}
+
+/// Hybrid search combining BM25 and semantic similarity.
+///
+/// Uses weighted score combination: `final_score = 0.5 * normalized_bm25 + 0.5 * semantic_similarity`
+#[cfg(feature = "embeddings")]
+pub fn hybrid_search(
+    chunks: &[Chunk],
+    inverted: &BTreeMap<String, TermEntry>,
+    chunk_refs: &BTreeMap<String, String>,
+    embeddings: &[Vec<f32>],
+    query: &str,
+    query_embedding: &[f32],
+    filters: &SearchFilters,
+    limit: usize,
+) -> Vec<SearchResult> {
+    let bm25_results = search_index(chunks, inverted, chunk_refs, query, filters, limit * 2);
+    let semantic_results = vector_search(chunks, chunk_refs, embeddings, query_embedding, filters, limit * 2);
+
+    let mut bm25_map: HashMap<String, f32> = HashMap::new();
+    let mut max_bm25 = 0.0f32;
+    for result in &bm25_results {
+        max_bm25 = max_bm25.max(result.score);
+        bm25_map.insert(result.chunk_id.clone(), result.score);
+    }
+
+    let mut semantic_map: HashMap<String, f32> = HashMap::new();
+    for result in &semantic_results {
+        semantic_map.insert(result.chunk_id.clone(), result.score);
+    }
+
+    let mut all_chunk_ids: HashSet<String> = HashSet::new();
+    for result in &bm25_results {
+        all_chunk_ids.insert(result.chunk_id.clone());
+    }
+    for result in &semantic_results {
+        all_chunk_ids.insert(result.chunk_id.clone());
+    }
+
+    let mut hybrid_results: Vec<SearchResult> = Vec::new();
+
+    for chunk_id in all_chunk_ids {
+        let bm25_score = bm25_map.get(&chunk_id).copied().unwrap_or(0.0);
+        let semantic_score = semantic_map.get(&chunk_id).copied().unwrap_or(0.0);
+
+        let normalized_bm25 = if max_bm25 > 0.0 {
+            bm25_score / max_bm25
+        } else {
+            0.0
+        };
+
+        let final_score = 0.5 * normalized_bm25 + 0.5 * semantic_score;
+
+        if let Some(chunk) = chunks.iter().find(|c| c.id == chunk_id) {
+            let chunk_ref = chunk_refs
+                .get(chunk_id.as_str())
+                .cloned()
+                .unwrap_or_else(|| chunk.short_id.clone());
+            hybrid_results.push(SearchResult {
+                chunk_id: chunk_id.clone(),
+                chunk_ref,
+                score: final_score,
+                path: chunk.path.clone(),
+                start_line: chunk.start_line,
+                end_line: chunk.end_line,
+                snippet: snippet(&chunk.content, 200),
+                heading_path: chunk.heading_path.clone(),
+            });
+        }
+    }
+
+    hybrid_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    hybrid_results.truncate(limit);
+    hybrid_results
 }

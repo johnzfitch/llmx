@@ -39,7 +39,7 @@ pub fn export_llm(index: &IndexFile) -> String {
                 sanitize_single_line(&warning.message)
             ));
         }
-        out.push_str("\n");
+        out.push('\n');
     }
 
     out.push_str("## Files\n\n");

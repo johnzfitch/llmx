@@ -117,6 +117,12 @@ pub struct IndexFile {
     pub inverted_index: BTreeMap<String, TermEntry>,
     pub stats: IndexStats,
     pub warnings: Vec<IngestWarning>,
+    /// Phase 5: Embeddings for semantic search (one per chunk)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embeddings: Option<Vec<Vec<f32>>>,
+    /// Embedding model identifier for cache invalidation
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedding_model: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

@@ -107,7 +107,13 @@ fn chunk_markdown(text: &str, options: &IngestOptions) -> Vec<ChunkDraft> {
 
         if !in_fence {
             if let Some(caps) = heading_re.captures(line) {
-                flush_chunk(&mut drafts, &mut buf, start_line, line_no - 1, ChunkKind::Markdown, &current_heading, None, None);
+                flush_chunk(&mut drafts, &mut buf, &current_heading, ChunkFlushParams {
+                    start_line,
+                    end_line: line_no - 1,
+                    kind: ChunkKind::Markdown,
+                    symbol: None,
+                    address: None,
+                });
                 let level = caps.get(1).unwrap().as_str().len();
                 let title = caps.get(2).unwrap().as_str().trim().to_string();
                 while heading_stack.len() >= level {
@@ -121,12 +127,24 @@ fn chunk_markdown(text: &str, options: &IngestOptions) -> Vec<ChunkDraft> {
 
         buf.push(line.to_string());
         if !in_fence && buffer_len(&buf) >= options.chunk_max_chars {
-            flush_chunk(&mut drafts, &mut buf, start_line, line_no, ChunkKind::Markdown, &current_heading, None, None);
+            flush_chunk(&mut drafts, &mut buf, &current_heading, ChunkFlushParams {
+                start_line,
+                end_line: line_no,
+                kind: ChunkKind::Markdown,
+                symbol: None,
+                address: None,
+            });
             start_line = line_no + 1;
         }
     }
 
-    flush_chunk(&mut drafts, &mut buf, start_line, line_count(text), ChunkKind::Markdown, &current_heading, None, None);
+    flush_chunk(&mut drafts, &mut buf, &current_heading, ChunkFlushParams {
+        start_line,
+        end_line: line_count(text),
+        kind: ChunkKind::Markdown,
+        symbol: None,
+        address: None,
+    });
     drafts
 }
 
@@ -139,7 +157,13 @@ fn chunk_text(text: &str, options: &IngestOptions) -> Vec<ChunkDraft> {
         let line_no = idx + 1;
         if line.trim().is_empty() && !buf.is_empty() {
             if buffer_len(&buf) >= options.chunk_target_chars {
-                flush_chunk(&mut drafts, &mut buf, start_line, line_no, ChunkKind::Text, &[], None, None);
+                flush_chunk(&mut drafts, &mut buf, &[], ChunkFlushParams {
+                    start_line,
+                    end_line: line_no,
+                    kind: ChunkKind::Text,
+                    symbol: None,
+                    address: None,
+                });
                 start_line = line_no + 1;
             } else {
                 buf.push(line.to_string());
@@ -148,11 +172,23 @@ fn chunk_text(text: &str, options: &IngestOptions) -> Vec<ChunkDraft> {
         }
         buf.push((*line).to_string());
         if buffer_len(&buf) >= options.chunk_max_chars {
-            flush_chunk(&mut drafts, &mut buf, start_line, line_no, ChunkKind::Text, &[], None, None);
+            flush_chunk(&mut drafts, &mut buf, &[], ChunkFlushParams {
+                start_line,
+                end_line: line_no,
+                kind: ChunkKind::Text,
+                symbol: None,
+                address: None,
+            });
             start_line = line_no + 1;
         }
     }
-    flush_chunk(&mut drafts, &mut buf, start_line, line_count(text), ChunkKind::Text, &[], None, None);
+    flush_chunk(&mut drafts, &mut buf, &[], ChunkFlushParams {
+        start_line,
+        end_line: line_count(text),
+        kind: ChunkKind::Text,
+        symbol: None,
+        address: None,
+    });
     drafts
 }
 
@@ -285,7 +321,13 @@ fn chunk_html(text: &str, options: &IngestOptions) -> Vec<ChunkDraft> {
         }
 
         if let Some(caps) = heading_re.captures(&line) {
-            flush_chunk(&mut drafts, &mut buf, start_line, line_no - 1, ChunkKind::Html, &current_heading, None, None);
+            flush_chunk(&mut drafts, &mut buf, &current_heading, ChunkFlushParams {
+                start_line,
+                end_line: line_no - 1,
+                kind: ChunkKind::Html,
+                symbol: None,
+                address: None,
+            });
             let level: usize = caps.get(1).unwrap().as_str().parse().unwrap_or(1);
             let raw_title = tag_re.replace_all(caps.get(2).unwrap().as_str(), "");
             let title = normalize_html_text(raw_title.as_ref());
@@ -304,12 +346,24 @@ fn chunk_html(text: &str, options: &IngestOptions) -> Vec<ChunkDraft> {
         }
 
         if buffer_len(&buf) >= options.chunk_max_chars {
-            flush_chunk(&mut drafts, &mut buf, start_line, line_no, ChunkKind::Html, &current_heading, None, None);
+            flush_chunk(&mut drafts, &mut buf, &current_heading, ChunkFlushParams {
+                start_line,
+                end_line: line_no,
+                kind: ChunkKind::Html,
+                symbol: None,
+                address: None,
+            });
             start_line = line_no + 1;
         }
     }
 
-    flush_chunk(&mut drafts, &mut buf, start_line, line_count(text), ChunkKind::Html, &current_heading, None, None);
+    flush_chunk(&mut drafts, &mut buf, &current_heading, ChunkFlushParams {
+        start_line,
+        end_line: line_count(text),
+        kind: ChunkKind::Html,
+        symbol: None,
+        address: None,
+    });
     drafts
 }
 
@@ -469,28 +523,32 @@ fn select_js_language(path: &str) -> Language {
     }
 }
 
-fn flush_chunk(
-    drafts: &mut Vec<ChunkDraft>,
-    buf: &mut Vec<String>,
+struct ChunkFlushParams {
     start_line: usize,
     end_line: usize,
     kind: ChunkKind,
-    heading_path: &[String],
     symbol: Option<String>,
     address: Option<String>,
+}
+
+fn flush_chunk(
+    drafts: &mut Vec<ChunkDraft>,
+    buf: &mut Vec<String>,
+    heading_path: &[String],
+    params: ChunkFlushParams,
 ) {
-    if buf.is_empty() || end_line < start_line {
+    if buf.is_empty() || params.end_line < params.start_line {
         return;
     }
     let content = buf.join("\n");
     drafts.push(ChunkDraft {
-        kind,
-        start_line,
-        end_line,
+        kind: params.kind,
+        start_line: params.start_line,
+        end_line: params.end_line,
         content: content.trim().to_string(),
         heading_path: heading_path.to_vec(),
-        symbol,
-        address,
+        symbol: params.symbol,
+        address: params.address,
     });
     buf.clear();
 }
@@ -521,10 +579,8 @@ fn make_slug(
         Some(last.as_str())
     } else if let Some(symbol) = symbol {
         Some(symbol.as_str())
-    } else if let Some(address) = address {
-        Some(address.as_str())
     } else {
-        None
+        address.as_ref().map(|address| address.as_str())
     };
 
     let context_slug = raw_context

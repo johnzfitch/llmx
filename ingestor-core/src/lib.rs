@@ -4,8 +4,16 @@ mod index;
 mod model;
 mod util;
 
+#[cfg(feature = "mcp")]
+pub mod mcp;
+
+#[cfg(feature = "embeddings")]
+pub mod embeddings;
+
 pub use crate::export::{export_chunks, export_llm, export_manifest_json, export_zip};
 pub use crate::index::{build_inverted_index, compute_stats, list_outline, list_symbols, search_index};
+#[cfg(feature = "embeddings")]
+pub use crate::index::{hybrid_search, vector_search};
 pub use crate::model::*;
 use crate::util::{build_chunk_refs, detect_kind, sha256_hex};
 use std::collections::BTreeMap;
@@ -105,6 +113,8 @@ pub fn ingest_files(mut files: Vec<FileInput>, options: IngestOptions) -> IndexF
         inverted_index,
         stats,
         warnings,
+        embeddings: None,
+        embedding_model: None,
     }
 }
 
@@ -222,6 +232,8 @@ pub fn update_index(prev: IndexFile, files: Vec<FileInput>, options: IngestOptio
         inverted_index,
         stats,
         warnings,
+        embeddings: None,
+        embedding_model: None,
     }
 }
 
@@ -358,6 +370,8 @@ pub fn update_index_selective(
         inverted_index,
         stats,
         warnings,
+        embeddings: None,
+        embedding_model: None,
     }
 }
 
