@@ -9,11 +9,11 @@ Transform large codebases into searchable, intelligently-chunked datasets that a
 ## ![lightning](.github/assets/icons/lightning-24x24.png) Key Features
 
 - **![search](.github/assets/icons/search-24x24.png) BM25 Search** - Algorithm-first retrieval without embeddings, fully in-browser
-- **![folder](.github/assets/icons/folder-32x32-64x64.png) Smart Chunking** - Deterministic chunking by file type (functions, headings, JSON keys)
-- **![text](.github/assets/icons/text-32x32.png) Semantic Exports** - Hierarchical outline format with function names and heading breadcrumbs
-- **![lock](.github/assets/icons/lock-32x32-64x64.png) Privacy-First** - Zero network calls, all processing in-browser via WASM
+- **![folder](.github/assets/icons/closed-folder-24x24.png) Smart Chunking** - Deterministic chunking by file type (functions, headings, JSON keys)
+- **![text](.github/assets/icons/businessicons-png-24-file-1-business-office-ui-24x24.png) Semantic Exports** - Hierarchical outline format with function names and heading breadcrumbs
+- **![lock](.github/assets/icons/lock-24x24.png) Privacy-First** - Zero network calls, all processing in-browser via WASM
 - **![lightning](.github/assets/icons/lightning-24x24.png) Fast** - Sub-second indexing and search for typical repositories
-- **![download](.github/assets/icons/download-32x32.png) Agent-Ready** - Exports designed for selective retrieval, not bulk ingestion
+- **![download](.github/assets/icons/downloads-folder-24x24.png) Agent-Ready** - Exports designed for selective retrieval, not bulk ingestion
 
 ---
 
@@ -35,7 +35,7 @@ llmx builds a **searchable index** with **semantic chunk exports** that enable a
 
 ---
 
-## ![text](.github/assets/icons/text-32x32.png) Semantic Outline Format
+## ![text](.github/assets/icons/businessicons-png-24-file-1-business-office-ui-24x24.png) Semantic Outline Format
 
 llmx exports an **llm.md manifest** with rich semantic context for intelligent chunk selection:
 
@@ -85,7 +85,7 @@ Open `http://127.0.0.1:8001` in your browser.
 
 ---
 
-## ![folder](.github/assets/icons/folder-32x32-64x64.png) Usage
+## ![folder](.github/assets/icons/closed-folder-24x24.png) Usage
 
 ### For Agents
 
@@ -116,7 +116,7 @@ llmx-export/
 
 ---
 
-## ![database](.github/assets/icons/database-48x48.png) How It Works
+## ![database](.github/assets/icons/table-24x24.png) How It Works
 
 ### Chunking Strategy
 
@@ -171,7 +171,7 @@ Module workers fall back to main thread if unavailable.
 
 ---
 
-## ![folder](.github/assets/icons/folder-32x32-64x64.png) Development
+## ![folder](.github/assets/icons/closed-folder-24x24.png) Development
 
 ### Project Structure
 
@@ -208,7 +208,7 @@ All 11 tests pass, including format validation and semantic context verification
 
 ---
 
-## ![lock](.github/assets/icons/lock-32x32-64x64.png) Privacy & Security
+## ![lock](.github/assets/icons/lock-24x24.png) Privacy & Security
 
 - **No network calls** - All processing local
 - **No external dependencies** for indexing
@@ -217,7 +217,7 @@ All 11 tests pass, including format validation and semantic context verification
 
 ---
 
-## ![download](.github/assets/icons/download-32x32.png) Export Details
+## ![download](.github/assets/icons/downloads-folder-24x24.png) Export Details
 
 ### llm.md Format (v1.0)
 
