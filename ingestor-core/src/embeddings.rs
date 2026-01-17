@@ -1,11 +1,20 @@
 /// Embedding generation for semantic search.
 ///
-/// This module provides embedding functionality for code search.
-/// Current implementation uses a simplified approach without requiring model files.
-///
-/// TODO Phase 5: Integrate real ONNX model (all-MiniLM-L6-v2)
+/// Phase 6: ONNX-based embeddings with model download and caching.
+/// Supports both BGE and Nomic models with backward compatibility for hash-based embeddings.
 
 use sha2::{Sha256, Digest};
+
+#[cfg(feature = "embeddings")]
+use anyhow::{Context, Result};
+#[cfg(feature = "embeddings")]
+use ndarray::{Array2, ArrayView3};
+#[cfg(feature = "embeddings")]
+use ort::{Session, Value};
+#[cfg(feature = "embeddings")]
+use std::path::{Path, PathBuf};
+#[cfg(feature = "embeddings")]
+use tokenizers::Tokenizer;
 
 /// Embedding dimension (matches all-MiniLM-L6-v2)
 pub const EMBEDDING_DIM: usize = 384;

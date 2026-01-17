@@ -8,6 +8,10 @@ use std::io::{Cursor, Write};
 use wasm_bindgen::prelude::*;
 use zip::write::FileOptions;
 
+// Phase 6: Burn-based embeddings for WebGPU
+mod embeddings_burn;
+pub use embeddings_burn::Embedder;
+
 #[wasm_bindgen]
 pub struct Ingestor {
     index: IndexFile,

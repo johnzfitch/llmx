@@ -15,11 +15,12 @@ tree-sitter-javascript = { version = "0.20", optional = true }
 tree-sitter-typescript = { version = "0.20", optional = true }
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 
-# Phase 5: Semantic search dependencies
-# TODO: Add back when implementing real ONNX models
-# ort = { version = "1.16", optional = true }
-# tokenizers = { version = "0.15", optional = true }
-# ndarray = { version = "0.15", optional = true }
+# Phase 5: ONNX-based semantic embeddings (MCP server only)
+# Note: Phase 6 uses Burn framework for WASM, not ort
+ort = { version = "2.0.0-rc.11", optional = true }
+tokenizers = { version = "0.20", optional = true }
+ndarray = { version = "0.16", optional = true }
+reqwest = { version = "0.12", features = ["blocking"], optional = true }
 
 [features]
 default = ["treesitter"]

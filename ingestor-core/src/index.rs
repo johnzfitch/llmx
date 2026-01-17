@@ -254,9 +254,11 @@ pub fn vector_search(
         .collect()
 }
 
-/// Hybrid search combining BM25 and semantic similarity.
+/// Phase 6: Hybrid search combining BM25 and semantic similarity.
 ///
-/// Uses weighted score combination: `final_score = 0.5 * normalized_bm25 + 0.5 * semantic_similarity`
+/// Supports two strategies:
+/// - RRF (Reciprocal Rank Fusion): More robust, doesn't require normalization (default)
+/// - Linear: Weighted combination of normalized scores (Phase 5 compatibility)
 #[cfg(feature = "embeddings")]
 pub fn hybrid_search(
     chunks: &[Chunk],
@@ -268,62 +270,139 @@ pub fn hybrid_search(
     filters: &SearchFilters,
     limit: usize,
 ) -> Vec<SearchResult> {
+    hybrid_search_with_strategy(
+        chunks,
+        inverted,
+        chunk_refs,
+        embeddings,
+        query,
+        query_embedding,
+        filters,
+        limit,
+        crate::model::HybridStrategy::Rrf,
+    )
+}
+
+/// Phase 6: Hybrid search with configurable strategy
+#[cfg(feature = "embeddings")]
+pub fn hybrid_search_with_strategy(
+    chunks: &[Chunk],
+    inverted: &BTreeMap<String, TermEntry>,
+    chunk_refs: &BTreeMap<String, String>,
+    embeddings: &[Vec<f32>],
+    query: &str,
+    query_embedding: &[f32],
+    filters: &SearchFilters,
+    limit: usize,
+    strategy: crate::model::HybridStrategy,
+) -> Vec<SearchResult> {
+    use crate::model::HybridStrategy;
+
+    // Get results from both search methods
     let bm25_results = search_index(chunks, inverted, chunk_refs, query, filters, limit * 2);
     let semantic_results = vector_search(chunks, chunk_refs, embeddings, query_embedding, filters, limit * 2);
 
-    let mut bm25_map: HashMap<String, f32> = HashMap::new();
-    let mut max_bm25 = 0.0f32;
-    for result in &bm25_results {
-        max_bm25 = max_bm25.max(result.score);
-        bm25_map.insert(result.chunk_id.clone(), result.score);
-    }
+    match strategy {
+        HybridStrategy::Rrf => {
+            use crate::rrf::{rrf_fusion, to_ranked_results, RrfConfig};
 
-    let mut semantic_map: HashMap<String, f32> = HashMap::new();
-    for result in &semantic_results {
-        semantic_map.insert(result.chunk_id.clone(), result.score);
-    }
+            // Convert scored results to ranked results for RRF
+            let bm25_scored: Vec<(&str, f32)> = bm25_results
+                .iter()
+                .map(|r| (r.chunk_id.as_str(), r.score))
+                .collect();
+            let semantic_scored: Vec<(&str, f32)> = semantic_results
+                .iter()
+                .map(|r| (r.chunk_id.as_str(), r.score))
+                .collect();
 
-    let mut all_chunk_ids: HashSet<String> = HashSet::new();
-    for result in &bm25_results {
-        all_chunk_ids.insert(result.chunk_id.clone());
-    }
-    for result in &semantic_results {
-        all_chunk_ids.insert(result.chunk_id.clone());
-    }
+            let bm25_ranked = to_ranked_results(&bm25_scored);
+            let semantic_ranked = to_ranked_results(&semantic_scored);
 
-    let mut hybrid_results: Vec<SearchResult> = Vec::new();
+            let merged = rrf_fusion(
+                vec![bm25_ranked, semantic_ranked],
+                RrfConfig::default(),
+                limit,
+            );
 
-    for chunk_id in all_chunk_ids {
-        let bm25_score = bm25_map.get(&chunk_id).copied().unwrap_or(0.0);
-        let semantic_score = semantic_map.get(&chunk_id).copied().unwrap_or(0.0);
+            // Convert RRF results back to SearchResult format
+            let mut hybrid_results: Vec<SearchResult> = Vec::new();
+            for (chunk_id, rrf_score) in merged {
+                if let Some(chunk) = chunks.iter().find(|c| c.id == chunk_id) {
+                    let chunk_ref = chunk_refs
+                        .get(chunk_id.as_str())
+                        .cloned()
+                        .unwrap_or_else(|| chunk.short_id.clone());
+                    hybrid_results.push(SearchResult {
+                        chunk_id: chunk_id.clone(),
+                        chunk_ref,
+                        score: rrf_score,
+                        path: chunk.path.clone(),
+                        start_line: chunk.start_line,
+                        end_line: chunk.end_line,
+                        snippet: snippet(&chunk.content, 200),
+                        heading_path: chunk.heading_path.clone(),
+                    });
+                }
+            }
+            hybrid_results
+        }
+        HybridStrategy::Linear => {
+            // Phase 5 linear combination (backward compatibility)
+            let mut bm25_map: HashMap<String, f32> = HashMap::new();
+            let mut max_bm25 = 0.0f32;
+            for result in &bm25_results {
+                max_bm25 = max_bm25.max(result.score);
+                bm25_map.insert(result.chunk_id.clone(), result.score);
+            }
 
-        let normalized_bm25 = if max_bm25 > 0.0 {
-            bm25_score / max_bm25
-        } else {
-            0.0
-        };
+            let mut semantic_map: HashMap<String, f32> = HashMap::new();
+            for result in &semantic_results {
+                semantic_map.insert(result.chunk_id.clone(), result.score);
+            }
 
-        let final_score = 0.5 * normalized_bm25 + 0.5 * semantic_score;
+            let mut all_chunk_ids: HashSet<String> = HashSet::new();
+            for result in &bm25_results {
+                all_chunk_ids.insert(result.chunk_id.clone());
+            }
+            for result in &semantic_results {
+                all_chunk_ids.insert(result.chunk_id.clone());
+            }
 
-        if let Some(chunk) = chunks.iter().find(|c| c.id == chunk_id) {
-            let chunk_ref = chunk_refs
-                .get(chunk_id.as_str())
-                .cloned()
-                .unwrap_or_else(|| chunk.short_id.clone());
-            hybrid_results.push(SearchResult {
-                chunk_id: chunk_id.clone(),
-                chunk_ref,
-                score: final_score,
-                path: chunk.path.clone(),
-                start_line: chunk.start_line,
-                end_line: chunk.end_line,
-                snippet: snippet(&chunk.content, 200),
-                heading_path: chunk.heading_path.clone(),
-            });
+            let mut hybrid_results: Vec<SearchResult> = Vec::new();
+            for chunk_id in all_chunk_ids {
+                let bm25_score = bm25_map.get(&chunk_id).copied().unwrap_or(0.0);
+                let semantic_score = semantic_map.get(&chunk_id).copied().unwrap_or(0.0);
+
+                let normalized_bm25 = if max_bm25 > 0.0 {
+                    bm25_score / max_bm25
+                } else {
+                    0.0
+                };
+
+                let final_score = 0.5 * normalized_bm25 + 0.5 * semantic_score;
+
+                if let Some(chunk) = chunks.iter().find(|c| c.id == chunk_id) {
+                    let chunk_ref = chunk_refs
+                        .get(chunk_id.as_str())
+                        .cloned()
+                        .unwrap_or_else(|| chunk.short_id.clone());
+                    hybrid_results.push(SearchResult {
+                        chunk_id: chunk_id.clone(),
+                        chunk_ref,
+                        score: final_score,
+                        path: chunk.path.clone(),
+                        start_line: chunk.start_line,
+                        end_line: chunk.end_line,
+                        snippet: snippet(&chunk.content, 200),
+                        heading_path: chunk.heading_path.clone(),
+                    });
+                }
+            }
+
+            hybrid_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+            hybrid_results.truncate(limit);
+            hybrid_results
         }
     }
-
-    hybrid_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
-    hybrid_results.truncate(limit);
-    hybrid_results
 }

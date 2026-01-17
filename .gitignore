@@ -2,7 +2,27 @@
 /web/pkg/
 /http.log
 
+# Phase 6: ONNX models (fetched at build time, not committed)
+/models/
+/ingestor-wasm/models/
+
+# Internal build/phase documentation (not user-facing)
+/docs/PHASE*_BLOCKER*.md
+/docs/PHASE*_FIXES_*.md
+/docs/PHASE*_IMPLEMENTATION.md
+/docs/PHASE*_STATUS.md
+/docs/PHASE*_SUCCESS.md
+/docs/P*_DIRECTIONS.md
+/docs/POST_P*_*.md
+/PHASE*_COMPLETION_CHECKLIST.md
+/docs/QUICK_STATUS.md
+
+# Keep public-facing docs:
+# - docs/PHASE*_COMPLETION_REPORT.md (user-facing summaries)
+# - docs/README.md, docs/ARCHITECTURE.md, etc.
+
 # Local exports (examples are fine, but don't commit by default)
 /llm.md
 /chunks/
 /*.zip
+/ingestor-core/src/*.zip

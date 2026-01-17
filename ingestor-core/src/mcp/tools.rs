@@ -73,6 +73,10 @@ pub struct SearchInput {
     #[serde(default)]
     #[cfg_attr(feature = "mcp", schemars(description = "Enable semantic search with embeddings (default false)"))]
     pub use_semantic: Option<bool>,
+    /// Phase 6: Hybrid search strategy (rrf or linear, default rrf)
+    #[serde(default)]
+    #[cfg_attr(feature = "mcp", schemars(description = "Hybrid search strategy: 'rrf' (Reciprocal Rank Fusion, default) or 'linear' (weighted combination)"))]
+    pub hybrid_strategy: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
