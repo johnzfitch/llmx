@@ -295,7 +295,7 @@ async fn load_or_fetch_from_cdn(url: &str, _cache_key: &str) -> Result<Vec<u8>, 
     // TODO: Check IndexedDB cache first
     // For now, just fetch from CDN
 
-    let mut opts = RequestInit::new();
+    let opts = RequestInit::new();
     opts.set_method("GET");
     opts.set_mode(RequestMode::Cors);
 
@@ -327,8 +327,16 @@ pub struct Embedder {
 #[wasm_bindgen]
 impl Embedder {
     /// Create new embedder with automatic backend selection
-    #[wasm_bindgen(constructor)]
-    pub async fn new() -> Result<Embedder, JsValue> {
+    ///
+    /// Use this factory method instead of `new()` to avoid TypeScript issues
+    /// with async constructors.
+    ///
+    /// # Example
+    /// ```javascript
+    /// const embedder = await Embedder.create();
+    /// ```
+    #[wasm_bindgen]
+    pub async fn create() -> Result<Embedder, JsValue> {
         let inner = SmartEmbeddingGenerator::new().await;
         Ok(Embedder { inner })
     }

@@ -250,7 +250,7 @@ pub fn embed(&self, text: &str) -> Result<Vec<f32>, JsValue> {
         console.log('WASM initialized ✓');
 
         // Create embedder
-        const embedder = await new Embedder();
+        const embedder = await Embedder.create();
         console.log('Embedder created ✓');
         console.log('Backend:', embedder.modelId());
         console.log('Dimension:', embedder.dimension());
