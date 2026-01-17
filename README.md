@@ -4,6 +4,8 @@
 
 Transform large codebases into searchable, intelligently-chunked datasets that agents can navigate efficiently without loading everything into context.
 
+[Demo](https://llm.cat)
+
 ---
 
 ## ![lightning](.github/assets/icons/lightning-24x24.png) Key Features
