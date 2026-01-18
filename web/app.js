@@ -149,7 +149,9 @@ async function createLocalBackend() {
   const wasmModule = await import("./pkg/ingestor_wasm.js");
   await wasmModule.default();
   const WasmIngestor = wasmModule.Ingestor;
+  const WasmEmbedder = wasmModule.Embedder;
   let ingestor = null;
+  let embedder = null;
 
   return {
     kind: "local",
@@ -157,6 +159,12 @@ async function createLocalBackend() {
       switch (op) {
         case "ping":
           return { ready: true };
+        case "initEmbedder": {
+          if (!embedder) {
+            embedder = await WasmEmbedder.create();
+          }
+          return { modelId: embedder.modelId(), dimension: embedder.dimension() };
+        }
         case "ingest": {
           const files = (payload.files || []).map((file) => ({
             path: file.path,
@@ -222,6 +230,14 @@ async function createLocalBackend() {
   };
 }
 
+async function warmEmbeddings() {
+  try {
+    await callWorker("initEmbedder", {});
+  } catch (error) {
+    console.warn("Embedding init skipped:", error);
+  }
+}
+
 async function initWorker() {
   let initError = null;
 
@@ -234,6 +250,7 @@ async function initWorker() {
     state.workerReady = true;
     setStatus("Ready for ingestion.");
     await populateSavedIndexes();
+    void warmEmbeddings();
     return;
   } catch (error) {
     initError = error;
@@ -253,6 +270,7 @@ async function initWorker() {
   const reason = initError ? ` (${formatErrorForUi(initError)})` : "";
   setStatus(`Ready for ingestion (worker disabled)${reason}.`);
   await populateSavedIndexes();
+  void warmEmbeddings();
 }
 
 if (typeof window !== "undefined") {

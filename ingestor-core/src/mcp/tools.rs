@@ -1,5 +1,5 @@
 use crate::mcp::storage::{IndexStore, IndexMetadata};
-use crate::{ingest_files, search, FileInput, IngestOptions, SearchFilters};
+use crate::{ingest_files, search, FileInput, HybridStrategy, IngestOptions, SearchFilters};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "mcp")]
@@ -290,12 +290,13 @@ pub fn llmx_search_handler(store: &mut IndexStore, input: SearchInput) -> Result
         #[cfg(feature = "embeddings")]
         {
             use crate::embeddings::generate_embedding;
-            use crate::index::hybrid_search;
+            use crate::index::hybrid_search_with_strategy;
 
             // Check if embeddings are available
             if let Some(embeddings) = &index.embeddings {
                 let query_embedding = generate_embedding(&input.query);
-                hybrid_search(
+                let strategy = parse_hybrid_strategy(input.hybrid_strategy.as_deref())?;
+                hybrid_search_with_strategy(
                     &index.chunks,
                     &index.inverted_index,
                     &index.chunk_refs,
@@ -304,6 +305,7 @@ pub fn llmx_search_handler(store: &mut IndexStore, input: SearchInput) -> Result
                     &query_embedding,
                     &filters,
                     limit * 2,
+                    strategy,
                 )
             } else {
                 // Fall back to BM25 if embeddings not available
@@ -409,6 +411,16 @@ fn parse_chunk_kind(s: &str) -> Option<crate::ChunkKind> {
         "text" => Some(crate::ChunkKind::Text),
         "image" => Some(crate::ChunkKind::Image),
         _ => None,
+    }
+}
+
+fn parse_hybrid_strategy(value: Option<&str>) -> Result<HybridStrategy> {
+    let normalized = value.map(|v| v.to_ascii_lowercase());
+    match normalized.as_deref() {
+        None => Ok(HybridStrategy::default()),
+        Some("rrf") => Ok(HybridStrategy::Rrf),
+        Some("linear") => Ok(HybridStrategy::Linear),
+        Some(other) => anyhow::bail!("Invalid hybrid_strategy: {other}. Use 'rrf' or 'linear'."),
     }
 }
 

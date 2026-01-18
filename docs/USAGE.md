@@ -9,6 +9,19 @@ cd ingestor-wasm
 wasm-pack build --target web --out-dir ../web/pkg
 ```
 
+## Verification
+
+From repo root:
+
+```bash
+# Build the WASM package
+cd ingestor-wasm
+wasm-pack build --target web --out-dir ../web/pkg
+
+# Optional: validate INT8 quantization quality (requires local safetensors)
+LLMX_VALIDATE_QUANT=1 cargo test -p ingestor-wasm
+```
+
 ## Run UI
 
 From repo root (choose any high port; avoid `80`):

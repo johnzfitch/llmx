@@ -10,7 +10,9 @@ use anyhow::{Context, Result};
 #[cfg(feature = "embeddings")]
 use ndarray::{Array2, ArrayView3};
 #[cfg(feature = "embeddings")]
-use ort::{Session, Value};
+use ort::session::Session;
+#[cfg(feature = "embeddings")]
+use ort::value::Value;
 #[cfg(feature = "embeddings")]
 use std::path::{Path, PathBuf};
 #[cfg(feature = "embeddings")]

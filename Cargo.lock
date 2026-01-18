@@ -3027,7 +3027,6 @@ dependencies = [
  "serde_json",
  "sha2",
  "tokenizers",
- "tokio",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",

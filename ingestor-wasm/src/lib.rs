@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 use ingestor_core::{
     export_chunks, export_llm, export_manifest_json, ingest_files, search, update_index, update_index_selective, FileInput,
     IngestOptions, IndexFile, SearchFilters,
@@ -9,7 +11,13 @@ use wasm_bindgen::prelude::*;
 use zip::write::FileOptions;
 
 // Phase 6: Burn-based embeddings for WebGPU
+mod bert;
+mod model_loader;
 mod embeddings_burn;
+#[cfg(test)]
+mod quantization_test;
+#[cfg(test)]
+mod backend_tests;
 pub use embeddings_burn::Embedder;
 
 #[wasm_bindgen]

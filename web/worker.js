@@ -1,7 +1,8 @@
-import init, { Ingestor } from "./pkg/ingestor_wasm.js";
+import init, { Embedder, Ingestor } from "./pkg/ingestor_wasm.js";
 
 let ready = false;
 let ingestor = null;
+let embedder = null;
 
 const readyPromise = init().then(() => {
   ready = true;
@@ -51,6 +52,17 @@ self.onmessage = async (event) => {
         }));
         ingestor = Ingestor.ingest(files, null);
         self.postMessage({ id, ok: true, data: { indexId: ingestor.indexId() } });
+        return;
+      }
+      case "initEmbedder": {
+        if (!embedder) {
+          embedder = await Embedder.create();
+        }
+        self.postMessage({
+          id,
+          ok: true,
+          data: { modelId: embedder.modelId(), dimension: embedder.dimension() },
+        });
         return;
       }
       case "loadIndexJson": {

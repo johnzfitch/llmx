@@ -22,8 +22,8 @@ getrandom = { version = "0.3.3", default-features = false, features = ["wasm_js"
 
 # Phase 6: Burn framework for WebGPU embeddings
 burn = { version = "0.20", default-features = false }
-burn-wgpu = { version = "0.20" }
-burn-ndarray = { version = "0.20" }
+burn-wgpu = { version = "0.20", optional = true }
+burn-ndarray = { version = "0.20", optional = true }
 # Tokenizers with WASM support (using unstable_wasm feature for pure Rust regex)
 tokenizers = { version = "0.20", default-features = false, features = ["unstable_wasm"] }
 
@@ -34,6 +34,16 @@ js-sys = "0.3"
 version = "0.3"
 features = [
     "console",
+    "DomStringList",
+    "Event",
+    "IdbDatabase",
+    "IdbFactory",
+    "IdbObjectStore",
+    "IdbOpenDbRequest",
+    "IdbRequest",
+    "IdbTransaction",
+    "IdbTransactionMode",
+    "IdbVersionChangeEvent",
     "Window",
     "Request",
     "RequestInit",
@@ -42,7 +52,16 @@ features = [
     "Headers",
 ]
 
+[features]
+default = ["wgpu-backend", "ndarray-backend"]
+wgpu-backend = ["burn-wgpu"]
+ndarray-backend = ["burn-ndarray"]
+
 [build-dependencies]
+burn = { version = "0.20", default-features = false }
+burn-ndarray = { version = "0.20" }
 burn-import = { version = "0.20" }
 reqwest = { version = "0.12", features = ["blocking"] }
-tokio = { version = "1", features = ["rt", "macros"] }
+
+[dev-dependencies]
+burn-import = { version = "0.20" }

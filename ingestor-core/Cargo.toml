@@ -26,7 +26,7 @@ reqwest = { version = "0.12", features = ["blocking"], optional = true }
 default = ["treesitter"]
 treesitter = ["tree-sitter", "tree-sitter-javascript", "tree-sitter-typescript"]
 mcp = ["dep:rmcp", "dep:schemars", "dep:tokio", "dep:dirs", "dep:tracing", "dep:tracing-subscriber", "dep:anyhow", "embeddings"]
-embeddings = []
+embeddings = ["dep:ort", "dep:tokenizers", "dep:ndarray", "dep:reqwest"]
 
 [[bin]]
 name = "llmx-mcp"

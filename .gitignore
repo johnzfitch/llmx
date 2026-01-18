@@ -4,7 +4,8 @@
 
 # Phase 6: ONNX models (fetched at build time, not committed)
 /models/
-/ingestor-wasm/models/
+/ingestor-wasm/models/*
+!/ingestor-wasm/models/arctic-embed-s.bin
 
 # Internal build/phase documentation (not user-facing)
 /docs/PHASE*_BLOCKER*.md

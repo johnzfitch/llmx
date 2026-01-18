@@ -50,7 +50,15 @@ impl LlmxServer {
         &self,
         Parameters(input): Parameters<IndexInput>,
     ) -> Result<CallToolResult, McpError> {
-        let mut store = self.store.lock().unwrap();
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|e| {
+                McpError::internal_error(
+                    format!("IndexStore mutex poisoned - indicates a panic in a previous operation: {e}"),
+                    None,
+                )
+            })?;
         let output = llmx_index_handler(&mut store, input)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
@@ -66,7 +74,15 @@ impl LlmxServer {
         &self,
         Parameters(input): Parameters<SearchInput>,
     ) -> Result<CallToolResult, McpError> {
-        let mut store = self.store.lock().unwrap();
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|e| {
+                McpError::internal_error(
+                    format!("IndexStore mutex poisoned - indicates a panic in a previous operation: {e}"),
+                    None,
+                )
+            })?;
         let output = llmx_search_handler(&mut store, input)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
@@ -82,7 +98,15 @@ impl LlmxServer {
         &self,
         Parameters(input): Parameters<ExploreInput>,
     ) -> Result<CallToolResult, McpError> {
-        let mut store = self.store.lock().unwrap();
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|e| {
+                McpError::internal_error(
+                    format!("IndexStore mutex poisoned - indicates a panic in a previous operation: {e}"),
+                    None,
+                )
+            })?;
         let output = llmx_explore_handler(&mut store, input)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
@@ -98,7 +122,15 @@ impl LlmxServer {
         &self,
         Parameters(input): Parameters<ManageInput>,
     ) -> Result<CallToolResult, McpError> {
-        let mut store = self.store.lock().unwrap();
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|e| {
+                McpError::internal_error(
+                    format!("IndexStore mutex poisoned - indicates a panic in a previous operation: {e}"),
+                    None,
+                )
+            })?;
         let output = llmx_manage_handler(&mut store, input)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
