@@ -21,7 +21,7 @@ use web_sys::{
 
 pub const MODEL_ID: &str = "arctic-embed-s-q8";
 const MODEL_CACHE_KEY: &str = "arctic-embed-s-q8-v1.bin";
-const MODEL_SHA256: &str = "b55fcfa111813f32caadd05db995a1bbf121cc6d913405223299a91987775dad";
+const MODEL_SHA256: &str = "503896ea39a1e93b3134742b383a4c4ed42349fc9390ece39eeae5461f616505";
 const MODEL_URL: &str = match option_env!("LLMX_EMBEDDING_MODEL_URL") {
     Some(value) => value,
     None => "",
