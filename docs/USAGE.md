@@ -14,12 +14,28 @@ wasm-pack build --target web --out-dir ../web/pkg
 From repo root:
 
 ```bash
-# Build the WASM package
+# Build the WASM package (skip wasm-bindgen/wasm-opt auto-installs)
 cd ingestor-wasm
-wasm-pack build --target web --out-dir ../web/pkg
+LLMX_EMBEDDING_MODEL_URL="./models/arctic-embed-s.bin" \
+  wasm-pack build --target web --out-dir ../web/pkg --mode no-install --release
+
+# Run Rust unit tests (native)
+cargo test -p ingestor-wasm
 
 # Optional: validate INT8 quantization quality (requires local safetensors)
 LLMX_VALIDATE_QUANT=1 cargo test -p ingestor-wasm
+
+# Optional: tighten bin-vs-quantized threshold (default 1e-6)
+LLMX_VALIDATE_QUANT=1 LLMX_BIN_MSE_MAX=1e-6 cargo test -p ingestor-wasm
+
+# Optional: backend parity (requires working WebGPU on host)
+LLMX_RUN_WGPU_TESTS=1 cargo test -p ingestor-wasm
+```
+
+For a deployment-style build (model + tokenizer staged under `web/models/`), run:
+
+```bash
+./scripts/prepare_llmcat_web.sh
 ```
 
 ## Run UI

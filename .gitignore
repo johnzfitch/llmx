@@ -1,11 +1,21 @@
 /target/
+/.cargo/
 /web/pkg/
+/web/models/
 /http.log
+/server.log
+/server.pid
+/approval.log
 
 # Phase 6: ONNX models (fetched at build time, not committed)
 /models/
 /ingestor-wasm/models/*
 !/ingestor-wasm/models/arctic-embed-s.bin
+/ingestor-wasm/target/
+/ingestor-wasm/test_burn_import.rs
+
+# Local scratch notes
+/claude_Model selection for current project_2026-01-17.md
 
 # Internal build/phase documentation (not user-facing)
 /docs/PHASE*_BLOCKER*.md

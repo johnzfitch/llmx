@@ -303,13 +303,13 @@ impl<B: Backend> BertModel<B> {
         attention_mask: Tensor<B, 2, Int>,
     ) -> Tensor<B, 3> {
         let [batch_size, seq_len] = input_ids.dims();
-        debug_assert!(batch_size > 0, "Batch size must be greater than zero");
-        debug_assert!(seq_len > 0, "Sequence length must be greater than zero");
-        debug_assert!(
+        assert!(batch_size > 0, "Batch size must be greater than zero");
+        assert!(seq_len > 0, "Sequence length must be greater than zero");
+        assert!(
             seq_len <= MAX_POSITION_EMBEDDINGS,
             "Sequence length {seq_len} exceeds maximum {MAX_POSITION_EMBEDDINGS}"
         );
-        debug_assert_eq!(
+        assert_eq!(
             attention_mask.dims(),
             [batch_size, seq_len],
             "Attention mask shape must match input ids"

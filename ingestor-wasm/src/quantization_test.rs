@@ -2,7 +2,7 @@
 mod tests {
     use crate::bert::BertModel;
     use burn::module::{Module, Quantizer};
-    use burn::record::{FullPrecisionSettings, Recorder};
+    use burn::record::{BinFileRecorder, FullPrecisionSettings, Recorder};
     use burn::tensor::backend::Backend as BurnBackend;
     use burn::tensor::quantization::{
         Calibration, QTensorPrimitive, QuantLevel, QuantParam, QuantValue,
@@ -13,8 +13,10 @@ mod tests {
     use std::path::PathBuf;
 
     const SAFETENSORS_PATH: &str = "models/arctic-embed-s.safetensors";
+    const MODEL_BIN_PATH: &str = "models/arctic-embed-s.bin";
     const VALIDATE_ENV: &str = "LLMX_VALIDATE_QUANT";
     const MSE_ENV: &str = "LLMX_QUANT_MSE_MAX";
+    const BIN_MSE_ENV: &str = "LLMX_BIN_MSE_MAX";
 
     #[test]
     fn quantized_model_mse_smoke() {
@@ -148,5 +150,83 @@ mod tests {
                 "Case {case_name} MSE {mse:.6} exceeds threshold {mse_max:.6}"
             );
         }
+    }
+
+    #[test]
+    fn build_bin_matches_in_memory_quantization() {
+        let flag = std::env::var(VALIDATE_ENV).unwrap_or_default().to_ascii_lowercase();
+        if flag != "1" && flag != "true" {
+            eprintln!("Skipping quantization validation; set {VALIDATE_ENV}=1 to run.");
+            return;
+        }
+
+        if !std::path::Path::new(SAFETENSORS_PATH).exists() {
+            panic!("Missing safetensors at {SAFETENSORS_PATH}");
+        }
+        if !std::path::Path::new(MODEL_BIN_PATH).exists() {
+            panic!("Missing Burn bin at {MODEL_BIN_PATH}");
+        }
+
+        let mse_max = std::env::var(BIN_MSE_ENV)
+            .ok()
+            .and_then(|value| value.parse::<f32>().ok())
+            .unwrap_or(1e-6);
+
+        type Backend = NdArray<f32>;
+        let device = NdArrayDevice::default();
+
+        let load_args = || {
+            LoadArgs::new(PathBuf::from(SAFETENSORS_PATH))
+                .with_adapter_type(AdapterType::PyTorch)
+                .with_key_remap("^bert\\.(.*)$", "$1")
+                .with_key_remap("^model\\.(.*)$", "$1")
+                .with_key_remap("attention\\.self\\.(.*)$", "attention.self_attn.$1")
+                .with_key_remap("^LayerNorm\\.(.*)$", "layer_norm.$1")
+                .with_key_remap("\\.LayerNorm\\.", ".layer_norm.")
+        };
+
+        let scheme =
+            <<Backend as BurnBackend>::QuantizedTensorPrimitive as QTensorPrimitive>::default_scheme()
+                .with_value(QuantValue::Q8S)
+                .with_level(QuantLevel::Tensor)
+                .with_param(QuantParam::F32);
+        let mut quantizer = Quantizer {
+            calibration: Calibration::MinMax,
+            scheme,
+        };
+
+        let record: <BertModel<Backend> as Module<Backend>>::Record =
+            SafetensorsFileRecorder::<FullPrecisionSettings>::default()
+                .load(load_args(), &device)
+                .expect("Failed to load safetensors record");
+        let model_quant = BertModel::<Backend>::new(&device)
+            .load_record(record)
+            .quantize_weights(&mut quantizer);
+
+        let record_bin: <BertModel<Backend> as Module<Backend>>::Record =
+            BinFileRecorder::<FullPrecisionSettings>::default()
+                .load(PathBuf::from(MODEL_BIN_PATH), &device)
+                .expect("Failed to load Burn bin record");
+        let model_bin = BertModel::<Backend>::new(&device).load_record(record_bin);
+
+        let input_ids = Tensor::<Backend, 2, Int>::from_ints(
+            TensorData::new(vec![101, 2003, 2023, 102, 0, 0, 0, 0], [1, 8]),
+            &device,
+        );
+        let attention_mask = Tensor::<Backend, 2, Int>::from_ints(
+            TensorData::new(vec![1, 1, 1, 1, 0, 0, 0, 0], [1, 8]),
+            &device,
+        );
+
+        let out_quant = model_quant.forward(input_ids.clone(), attention_mask.clone());
+        let out_bin = model_bin.forward(input_ids, attention_mask);
+
+        let diff = (out_quant - out_bin).powf_scalar(2.0);
+        let mse = diff.mean().into_scalar();
+        assert!(mse.is_finite(), "Bin MSE is not finite");
+        assert!(
+            mse <= mse_max,
+            "Bin record differs from in-memory quantization: MSE {mse:.9} exceeds threshold {mse_max:.9}"
+        );
     }
 }

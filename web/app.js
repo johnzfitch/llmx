@@ -152,6 +152,148 @@ async function createLocalBackend() {
   const WasmEmbedder = wasmModule.Embedder;
   let ingestor = null;
   let embedder = null;
+  let embeddings = null; // Float32Array
+  let embeddingsMeta = null; // { dim, count, modelId }
+  let chunkMeta = null; // Array<{ id, ref, path, kind, start_line, end_line, heading_path, heading_joined, symbol, snippet }>
+  let buildEmbeddingsPromise = null;
+
+  function snippet(text, maxChars) {
+    if (!text) return "";
+    const cleaned = String(text).replace(/\s+/g, " ").trim();
+    return cleaned.length > maxChars ? `${cleaned.slice(0, maxChars - 3)}...` : cleaned;
+  }
+
+  function passesFilters(chunk, filters) {
+    if (!filters) return true;
+    if (filters.path_exact && chunk.path !== filters.path_exact) return false;
+    if (filters.path_prefix && !chunk.path.startsWith(filters.path_prefix)) return false;
+    if (filters.kind && chunk.kind !== filters.kind) return false;
+    if (filters.heading_prefix && !chunk.heading_joined.startsWith(filters.heading_prefix)) return false;
+    if (filters.symbol_prefix) {
+      if (!chunk.symbol) return false;
+      if (!chunk.symbol.startsWith(filters.symbol_prefix)) return false;
+    }
+    return true;
+  }
+
+  function shouldUseEmbeddings() {
+    if (!embeddings || !embeddingsMeta || !chunkMeta) return false;
+    if (!embedder) return false;
+    if (embeddingsMeta.modelId !== embedder.modelId()) return false;
+    if (embeddingsMeta.count !== chunkMeta.length) return false;
+    return true;
+  }
+
+  function dotProduct(a, b, bOffset, dim) {
+    let sum = 0;
+    for (let i = 0; i < dim; i += 1) {
+      sum += a[i] * b[bOffset + i];
+    }
+    return sum;
+  }
+
+  function rrfFuse(bm25Results, semanticResults, limit) {
+    const k = 60;
+    const scores = new Map();
+
+    function addList(results) {
+      results.forEach((result, rank) => {
+        const prev = scores.get(result.chunk_id) || 0;
+        scores.set(result.chunk_id, prev + 1 / (k + rank + 1));
+      });
+    }
+
+    addList(bm25Results);
+    addList(semanticResults);
+
+    return Array.from(scores.entries())
+      .map(([chunkId, score]) => ({ chunkId, score }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
+  }
+
+  function buildSearchResult(meta, score) {
+    return {
+      chunk_id: meta.id,
+      chunk_ref: meta.ref,
+      score,
+      path: meta.path,
+      start_line: meta.start_line,
+      end_line: meta.end_line,
+      snippet: meta.snippet,
+      heading_path: meta.heading_path,
+    };
+  }
+
+  async function ensureEmbedder() {
+    if (!embedder) {
+      embedder = await WasmEmbedder.create();
+    }
+    return embedder;
+  }
+
+  async function buildEmbeddingsIndex() {
+    if (!ingestor) {
+      throw new Error("No index loaded");
+    }
+    const embed = await ensureEmbedder();
+    const json = ingestor.exportIndexJson();
+    const index = JSON.parse(json);
+
+    const chunks = Array.isArray(index.chunks) ? index.chunks : [];
+    const refs = index.chunk_refs || {};
+    const dim = embed.dimension();
+    const modelId = embed.modelId();
+
+    chunkMeta = chunks.map((chunk) => {
+      const headingPath = Array.isArray(chunk.heading_path) ? chunk.heading_path : [];
+      const headingJoined = headingPath.join("/");
+      return {
+        id: chunk.id,
+        ref: refs[chunk.id] || chunk.short_id || "",
+        path: chunk.path || "",
+        kind: chunk.kind || null,
+        start_line: chunk.start_line || 0,
+        end_line: chunk.end_line || 0,
+        heading_path: headingPath,
+        heading_joined: headingJoined,
+        symbol: chunk.symbol || null,
+        snippet: snippet(chunk.content || "", 200),
+        content: chunk.content || "",
+      };
+    });
+
+    const count = chunkMeta.length;
+    const view = new Float32Array(count * dim);
+    const batchSize = 8;
+
+    for (let offset = 0; offset < count; offset += batchSize) {
+      const batch = chunkMeta.slice(offset, offset + batchSize);
+      const texts = batch.map((item) => item.content);
+      const out = embed.embedBatch(texts);
+      if (!out || typeof out.length !== "number") {
+        throw new Error("Embedding batch returned unexpected type");
+      }
+      for (let i = 0; i < batch.length; i += 1) {
+        const emb = out[i];
+        if (!(emb instanceof Float32Array) || emb.length !== dim) {
+          throw new Error("Embedding batch returned invalid vector");
+        }
+        view.set(emb, (offset + i) * dim);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    embeddings = view;
+    embeddingsMeta = { dim, count, modelId };
+
+    for (const meta of chunkMeta) {
+      delete meta.content;
+    }
+
+    return embeddingsMeta;
+  }
 
   return {
     kind: "local",
@@ -160,10 +302,8 @@ async function createLocalBackend() {
         case "ping":
           return { ready: true };
         case "initEmbedder": {
-          if (!embedder) {
-            embedder = await WasmEmbedder.create();
-          }
-          return { modelId: embedder.modelId(), dimension: embedder.dimension() };
+          const embed = await ensureEmbedder();
+          return { modelId: embed.modelId(), dimension: embed.dimension() };
         }
         case "ingest": {
           const files = (payload.files || []).map((file) => ({
@@ -173,6 +313,10 @@ async function createLocalBackend() {
             fingerprint_sha256: file.fingerprint_sha256 ?? null,
           }));
           ingestor = WasmIngestor.ingest(files, null);
+          embeddings = null;
+          embeddingsMeta = null;
+          chunkMeta = null;
+          buildEmbeddingsPromise = null;
           return { indexId: ingestor.indexId() };
         }
         case "updateSelective": {
@@ -184,11 +328,80 @@ async function createLocalBackend() {
             fingerprint_sha256: file.fingerprint_sha256 ?? null,
           }));
           await ingestor.updateSelective(files, payload.keepPaths || [], null);
+          embeddings = null;
+          embeddingsMeta = null;
+          chunkMeta = null;
+          buildEmbeddingsPromise = null;
           return { updated: true };
         }
         case "loadIndexJson":
           ingestor = WasmIngestor.fromIndexJson(payload.json);
+          embeddings = null;
+          embeddingsMeta = null;
+          chunkMeta = null;
+          buildEmbeddingsPromise = null;
           return { loaded: true };
+        case "buildEmbeddings": {
+          if (!buildEmbeddingsPromise) {
+            buildEmbeddingsPromise = buildEmbeddingsIndex().finally(() => {
+              buildEmbeddingsPromise = null;
+            });
+          }
+          const meta = await buildEmbeddingsPromise;
+          return { meta };
+        }
+        case "getEmbeddings": {
+          if (!embeddings || !embeddingsMeta) {
+            return { embeddings: null };
+          }
+          const buffer = embeddings.buffer.slice(0);
+          return { embeddings: buffer, meta: embeddingsMeta };
+        }
+        case "setEmbeddings": {
+          if (!ingestor) throw new Error("No index loaded");
+          const { embeddings: buffer, meta } = payload || {};
+          if (!(buffer instanceof ArrayBuffer)) {
+            throw new Error("Embeddings payload must be an ArrayBuffer");
+          }
+          if (!meta || typeof meta.dim !== "number" || typeof meta.count !== "number") {
+            throw new Error("Embeddings metadata missing");
+          }
+          const dim = meta.dim;
+          const count = meta.count;
+          if (dim <= 0 || count < 0) {
+            throw new Error("Embeddings metadata invalid");
+          }
+          const view = new Float32Array(buffer);
+          if (view.length !== dim * count) {
+            throw new Error("Embeddings buffer length mismatch");
+          }
+          const json = ingestor.exportIndexJson();
+          const index = JSON.parse(json);
+          const chunks = Array.isArray(index.chunks) ? index.chunks : [];
+          if (chunks.length !== count) {
+            throw new Error("Embeddings count does not match index chunk count");
+          }
+          const refs = index.chunk_refs || {};
+          chunkMeta = chunks.map((chunk) => {
+            const headingPath = Array.isArray(chunk.heading_path) ? chunk.heading_path : [];
+            const headingJoined = headingPath.join("/");
+            return {
+              id: chunk.id,
+              ref: refs[chunk.id] || chunk.short_id || "",
+              path: chunk.path || "",
+              kind: chunk.kind || null,
+              start_line: chunk.start_line || 0,
+              end_line: chunk.end_line || 0,
+              heading_path: headingPath,
+              heading_joined: headingJoined,
+              symbol: chunk.symbol || null,
+              snippet: snippet(chunk.content || "", 200),
+            };
+          });
+          embeddings = view;
+          embeddingsMeta = meta;
+          return { loaded: true };
+        }
         case "exportIndexJson":
           if (!ingestor) throw new Error("No index loaded");
           return { json: ingestor.exportIndexJson() };
@@ -200,7 +413,65 @@ async function createLocalBackend() {
           return { warnings: await ingestor.warnings() };
         case "search":
           if (!ingestor) throw new Error("No index loaded");
-          return { results: await ingestor.search(payload.query, payload.filters, payload.limit) };
+          {
+            const query = payload.query || "";
+            const filters = payload.filters || null;
+            const limit = payload.limit || 20;
+
+            const bm25Results = await ingestor.search(query, filters, limit * 2);
+
+            if (!embeddings || !embeddingsMeta || !chunkMeta) {
+              return { results: bm25Results };
+            }
+
+            await ensureEmbedder();
+            if (!shouldUseEmbeddings()) {
+              return { results: bm25Results };
+            }
+
+            const queryEmbedding = embedder.embed(query);
+            const dim = embeddingsMeta.dim;
+
+            const semantic = [];
+            for (let i = 0; i < chunkMeta.length; i += 1) {
+              const meta = chunkMeta[i];
+              if (!passesFilters(meta, filters)) continue;
+              const score = dotProduct(queryEmbedding, embeddings, i * dim, dim);
+              semantic.push({ idx: i, score });
+            }
+
+            semantic.sort((a, b) => b.score - a.score);
+            const semanticTop = semantic.slice(0, limit * 2).map(({ idx, score }) => {
+              const meta = chunkMeta[idx];
+              return buildSearchResult(meta, score);
+            });
+
+            const merged = rrfFuse(bm25Results, semanticTop, limit);
+
+            const bm25ById = new Map(bm25Results.map((r) => [r.chunk_id, r]));
+            const results = merged.map(({ chunkId, score }) => {
+              const existing = bm25ById.get(chunkId);
+              if (existing) {
+                return { ...existing, score };
+              }
+              const idx = chunkMeta.findIndex((m) => m.id === chunkId);
+              if (idx !== -1) {
+                return buildSearchResult(chunkMeta[idx], score);
+              }
+              return {
+                chunk_id: chunkId,
+                chunk_ref: "",
+                score,
+                path: "",
+                start_line: 0,
+                end_line: 0,
+                snippet: "",
+                heading_path: [],
+              };
+            });
+
+            return { results };
+          }
         case "getChunk":
           if (!ingestor) throw new Error("No index loaded");
           return { chunk: await ingestor.getChunk(payload.chunkId) };
@@ -545,6 +816,7 @@ async function runIngest(entries, collectedMeta) {
     await populateSavedIndexes();
     state.indexLoaded = true;
     setStatus("Index ready.");
+    void callWorker("buildEmbeddings", {}).catch(() => {});
   } catch (error) {
     setStatus(`Ingestion failed: ${formatErrorForUi(error)}`);
   } finally {
@@ -688,7 +960,16 @@ elements.saveIndex.addEventListener("click", async () => {
   }
   try {
     const { json } = await callWorker("exportIndexJson", {});
-    await saveIndex(state.indexId || "index", json);
+    let embeddings = null;
+    let embeddingsMeta = null;
+    try {
+      const result = await callWorker("getEmbeddings", {});
+      if (result.embeddings && result.meta) {
+        embeddings = result.embeddings;
+        embeddingsMeta = result.meta;
+      }
+    } catch {}
+    await saveIndex(state.indexId || "index", json, embeddings, embeddingsMeta);
     await populateSavedIndexes();
     setStatus("Index saved locally.");
   } catch {
@@ -882,11 +1163,17 @@ function scheduleSearch() {
   }, 200);
 }
 
-async function saveIndex(id, json) {
+async function saveIndex(id, json, embeddings, embeddingsMeta) {
   const db = await openDb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction("indexes", "readwrite");
-    tx.objectStore("indexes").put({ id, json, saved_at: new Date().toISOString() });
+    tx.objectStore("indexes").put({
+      id,
+      json,
+      embeddings: embeddings || null,
+      embeddings_meta: embeddingsMeta || null,
+      saved_at: new Date().toISOString(),
+    });
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
@@ -945,6 +1232,15 @@ elements.loadSavedIndex?.addEventListener("click", async () => {
   try {
     state.busy = true;
     await callWorker("loadIndexJson", { json: record.json });
+    if (record.embeddings && record.embeddings_meta) {
+      try {
+        await callWorker(
+          "setEmbeddings",
+          { embeddings: record.embeddings, meta: record.embeddings_meta },
+          state.backend?.kind === "worker" ? [record.embeddings] : undefined
+        );
+      } catch {}
+    }
     const idResult = await callWorker("indexId", {});
     const statsResult = await callWorker("stats", {});
     const warningsResult = await callWorker("warnings", {});
@@ -959,6 +1255,7 @@ elements.loadSavedIndex?.addEventListener("click", async () => {
     populateFileFilter();
     await updateOutlineSymbols();
     setStatus("Loaded saved index.");
+    void callWorker("buildEmbeddings", {}).catch(() => {});
   } catch {
     setStatus("Failed to load saved index.");
   } finally {

@@ -11,6 +11,7 @@ const MODEL_BIN_FILE: &str = "models/arctic-embed-s.bin";
 const MODEL_SRC_FILE: &str = "src/bert.rs";
 const MAX_MODEL_BYTES: u64 = 100 * 1024 * 1024;
 
+#[allow(dead_code)]
 mod model {
     include!("src/bert.rs");
 }
@@ -53,7 +54,10 @@ fn main() {
             println!("cargo:rustc-env=LLMX_EMBEDDING_MODEL_URL={}", model_url);
         }
     } else {
-        println!("cargo:warning=LLMX_EMBEDDING_MODEL_URL not set; runtime model fetch will fail");
+        let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+        if target_arch == "wasm32" {
+            println!("cargo:warning=LLMX_EMBEDDING_MODEL_URL not set; runtime model fetch will fail");
+        }
     }
 }
 

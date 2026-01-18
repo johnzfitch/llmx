@@ -36,6 +36,7 @@ features = [
     "console",
     "DomStringList",
     "Event",
+    "Location",
     "IdbDatabase",
     "IdbFactory",
     "IdbObjectStore",
@@ -65,3 +66,9 @@ reqwest = { version = "0.12", features = ["blocking"] }
 
 [dev-dependencies]
 burn-import = { version = "0.20" }
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
+[package.metadata.wasm-pack.profile.dev]
+wasm-opt = false

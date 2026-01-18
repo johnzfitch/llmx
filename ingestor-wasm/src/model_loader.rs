@@ -19,9 +19,9 @@ use web_sys::{
     RequestMode, Response,
 };
 
-pub const MODEL_ID: &str = "arctic-embed-s-q8";
-const MODEL_CACHE_KEY: &str = "arctic-embed-s-q8-v1.bin";
-const MODEL_SHA256: &str = "503896ea39a1e93b3134742b383a4c4ed42349fc9390ece39eeae5461f616505";
+pub const MODEL_ID: &str = "arctic-embed-s-q8-a80e2e953bcd";
+const MODEL_CACHE_KEY: &str = "arctic-embed-s-q8-a80e2e953bcd.bin";
+const MODEL_SHA256: &str = "a80e2e953bcd6a2cfe102043d84adfead9f21b4c2f89fa70527eebf4c2cf0821";
 const MODEL_URL: &str = match option_env!("LLMX_EMBEDDING_MODEL_URL") {
     Some(value) => value,
     None => "",
@@ -91,16 +91,44 @@ pub(crate) async fn fetch_with_cache(
     validate_url_origin(url, allowed_origins)?;
     enforce_rate_limit(cache_key)?;
 
-    let bytes = fetch_with_retry(url, expected_sha256, max_bytes).await?;
+    let bytes = fetch_with_retry(url, expected_sha256, max_bytes, allowed_origins).await?;
     store_cached_bytes(cache_key, &bytes).await?;
     Ok(bytes)
 }
 
 fn validate_url_origin(url: &str, allowed_origins: &[&str]) -> Result<(), JsValue> {
+    if is_same_origin_relative_url(url) {
+        return Ok(());
+    }
     if allowed_origins.iter().any(|origin| url.starts_with(origin)) {
         Ok(())
     } else {
         Err(JsValue::from_str("Invalid resource origin"))
+    }
+}
+
+fn is_same_origin_relative_url(url: &str) -> bool {
+    if url.starts_with("//") {
+        return false;
+    }
+    url.starts_with('/') || url.starts_with("./")
+}
+
+fn validate_final_fetch_url(
+    final_url: &str,
+    requested_url: &str,
+    allowed_origins: &[&str],
+) -> Result<(), JsValue> {
+    if !is_same_origin_relative_url(requested_url) {
+        return validate_url_origin(final_url, allowed_origins);
+    }
+
+    let window = web_sys::window().ok_or_else(|| JsValue::from_str("No window object"))?;
+    let origin = window.location().origin()?;
+    if final_url.starts_with(&origin) {
+        Ok(())
+    } else {
+        Err(JsValue::from_str("Redirected off-origin"))
     }
 }
 
@@ -131,10 +159,11 @@ async fn fetch_with_retry(
     url: &str,
     expected_sha256: &str,
     max_bytes: usize,
+    allowed_origins: &[&str],
 ) -> Result<Vec<u8>, JsValue> {
     let mut attempt: u32 = 0;
     loop {
-        match try_fetch(url, expected_sha256, max_bytes).await {
+        match try_fetch(url, expected_sha256, max_bytes, allowed_origins).await {
             Ok(bytes) => return Ok(bytes),
             Err(err) if attempt < MAX_FETCH_RETRIES => {
                 attempt += 1;
@@ -146,7 +175,12 @@ async fn fetch_with_retry(
     }
 }
 
-async fn try_fetch(url: &str, expected_sha256: &str, max_bytes: usize) -> Result<Vec<u8>, JsValue> {
+async fn try_fetch(
+    url: &str,
+    expected_sha256: &str,
+    max_bytes: usize,
+    allowed_origins: &[&str],
+) -> Result<Vec<u8>, JsValue> {
     let opts = RequestInit::new();
     opts.set_method("GET");
     opts.set_mode(RequestMode::Cors);
@@ -158,6 +192,11 @@ async fn try_fetch(url: &str, expected_sha256: &str, max_bytes: usize) -> Result
 
     if !resp.ok() {
         return Err(JsValue::from_str("Failed to fetch resource"));
+    }
+
+    let final_url = resp.url();
+    if !final_url.is_empty() {
+        validate_final_fetch_url(&final_url, url, allowed_origins)?;
     }
 
     if let Ok(Some(content_type)) = resp.headers().get("content-type") {

@@ -22,8 +22,9 @@ pub const EMBEDDING_DIM: usize = 384;
 /// Maximum sequence length for the model
 const MAX_SEQ_LENGTH: usize = 512;
 
-/// CDN URL for tokenizer
-const TOKENIZER_URL: &str =
+/// Tokenizer URL (prefer same-origin to avoid CORS / third-party outages).
+const TOKENIZER_URL_PRIMARY: &str = "./models/tokenizer.json";
+const TOKENIZER_URL_FALLBACK: &str =
     "https://huggingface.co/Snowflake/snowflake-arctic-embed-s/resolve/main/tokenizer.json";
 const TOKENIZER_CACHE_KEY: &str = "arctic-embed-s-tokenizer-v1";
 const TOKENIZER_SHA256: &str = "91f1def9b9391fdabe028cd3f3fcc4efd34e5d1f08c3bf2de513ebb5911a1854";
@@ -52,8 +53,7 @@ impl WgpuEmbeddingGenerator {
         // Initialize WebGPU device
         let device = WgpuDevice::default();
 
-        // Load tokenizer from CDN or cache
-        let tokenizer_bytes = load_or_fetch_from_cdn(TOKENIZER_URL, TOKENIZER_CACHE_KEY).await?;
+        let tokenizer_bytes = fetch_tokenizer_bytes().await?;
         let tokenizer = Tokenizer::from_bytes(&tokenizer_bytes)
             .map_err(|e| {
                 web_sys::console::error_1(&JsValue::from_str(&format!(
@@ -96,8 +96,7 @@ impl CpuEmbeddingGenerator {
     pub async fn new() -> Result<Self, JsValue> {
         let device = NdArrayDevice::default();
 
-        // Load tokenizer from CDN or cache
-        let tokenizer_bytes = load_or_fetch_from_cdn(TOKENIZER_URL, TOKENIZER_CACHE_KEY).await?;
+        let tokenizer_bytes = fetch_tokenizer_bytes().await?;
         let tokenizer = Tokenizer::from_bytes(&tokenizer_bytes)
             .map_err(|e| {
                 web_sys::console::error_1(&JsValue::from_str(&format!(
@@ -418,6 +417,18 @@ async fn load_or_fetch_from_cdn(url: &str, cache_key: &str) -> Result<Vec<u8>, J
         MAX_TOKENIZER_BYTES,
     )
     .await
+}
+
+async fn fetch_tokenizer_bytes() -> Result<Vec<u8>, JsValue> {
+    match load_or_fetch_from_cdn(TOKENIZER_URL_PRIMARY, TOKENIZER_CACHE_KEY).await {
+        Ok(bytes) => Ok(bytes),
+        Err(primary_err) => {
+            web_sys::console::warn_1(&JsValue::from_str(&format!(
+                "Tokenizer primary fetch failed, falling back: {primary_err:?}"
+            )));
+            load_or_fetch_from_cdn(TOKENIZER_URL_FALLBACK, TOKENIZER_CACHE_KEY).await
+        }
+    }
 }
 
 /// WASM bindings for browser
