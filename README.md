@@ -8,7 +8,7 @@ Transform large codebases into searchable, intelligently-chunked datasets with r
 
 ## ![lightning](.github/assets/icons/lightning-24x24.png) Key Features
 
-- **![search](.github/assets/icons/search-24x24.png) Neural Semantic Search** - BGE embeddings with WebGPU acceleration, same quality as server-side solutions
+- **![search](.github/assets/icons/search-24x24.png) Neural Semantic Search** - Snowflake Arctic embeddings with WebGPU acceleration, same quality as server-side solutions
 - **![lightning](.github/assets/icons/lightning-24x24.png) Hybrid Search** - Combines BM25 + vector search with RRF (Reciprocal Rank Fusion) for best results
 - **![hierarchy](.github/assets/icons/hierarchy-24x24.png) Smart Chunking** - Deterministic chunking by file type (functions, headings, JSON keys)
 - **![document](.github/assets/icons/businessicons-png-24-file-1-business-office-ui-24x24.png) Semantic Exports** - Hierarchical outline format with function names and heading breadcrumbs
@@ -143,7 +143,7 @@ llmx chunks files **deterministically by type**:
    - Fast lexical matching
 
 2. **Neural Semantic Search**:
-   - BGE-small-en-v1.5 embeddings (384 dimensions)
+   - Snowflake Arctic Embed (384 dimensions, INT8 quantized)
    - WebGPU-accelerated inference (~50ms per query)
    - Falls back to CPU → hash-based → BM25-only
    - Understands meaning, not just keywords
@@ -171,14 +171,14 @@ Runs fully client-side in **WASM** with GPU acceleration.
 - **Language**: Rust (core), JavaScript (WASM bindings, web UI)
 - **Architecture**: Client-only, no server required
 - **ML Framework**: Burn 0.20 (compiles to WASM)
-- **Embedding Model**: BGE-small-en-v1.5 (384-dim, ONNX opset 13)
+- **Embedding Model**: Snowflake Arctic Embed Small (384-dim, INT8 quantized to ~9MB)
 - **Storage**: IndexedDB (persistent) or in-memory
 - **Search**: Hybrid (BM25 + neural embeddings) with RRF fusion
 - **Chunking**: Deterministic, content-hash based IDs
 - **Performance**:
   - Indexing: ~500ms for 10MB codebase
   - Embeddings: ~50ms per query (WebGPU)
-  - Package: 2.4 MB WASM (model weights loaded separately)
+  - Package: 2.4 MB WASM (model weights loaded separately from CDN)
 
 ### Browser Compatibility
 
@@ -226,6 +226,9 @@ llmx/
 ### Build
 
 ```bash
+# Set model URL (required for WASM builds with embeddings)
+export LLMX_EMBEDDING_MODEL_URL="https://your-cdn.com/arctic-embed-s-q8.bin"
+
 # Build WASM (includes neural embedding support)
 cd ingestor-wasm
 wasm-pack build --target web --release
@@ -237,6 +240,20 @@ wasm-pack build --target web --dev
 cd ingestor-core
 cargo test
 ```
+
+**Security Note on Model URLs:**
+- The `LLMX_EMBEDDING_MODEL_URL` is embedded into the WASM binary at build time
+- Use **only public, non-authenticated URLs** (e.g., HuggingFace, public CDN)
+- Never use signed URLs or URLs with authentication tokens
+- The URL will be visible to anyone inspecting the WASM binary
+- For production, host models on a public CDN or use HuggingFace directly
+
+**Build-time Model Download:**
+The build script automatically downloads and converts the model:
+1. Downloads safetensors from HuggingFace (if not cached)
+2. Converts to Burn binary format with INT8 quantization
+3. Stores in `ingestor-wasm/models/` directory
+4. Model is loaded at runtime from the CDN URL specified above
 
 ### Testing
 
@@ -250,10 +267,24 @@ All 11 tests pass, including format validation and semantic context verification
 
 ## ![lock](.github/assets/icons/lock-24x24.png) Privacy & Security
 
-- **No network calls** - All processing local
-- **No external dependencies** for indexing
+### Runtime Privacy
+- **Zero network calls during indexing** - Your code never leaves your machine
+- **No external dependencies** for core indexing functionality
 - **Content treated as untrusted** - Prompt injection resistant UI
 - **Deterministic output** - Same input = same index every time
+- **IndexedDB caching** - Model weights cached locally after first download
+
+### Build-Time Security
+- **Model URLs embedded at build time** - URLs are visible in WASM binary
+  - Only use **public, non-authenticated URLs** for model sources
+  - Current setup uses public HuggingFace model repositories
+  - Never embed signed URLs or authentication tokens
+- **Model integrity verification** - SHA-256 validation prevents tampering (planned)
+- **Supply chain security** - Models loaded from trusted sources (HuggingFace)
+- **Quantization** - INT8 quantization reduces model size with minimal quality loss
+
+### Security Notes
+⚠️ **WASM binaries are inspectable** - Any URLs or constants in the build are visible to users. This is by design for transparency, but means secrets must never be embedded. Our current architecture uses only public model repositories and is safe for production use.
 
 ---
 
@@ -319,19 +350,28 @@ Contributions welcome! Please:
 
 ## Roadmap
 
-### Phase 6 (Current - In Progress)
+### Phase 6 (Complete)
 - [x] Neural semantic search with Burn framework
 - [x] WebGPU-accelerated embeddings
 - [x] Hybrid search with RRF fusion
 - [x] WASM build pipeline
-- [ ] Complete model weight loading (Phase 7)
-- [ ] Browser integration testing
+- [x] Model quantization (INT8)
+- [x] IndexedDB caching for models
+
+### Phase 7 (Current - Security Hardening)
+- [ ] Implement SHA-256 model integrity verification
+- [ ] Add download size limits and rate limiting
+- [ ] Improve error handling in MCP server (remove panics)
+- [ ] Add cancellation support for async operations
+- [ ] Browser integration testing across all platforms
 
 ### Future Phases
+- [ ] Performance optimizations (fused QKV, attention mask broadcasting)
+- [ ] Model configuration flexibility (support multiple model sizes)
 - [ ] Add LSP/tree-sitter symbol extraction for more languages
 - [ ] Support image OCR for screenshot indexing
 - [ ] Add CLI for headless indexing
-- [ ] MCP server for external agent retrieval
+- [ ] MCP server hardening and production deployment
 - [ ] Support for more file types (Python, Go, Rust, etc.)
 
 ---
