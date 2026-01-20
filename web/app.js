@@ -1274,17 +1274,46 @@ elements.downloadExport?.addEventListener("click", () => {
     .catch(() => setStatus("Export failed."));
 });
 
-elements.downloadIndexJson?.addEventListener("click", () => {
+elements.downloadIndexJson?.addEventListener("click", async () => {
   if (!state.indexLoaded) {
     setStatus("No index to export.");
     return;
   }
-  callWorker("exportIndexJson", {})
-    .then(({ json }) => {
-      const name = `${exportBaseName()}.index.json`;
-      downloadFile(name, json, "application/json");
-    })
-    .catch(() => setStatus("Export failed."));
+  try {
+    const { json } = await callWorker("exportIndexJson", {});
+    const index = JSON.parse(json);
+
+    // Try to get embeddings and include them if available
+    try {
+      const embResult = await callWorker("getEmbeddings", {});
+      if (embResult.embeddings && embResult.meta) {
+        const floatArray = new Float32Array(embResult.embeddings);
+        const { dim, count, modelId } = embResult.meta;
+
+        // Convert Float32Array to nested arrays for JSON
+        const embeddingsArray = [];
+        for (let i = 0; i < count; i++) {
+          const start = i * dim;
+          const end = start + dim;
+          embeddingsArray.push(Array.from(floatArray.slice(start, end)));
+        }
+
+        index.embeddings = embeddingsArray;
+        index.embeddings_meta = { dim, count, modelId };
+        setStatus("Exporting index with embeddings...");
+      }
+    } catch (embErr) {
+      // No embeddings available, continue without them
+      console.log("No embeddings to export:", embErr);
+    }
+
+    const name = `${exportBaseName()}.index.json`;
+    const updatedJson = JSON.stringify(index, null, 2);
+    downloadFile(name, updatedJson, "application/json");
+    setStatus("Index exported.");
+  } catch (error) {
+    setStatus("Export failed.");
+  }
 });
 
 async function runSearch() {
