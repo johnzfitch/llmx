@@ -87,6 +87,7 @@ const ALLOWED_EXTENSIONS = [
   ".markdown",
   ".json",
   ".txt",
+  ".log",
   ".js",
   ".ts",
   ".tsx",
