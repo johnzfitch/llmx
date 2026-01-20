@@ -119,6 +119,11 @@ const DEFAULT_LIMITS = {
 
 function setStatus(message) {
   elements.status.textContent = message;
+  if (message) {
+    elements.status.style.display = "block";
+  } else {
+    elements.status.style.display = "none";
+  }
 }
 
 function updateBackendInfo(backendType, capabilities) {

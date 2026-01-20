@@ -463,6 +463,12 @@ self.onmessage = async (event) => {
           fingerprint_sha256: file.fingerprint_sha256 ?? null,
         }));
         await ingestor.updateSelective(files, payload.keepPaths || [], null);
+
+        // Clear embeddings after selective update (index has changed)
+        embeddings = null;
+        embeddingsMeta = null;
+        chunkMeta = null;
+
         self.postMessage({ id, ok: true, data: { updated: true } });
         return;
       }
