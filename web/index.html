@@ -29,6 +29,10 @@
           <span class="label">Warnings</span>
           <span id="warning-count" class="value">0</span>
         </div>
+        <div class="hero-stat">
+          <span class="label">Backend</span>
+          <span id="backend-info" class="value">Loading...</span>
+        </div>
       </div>
     </header>
 
@@ -73,17 +77,18 @@
         <select id="symbol-filter">
           <option value="">All symbols</option>
         </select>
-        <select id="kind-filter">
-          <option value="">All types</option>
-          <option value="markdown">Markdown</option>
-          <option value="json">JSON</option>
-          <option value="java_script">JavaScript</option>
-          <option value="html">HTML</option>
-          <option value="text">Text</option>
-          <option value="image">Image</option>
-        </select>
-        <button id="run-search">Search</button>
-      </div>
+	        <select id="kind-filter">
+	          <option value="">All types</option>
+	          <option value="markdown">Markdown</option>
+	          <option value="json">JSON</option>
+	          <option value="java_script">JavaScript</option>
+	          <option value="html">HTML</option>
+	          <option value="text">Text</option>
+	          <option value="image">Image</option>
+	        </select>
+	        <button id="run-search">Search</button>
+	        <button id="build-embeddings">Build embeddings</button>
+	      </div>
       <div id="results" class="results"></div>
       <div id="chunk-view" class="chunk-view" hidden>
         <div class="chunk-header">
@@ -94,25 +99,17 @@
       </div>
     </section>
 
-    <section class="panel">
-      <div class="panel-header">
-        <h2>Export</h2>
-        <p>LLM-friendly bundles and local index storage.</p>
-      </div>
-      <div class="actions">
-        <button id="export-llm">Download llm.md</button>
-        <button id="export-zip">Download export.zip</button>
-        <button id="save-index">Save index locally</button>
-      </div>
-      <div class="saved-indexes">
-        <select id="saved-indexes">
-          <option value="">No saved indexes</option>
-        </select>
-        <button id="load-saved-index">Load saved</button>
-        <button id="delete-saved-index">Delete saved</button>
-      </div>
-    </section>
-  </main>
+	    <section class="panel">
+	      <div class="panel-header">
+	        <h2>Export</h2>
+	        <p>LLM-friendly bundles and local index storage.</p>
+	      </div>
+	      <div class="actions">
+	        <button id="download-export" class="primary">Download export.zip</button>
+	        <button id="download-index-json">Download index.json</button>
+	      </div>
+	    </section>
+	  </main>
 
   <script type="module" src="app.js"></script>
 </body>

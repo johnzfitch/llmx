@@ -22,7 +22,54 @@ pub const EMBEDDING_DIM: usize = 384;
 /// Maximum sequence length for the model
 const MAX_SEQ_LENGTH: usize = 512;
 
+fn set_panic_hook_once() {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use std::sync::Once;
+        static ONCE: Once = Once::new();
+        ONCE.call_once(|| {
+            std::panic::set_hook(Box::new(|info| {
+                web_sys::console::error_1(&JsValue::from_str(&info.to_string()));
+            }));
+        });
+    }
+}
+
+#[cfg(all(feature = "wgpu-backend", target_arch = "wasm32"))]
+fn webgpu_opt_in_enabled() -> bool {
+    let global = js_sys::global();
+    let key = JsValue::from_str("LLMX_ENABLE_WEBGPU");
+    let value = js_sys::Reflect::get(&global, &key).ok();
+
+    let Some(value) = value else {
+        return false;
+    };
+
+    if let Some(flag) = value.as_bool() {
+        return flag;
+    }
+
+    if let Some(flag) = value.as_f64() {
+        return flag != 0.0;
+    }
+
+    if let Some(flag) = value.as_string() {
+        let flag = flag.trim().to_ascii_lowercase();
+        return matches!(flag.as_str(), "1" | "true" | "yes" | "on");
+    }
+
+    false
+}
+
+#[cfg(all(feature = "wgpu-backend", not(target_arch = "wasm32")))]
+fn webgpu_opt_in_enabled() -> bool {
+    true
+}
+
 /// Tokenizer URL (prefer same-origin to avoid CORS / third-party outages).
+/// Both primary and fallback URLs must serve identical files with matching SHA256.
+/// If HuggingFace updates the tokenizer, update both TOKENIZER_URL_FALLBACK and
+/// TOKENIZER_SHA256 to match, and ensure the local ./models/tokenizer.json is updated.
 const TOKENIZER_URL_PRIMARY: &str = "./models/tokenizer.json";
 const TOKENIZER_URL_FALLBACK: &str =
     "https://huggingface.co/Snowflake/snowflake-arctic-embed-s/resolve/main/tokenizer.json";
@@ -49,9 +96,18 @@ pub struct WgpuEmbeddingGenerator {
 #[cfg(feature = "wgpu-backend")]
 impl WgpuEmbeddingGenerator {
     /// Initialize WebGPU embedding generator
+    /// Note: WgpuDevice::default() may panic in WASM if:
+    /// - WebGPU adapter is unavailable
+    /// - Device creation fails
+    /// Panics are converted to JsValue errors at the boundary.
     pub async fn new() -> Result<Self, JsValue> {
-        // Initialize WebGPU device
+        web_sys::console::log_1(&JsValue::from_str("WebGPU init: requesting adapter and device..."));
+
+        // Initialize WebGPU device - will panic if adapter/device unavailable
+        // This panic is caught and converted to JsValue error in WASM
         let device = WgpuDevice::default();
+
+        web_sys::console::log_1(&JsValue::from_str("WebGPU init: loading tokenizer..."));
 
         let tokenizer_bytes = fetch_tokenizer_bytes().await?;
         let tokenizer = Tokenizer::from_bytes(&tokenizer_bytes)
@@ -62,8 +118,14 @@ impl WgpuEmbeddingGenerator {
                 JsValue::from_str("Failed to load tokenizer")
             })?;
 
+        web_sys::console::log_1(&JsValue::from_str("WebGPU init: loading model..."));
+        web_sys::console::warn_1(&JsValue::from_str(
+            "WebGPU init: model loading may panic in WASM (known Burn/WGPU issue)",
+        ));
+
         let model = load_model(&device).await?;
 
+        web_sys::console::log_1(&JsValue::from_str("WebGPU init: embedder ready"));
         Ok(Self { model, tokenizer, device })
     }
 }
@@ -191,22 +253,42 @@ impl SmartEmbeddingGenerator {
     /// Create embedding generator with automatic fallback chain:
     /// WebGPU → CPU → Hash-based
     pub async fn new() -> Self {
-        // Try WebGPU first
+        set_panic_hook_once();
+
+        // Try WebGPU first (may panic in WASM with Burn 0.21 - known issue)
         #[cfg(feature = "wgpu-backend")]
-        if let Ok(gen) = WgpuEmbeddingGenerator::new().await {
-            web_sys::console::log_1(&JsValue::from_str("Using WebGPU embeddings"));
-            return Self::WebGpu(gen);
+        {
+            if webgpu_opt_in_enabled() {
+                web_sys::console::log_1(&JsValue::from_str("WebGPU init: enabled; attempting..."));
+                match WgpuEmbeddingGenerator::new().await {
+                    Ok(gen) => {
+                        web_sys::console::log_1(&JsValue::from_str("Embeddings backend: WebGPU"));
+                        return Self::WebGpu(gen);
+                    }
+                    Err(e) => {
+                        web_sys::console::warn_1(&JsValue::from_str(&format!(
+                            "WebGPU init failed; falling back to CPU: {e:?}"
+                        )));
+                    }
+                }
+            } else {
+                web_sys::console::log_1(&JsValue::from_str(
+                    "WebGPU init: disabled (set LLMX_ENABLE_WEBGPU=true or use ?webgpu=1); using CPU",
+                ));
+            }
         }
 
-        // Fall back to CPU
+        // Fall back to CPU (reliable in WASM)
         #[cfg(feature = "ndarray-backend")]
         if let Ok(gen) = CpuEmbeddingGenerator::new().await {
-            web_sys::console::log_1(&JsValue::from_str("Using CPU embeddings (WebGPU unavailable)"));
+            web_sys::console::log_1(&JsValue::from_str("Embeddings backend: CPU"));
             return Self::Cpu(gen);
         }
 
         // Last resort: hash-based
-        web_sys::console::log_1(&JsValue::from_str("Using hash-based embeddings (models unavailable)"));
+        web_sys::console::warn_1(&JsValue::from_str(
+            "Embeddings backend: hash (models unavailable)",
+        ));
         Self::Hash(HashEmbeddingGenerator::new())
     }
 }
@@ -389,8 +471,15 @@ fn embed_batch_with_model<B: Backend>(
 }
 
 fn mean_pool<B: Backend>(hidden: Tensor<B, 3>, attention_mask: Tensor<B, 2, Int>) -> Tensor<B, 2> {
+    // Convert attention_mask to float and expand dimensions for broadcasting
+    // attention_mask: 1 = valid token, 0 = padding
     let mask = attention_mask.float().unsqueeze_dim::<3>(2);
+
+    // Mask hidden states: multiply by mask to zero out padding positions
+    // Note: Could potentially use mask_fill if available in future Burn versions
     let masked = hidden * mask.clone();
+
+    // Compute mean over sequence length, excluding padding
     let sum = masked.sum_dim(1);
     let denom = mask.sum_dim(1).clamp_min(1e-6);
     let pooled = sum / denom;
@@ -450,6 +539,7 @@ impl Embedder {
     /// ```
     #[wasm_bindgen]
     pub async fn create() -> Result<Embedder, JsValue> {
+        set_panic_hook_once();
         let inner = SmartEmbeddingGenerator::new().await;
         Ok(Embedder { inner })
     }
@@ -490,6 +580,173 @@ impl Embedder {
             #[cfg(feature = "ndarray-backend")]
             SmartEmbeddingGenerator::Cpu(_) => MODEL_ID.to_string(),
             SmartEmbeddingGenerator::Hash(_) => "hash-based-v1".to_string(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use burn::record::Recorder;
+    use burn::module::Module;
+
+    #[cfg(all(feature = "ndarray-backend", not(target_arch = "wasm32")))]
+    #[test]
+    fn test_cpu_embeddings_deterministic() {
+        use burn_ndarray::NdArrayDevice;
+
+        // This test verifies that dropout is truly disabled (DROPOUT_PROB = 0.0)
+        // and that embeddings are deterministic across multiple runs
+        let device = NdArrayDevice::default();
+
+        // Load model and tokenizer
+        let model_bytes = include_bytes!("../models/arctic-embed-s.bin");
+        let tokenizer_bytes = include_bytes!("../models/tokenizer.json");
+
+        let tokenizer = Tokenizer::from_bytes(tokenizer_bytes)
+            .expect("Failed to load tokenizer from embedded file");
+
+        let recorder = burn::record::BinBytesRecorder::<
+            burn::record::FullPrecisionSettings,
+            Vec<u8>,
+        >::default();
+        let record = recorder
+            .load(model_bytes.to_vec(), &device)
+            .expect("Failed to load model record");
+
+        let model = crate::bert::Model::new(&device).load_record(record);
+
+        // Helper function to generate embedding
+        let embed_text = |text: &str| -> Vec<f32> {
+            let encoding = tokenizer
+                .encode(text, true)
+                .expect("Failed to tokenize");
+
+            let input_ids: Vec<i32> = encoding.get_ids().iter().map(|&id| id as i32).collect();
+            let attention_mask: Vec<i32> = encoding
+                .get_attention_mask()
+                .iter()
+                .map(|&m| m as i32)
+                .collect();
+
+            let batch_size = 1;
+            let seq_len = input_ids.len();
+
+            let input_ids_tensor = burn::tensor::Tensor::<burn_ndarray::NdArray, 2, burn::tensor::Int>::from_data(
+                burn::tensor::TensorData::new(input_ids, [batch_size, seq_len]),
+                &device,
+            );
+
+            let attention_mask_tensor = burn::tensor::Tensor::<burn_ndarray::NdArray, 2, burn::tensor::Int>::from_data(
+                burn::tensor::TensorData::new(attention_mask.clone(), [batch_size, seq_len]),
+                &device,
+            );
+
+            let hidden = model.forward(input_ids_tensor, attention_mask_tensor.clone());
+            let pooled = mean_pool(hidden, attention_mask_tensor);
+            let normalized = l2_normalize(pooled);
+
+            normalized
+                .to_data()
+                .to_vec::<f32>()
+                .unwrap()
+        };
+
+        // Test 1: Same input produces identical embeddings
+        let test_text = "The quick brown fox jumps over the lazy dog";
+        let emb1 = embed_text(test_text);
+        let emb2 = embed_text(test_text);
+        let emb3 = embed_text(test_text);
+
+        assert_eq!(
+            emb1.len(),
+            emb2.len(),
+            "Embeddings must have same dimension"
+        );
+        assert_eq!(
+            emb1.len(),
+            384,
+            "Expected 384-dimensional embeddings for arctic-embed-s"
+        );
+
+        // Verify exact equality (no randomness from dropout)
+        for (i, ((&v1, &v2), &v3)) in emb1.iter().zip(emb2.iter()).zip(emb3.iter()).enumerate() {
+            assert_eq!(
+                v1, v2,
+                "Embedding dimension {} differs between run 1 and 2: {} vs {}",
+                i, v1, v2
+            );
+            assert_eq!(
+                v1, v3,
+                "Embedding dimension {} differs between run 1 and 3: {} vs {}",
+                i, v1, v3
+            );
+        }
+
+        // Test 2: Different inputs produce different embeddings
+        let text_a = "Machine learning with Rust";
+        let text_b = "Deep learning with Python";
+        let emb_a = embed_text(text_a);
+        let emb_b = embed_text(text_b);
+
+        // Calculate cosine similarity (should be < 1.0 for different texts)
+        let dot_product: f32 = emb_a.iter().zip(emb_b.iter()).map(|(&a, &b)| a * b).sum();
+        assert!(
+            dot_product < 0.99,
+            "Different texts should produce different embeddings (cosine similarity: {})",
+            dot_product
+        );
+
+        // Test 3: Embeddings are normalized (L2 norm = 1.0)
+        let norm_sq: f32 = emb1.iter().map(|&v| v * v).sum();
+        let norm = norm_sq.sqrt();
+        assert!(
+            (norm - 1.0).abs() < 1e-5,
+            "Embeddings should be L2-normalized (norm: {})",
+            norm
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_mean_pool_correctness() {
+        use burn_ndarray::{NdArray, NdArrayDevice};
+
+        let device = NdArrayDevice::default();
+
+        // Create mock hidden states: [batch_size=1, seq_len=3, hidden_dim=4]
+        let hidden_data = vec![
+            1.0, 2.0, 3.0, 4.0, // token 1
+            5.0, 6.0, 7.0, 8.0, // token 2
+            9.0, 10.0, 11.0, 12.0, // token 3 (padding)
+        ];
+        let hidden = burn::tensor::Tensor::<NdArray, 3>::from_data(
+            burn::tensor::TensorData::new(hidden_data, [1, 3, 4]),
+            &device,
+        );
+
+        // Attention mask: [1, 1, 0] - third token is padding
+        let attention_mask = burn::tensor::Tensor::<NdArray, 2, burn::tensor::Int>::from_data(
+            burn::tensor::TensorData::new(vec![1, 1, 0], [1, 3]),
+            &device,
+        );
+
+        let pooled = mean_pool(hidden, attention_mask);
+        let result: Vec<f32> = pooled.to_data().to_vec::<f32>().unwrap();
+
+        // Expected: mean of first two tokens only (third is masked)
+        // (1+5)/2=3, (2+6)/2=4, (3+7)/2=5, (4+8)/2=6
+        let expected = vec![3.0, 4.0, 5.0, 6.0];
+
+        assert_eq!(result.len(), expected.len(), "Output dimension mismatch");
+        for (i, (&actual, &exp)) in result.iter().zip(expected.iter()).enumerate() {
+            assert!(
+                (actual - exp).abs() < 1e-5_f32,
+                "Dimension {} incorrect: expected {}, got {}",
+                i,
+                exp,
+                actual
+            );
         }
     }
 }

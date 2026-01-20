@@ -2,6 +2,7 @@ use crate::model::{Chunk, ChunkKind};
 use regex::Regex;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
+use std::collections::HashMap;
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
@@ -24,7 +25,7 @@ pub fn detect_kind(path: &str) -> ChunkKind {
         ChunkKind::JavaScript
     } else if lower.ends_with(".html") || lower.ends_with(".htm") {
         ChunkKind::Html
-    } else if lower.ends_with(".txt") {
+    } else if lower.ends_with(".txt") || lower.ends_with(".log") {
         ChunkKind::Text
     } else if lower.ends_with(".png")
         || lower.ends_with(".jpg")
@@ -125,6 +126,51 @@ pub fn tokenize(text: &str) -> Vec<String> {
     tokens
 }
 
+pub(crate) fn tokenize_counts(text: &str, counts: &mut HashMap<String, usize>) -> usize {
+    const MAX_TOKEN_LEN: usize = 96;
+    let mut buf = [0u8; MAX_TOKEN_LEN];
+    let mut len = 0usize;
+    let mut buf_too_long = false;
+    let mut doc_len = 0usize;
+
+    let mut flush = |buf: &[u8], len: usize, buf_too_long: bool| {
+        if len == 0 || buf_too_long {
+            return;
+        }
+        let token = unsafe { std::str::from_utf8_unchecked(&buf[..len]) };
+        if is_noise_token(token) {
+            return;
+        }
+        doc_len += 1;
+        if let Some(value) = counts.get_mut(token) {
+            *value += 1;
+        } else {
+            counts.insert(token.to_string(), 1);
+        }
+    };
+
+    for &byte in text.as_bytes() {
+        if byte.is_ascii_alphanumeric() {
+            if len < MAX_TOKEN_LEN {
+                buf[len] = byte.to_ascii_lowercase();
+                len += 1;
+            } else {
+                buf_too_long = true;
+            }
+        } else if len > 0 {
+            flush(&buf, len, buf_too_long);
+            len = 0;
+            buf_too_long = false;
+        }
+    }
+
+    if len > 0 {
+        flush(&buf, len, buf_too_long);
+    }
+
+    doc_len
+}
+
 pub fn snippet(text: &str, max_len: usize) -> String {
     if text.len() <= max_len {
         return text.to_string();
@@ -132,6 +178,40 @@ pub fn snippet(text: &str, max_len: usize) -> String {
     let mut out = text.chars().take(max_len).collect::<String>();
     out.push_str("...");
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{tokenize, tokenize_counts};
+    use std::collections::HashMap;
+
+    #[test]
+    fn tokenize_counts_matches_tokenize_doc_len() {
+        let inputs = [
+            "",
+            "Hello world",
+            "Prev next show more",
+            "abc DEF 123 123 123",
+            "sha256: a80e2e953bcd6a2cfe102043d84adfead9f21b4c2f89fa70527eebf4c2cf0821",
+            "Mix-of_things-and123symbols",
+        ];
+
+        for input in inputs {
+            let expected = tokenize(input);
+            let mut counts = HashMap::new();
+            let doc_len = tokenize_counts(input, &mut counts);
+
+            assert_eq!(
+                doc_len,
+                expected.len(),
+                "doc_len mismatch for input: {input}"
+            );
+
+            for token in expected {
+                assert!(counts.contains_key(&token), "missing token {token} for input: {input}");
+            }
+        }
+    }
 }
 
 #[allow(dead_code)]
@@ -177,18 +257,44 @@ pub fn slugify(input: &str) -> String {
 }
 
 pub fn build_chunk_refs(chunks: &[Chunk]) -> BTreeMap<String, String> {
+    fn base36(mut value: usize) -> String {
+        const DIGITS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+        if value == 0 {
+            return "0".to_string();
+        }
+        let mut out = Vec::new();
+        while value > 0 {
+            let digit = value % 36;
+            out.push(DIGITS[digit]);
+            value /= 36;
+        }
+        out.reverse();
+        String::from_utf8(out).unwrap_or_else(|_| "0".to_string())
+    }
+
+    // Use short, deterministic refs (`c0001`, base36) to minimize token overhead in
+    // `manifest.llm.tsv` and chunk filenames. Ordering is deterministic by path + start_line.
+    let mut sorted: Vec<&Chunk> = chunks.iter().collect();
+    sorted.sort_by(|a, b| match a.path.cmp(&b.path) {
+        std::cmp::Ordering::Equal => match a.start_line.cmp(&b.start_line) {
+            std::cmp::Ordering::Equal => match a.end_line.cmp(&b.end_line) {
+                std::cmp::Ordering::Equal => a.id.cmp(&b.id),
+                other => other,
+            },
+            other => other,
+        },
+        other => other,
+    });
+
+    let width = base36(sorted.len().max(1)).len().max(4);
     let mut refs = BTreeMap::new();
     let mut seen = BTreeSet::new();
 
-    for chunk in chunks {
-        let mut prefix_len = 12usize.min(chunk.id.len());
-        let mut ref_str = chunk.id[..prefix_len].to_string();
-        while seen.contains(&ref_str) && prefix_len < chunk.id.len() {
-            prefix_len = (prefix_len + 4).min(chunk.id.len());
-            ref_str = chunk.id[..prefix_len].to_string();
-        }
+    for (idx, chunk) in sorted.into_iter().enumerate() {
+        let raw = base36(idx + 1);
+        let mut ref_str = format!("c{:0>width$}", raw, width = width);
         if seen.contains(&ref_str) {
-            ref_str = format!("{}-{}", chunk.id, chunk.chunk_index);
+            ref_str = format!("c{:0>width$}-{}", raw, idx + 1, width = width);
         }
         seen.insert(ref_str.clone());
         refs.insert(chunk.id.clone(), ref_str);

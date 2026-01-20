@@ -15,9 +15,16 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{
-    Event, IdbDatabase, IdbOpenDbRequest, IdbRequest, IdbTransactionMode, Request, RequestInit,
+    Event, IdbDatabase, IdbFactory, IdbOpenDbRequest, IdbRequest, IdbTransactionMode, Request, RequestInit,
     RequestMode, Response,
 };
+
+/// Get global scope (works in both window and worker contexts)
+fn global_scope() -> Result<js_sys::Object, JsValue> {
+    js_sys::global()
+        .dyn_into()
+        .map_err(|_| JsValue::from_str("Could not access global scope"))
+}
 
 pub const MODEL_ID: &str = "arctic-embed-s-q8-a80e2e953bcd";
 const MODEL_CACHE_KEY: &str = "arctic-embed-s-q8-a80e2e953bcd.bin";
@@ -27,6 +34,11 @@ const MODEL_URL: &str = match option_env!("LLMX_EMBEDDING_MODEL_URL") {
     None => "",
 };
 const MAX_MODEL_BYTES: usize = 80 * 1024 * 1024;
+
+// Model format version - must match build.rs serialization
+// Format: BinBytesRecorder<FullPrecisionSettings> with INT8 Q8S quantized weights
+#[allow(dead_code)]
+const MODEL_FORMAT_VERSION: u8 = 1;
 const MIN_FETCH_INTERVAL_MS: f64 = 5_000.0;
 const MAX_FETCH_RETRIES: u32 = 3;
 const ALLOWED_MODEL_ORIGINS: [&str; 2] = ["https://cdn.jsdelivr.net/", "https://huggingface.co/"];
@@ -54,8 +66,19 @@ pub async fn load_model_cpu(
 }
 
 fn model_from_bytes<B: Backend>(bytes: &[u8], device: &B::Device) -> Result<Model<B>, RecorderError> {
+    // CRITICAL: Must match build.rs recorder settings
+    // Uses FullPrecisionSettings - INT8 Q8S quantization is transparent during deserialization
+    // Format validation is provided by SHA256 check during fetch
     let recorder = BinBytesRecorder::<FullPrecisionSettings, Vec<u8>>::default();
     let record: <Model<B> as Module<B>>::Record = recorder.load(bytes.to_vec(), device)?;
+
+    #[cfg(debug_assertions)]
+    web_sys::console::log_1(&JsValue::from_str(&format!(
+        "Model loaded: format version {}, {} bytes",
+        MODEL_FORMAT_VERSION,
+        bytes.len()
+    )));
+
     Ok(Model::new(device).load_record(record))
 }
 
@@ -85,7 +108,10 @@ pub(crate) async fn fetch_with_cache(
     }
 
     if url.is_empty() {
-        return Err(JsValue::from_str("Resource URL not configured"));
+        return Err(JsValue::from_str(
+            "Embedding model URL not configured. Set LLMX_EMBEDDING_MODEL_URL environment \
+             variable at build time or serve the model from ./models/ at runtime."
+        ));
     }
 
     validate_url_origin(url, allowed_origins)?;
@@ -123,8 +149,13 @@ fn validate_final_fetch_url(
         return validate_url_origin(final_url, allowed_origins);
     }
 
-    let window = web_sys::window().ok_or_else(|| JsValue::from_str("No window object"))?;
-    let origin = window.location().origin()?;
+    // Get origin from location (works in both window and worker)
+    let global = global_scope()?;
+    let location = js_sys::Reflect::get(&global, &JsValue::from_str("location"))?;
+    let origin = js_sys::Reflect::get(&location, &JsValue::from_str("origin"))?
+        .as_string()
+        .ok_or_else(|| JsValue::from_str("Could not get origin"))?;
+
     if final_url.starts_with(&origin) {
         Ok(())
     } else {
@@ -186,8 +217,13 @@ async fn try_fetch(
     opts.set_mode(RequestMode::Cors);
 
     let request = Request::new_with_str_and_init(url, &opts)?;
-    let window = web_sys::window().ok_or_else(|| JsValue::from_str("No window object"))?;
-    let resp_value = JsFuture::from(window.fetch_with_request(&request)).await?;
+
+    // Use global fetch (works in both window and worker)
+    let global = global_scope()?;
+    let fetch = js_sys::Reflect::get(&global, &JsValue::from_str("fetch"))?;
+    let fetch_fn = fetch.dyn_into::<js_sys::Function>()?;
+    let promise = fetch_fn.call1(&global, &request)?;
+    let resp_value = JsFuture::from(js_sys::Promise::from(promise)).await?;
     let resp: Response = resp_value.dyn_into()?;
 
     if !resp.ok() {
@@ -219,21 +255,26 @@ async fn try_fetch(
 }
 
 async fn sleep_ms(ms: i32) -> Result<(), JsValue> {
-    let window = web_sys::window().ok_or_else(|| JsValue::from_str("No window object"))?;
+    let global = global_scope()?;
     let promise = js_sys::Promise::new(&mut |resolve, reject| {
         let resolve = resolve.clone();
         let callback = Closure::wrap(Box::new(move || {
             let _ = resolve.call0(&JsValue::NULL);
         }) as Box<dyn FnMut()>);
 
-        if window
-            .set_timeout_with_callback_and_timeout_and_arguments_0(
-                callback.as_ref().unchecked_ref(),
-                ms,
-            )
-            .is_err()
-        {
-            let _ = reject.call1(&JsValue::NULL, &JsValue::from_str("Failed to schedule retry"));
+        // Use setTimeout from global scope (works in both window and worker)
+        let set_timeout = js_sys::Reflect::get(&global, &JsValue::from_str("setTimeout"))
+            .and_then(|v| v.dyn_into::<js_sys::Function>().map_err(|_| JsValue::from_str("setTimeout not found")));
+
+        if let Ok(set_timeout_fn) = set_timeout {
+            if set_timeout_fn
+                .call2(&global, callback.as_ref().unchecked_ref(), &JsValue::from_f64(ms as f64))
+                .is_err()
+            {
+                let _ = reject.call1(&JsValue::NULL, &JsValue::from_str("Failed to schedule retry"));
+            }
+        } else {
+            let _ = reject.call1(&JsValue::NULL, &JsValue::from_str("setTimeout not available"));
         }
         callback.forget();
     });
@@ -259,10 +300,12 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 async fn open_db() -> Result<IdbDatabase, JsValue> {
-    let window = web_sys::window().ok_or_else(|| JsValue::from_str("No window object"))?;
-    let indexed_db = window
-        .indexed_db()?
-        .ok_or_else(|| JsValue::from_str("IndexedDB unavailable"))?;
+    // Get IndexedDB from global scope (works in both window and worker)
+    let global = global_scope()?;
+    let indexed_db_value = js_sys::Reflect::get(&global, &JsValue::from_str("indexedDB"))?;
+    let indexed_db: IdbFactory = indexed_db_value
+        .dyn_into()
+        .map_err(|_| JsValue::from_str("IndexedDB unavailable"))?;
     let request = indexed_db.open_with_u32(DB_NAME, DB_VERSION)?;
     let store_name = STORE_NAME.to_string();
 

@@ -11,6 +11,11 @@ const MODEL_BIN_FILE: &str = "models/arctic-embed-s.bin";
 const MODEL_SRC_FILE: &str = "src/bert.rs";
 const MAX_MODEL_BYTES: u64 = 100 * 1024 * 1024;
 
+// Model format version - must match model_loader.rs expectations
+// Format: BinFileRecorder<FullPrecisionSettings> + INT8 Q8S quantization
+#[allow(dead_code)]
+const MODEL_FORMAT_VERSION: u8 = 1;
+
 #[allow(dead_code)]
 mod model {
     include!("src/bert.rs");
@@ -105,19 +110,27 @@ fn convert_safetensors_to_bin(
     type Backend = NdArray<f32>;
     let device = NdArrayDevice::default();
 
+    // Map HuggingFace PyTorch weight keys to Burn module structure
+    // These patterns are critical - if they don't match, model loading will fail
     let load_args = LoadArgs::new(PathBuf::from(safetensors_path))
         .with_adapter_type(AdapterType::PyTorch)
-        .with_key_remap("^bert\\.(.*)$", "$1")
-        .with_key_remap("^model\\.(.*)$", "$1")
-        .with_key_remap("attention\\.self\\.(.*)$", "attention.self_attn.$1")
-        .with_key_remap("^LayerNorm\\.(.*)$", "layer_norm.$1")
-        .with_key_remap("\\.LayerNorm\\.", ".layer_norm.");
+        .with_key_remap("^bert\\.(.*)$", "$1")                              // Remove bert. prefix
+        .with_key_remap("^model\\.(.*)$", "$1")                             // Remove model. prefix
+        .with_key_remap("attention\\.self\\.(.*)$", "attention.self_attn.$1")  // Rename self -> self_attn
+        .with_key_remap("^LayerNorm\\.(.*)$", "layer_norm.$1")              // Pascal -> snake case
+        .with_key_remap("\\.LayerNorm\\.", ".layer_norm.");                 // Pascal -> snake case (nested)
+
+    println!("cargo:warning=Loading safetensors with key remapping for Burn module structure");
 
     let record: <model::BertModel<Backend> as Module<Backend>>::Record =
         SafetensorsFileRecorder::<FullPrecisionSettings>::default()
             .load(load_args, &device)?;
 
+    println!("cargo:warning=Safetensors loaded successfully, all keys matched");
+
     let model = model::BertModel::<Backend>::new(&device).load_record(record);
+
+    // Apply INT8 Q8S quantization (tensor-level, signed 8-bit)
     let scheme = <<Backend as BurnBackend>::QuantizedTensorPrimitive as QTensorPrimitive>::default_scheme()
         .with_value(QuantValue::Q8S)
         .with_level(QuantLevel::Tensor)
@@ -128,6 +141,8 @@ fn convert_safetensors_to_bin(
     };
     let quantized_model = model.quantize_weights(&mut quantizer);
 
+    // CRITICAL: Must match model_loader.rs recorder settings
+    // Uses FullPrecisionSettings - quantization is transparent during serialization
     BinFileRecorder::<FullPrecisionSettings>::default()
         .record(quantized_model.into_record(), PathBuf::from(bin_path))?;
 

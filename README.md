@@ -38,22 +38,22 @@ llmx builds a **searchable index** with **semantic chunk exports** that enable a
 
 ## ![hierarchy](.github/assets/icons/hierarchy-24x24.png) Semantic Outline Format
 
-llmx exports an **llm.md manifest** with rich semantic context for intelligent chunk selection:
+llmx exports token-efficient manifests (`llm.md` + `manifest.llm.tsv`) with semantic labels for intelligent chunk selection:
 
 ### Code Files
 ```
 ### src/auth.js (js, 47 lines)
-- a1b2c3d4 (1-15) `loginUser()`
-- e5f6g7h8 (17-30) `validateToken()`
-- x9y0z1a2 (32-47) `logout()`
+- c0001 (1-15) `loginUser()`
+- c0002 (17-30) `validateToken()`
+- c0003 (32-47) `logout()`
 ```
 
 ### Markdown Documentation
 ```
 ### docs/api-reference.md (md, 234 lines)
-- p4q5r6s7 (1-45) API Reference
-- t8u9v0w1 (46-102) API Reference > Authentication
-- a2b3c4d5 (103-156) API Reference > Rate Limiting > Quotas
+- c0004 (1-45) API Reference
+- c0005 (46-102) API Reference > Authentication
+- c0006 (103-156) API Reference > Rate Limiting > Quotas
 ```
 
 Agents can **scan headings, function names, and file types** to select relevant chunks—without opening any files.
@@ -82,7 +82,7 @@ Open `http://127.0.0.1:8001` in your browser.
 1. **Select folder** (Chromium) or **drag files** (Firefox/all browsers)
 2. **Wait for indexing** (sub-second for typical repos)
 3. **Search** using the query box
-4. **Export** → Download `export.zip` with `llm.md` + `chunks/*.md`
+4. **Export** → Download an export bundle named after the selected folder (e.g. `my-repo.llmx-1a2b3c4d.zip`)
 
 ---
 
@@ -90,30 +90,28 @@ Open `http://127.0.0.1:8001` in your browser.
 
 ### For Agents
 
-Give the agent the **export directory**:
+Give the agent an export bundle (compact, recommended):
 
 ```
 llmx-export/
-├── llm.md              # Semantic manifest (scan this first)
-├── manifest.json       # Machine-readable index
-├── index.json          # Full index with inverted index
+├── llm.md              # Compact pointer manifest (recommended)
+├── manifest.llm.tsv    # Token-efficient chunk table for LLMs
 └── chunks/
-    ├── a1b2c3d4.md     # Individual chunk files
-    ├── e5f6g7h8.md
+    ├── c0001.md        # Chunk body (minimal header + content)
     └── ...
 ```
 
 **Agent workflow:**
-1. Read `llm.md` to understand structure
-2. Scan for relevant symbols/headings (e.g., `loginUser()`, `Authentication`)
+1. Read `llm.md` for the compact workflow and artifact pointers
+2. Scan `manifest.llm.tsv` to identify relevant files/chunks by label
 3. Open only the matching `chunks/<ref>.md` files
-4. Use `manifest.json` or `index.json` for programmatic search
+4. Download `*.index.json` from the UI only if you need the full index structure
 
 ### For Humans
 
 - **Browse** the web UI for real-time search
 - **Export** for offline analysis
-- **Share** `export.zip` with team members (no server needed)
+- **Share** the downloaded `*.llmx-<id8>.zip` bundle with team members (no server needed)
 
 ---
 

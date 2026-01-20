@@ -1,5 +1,44 @@
 import init, { Embedder, Ingestor } from "./pkg/ingestor_wasm.js";
 
+const urlParams = (() => {
+  try {
+    return new URL(self.location.href).searchParams;
+  } catch {
+    return new URLSearchParams();
+  }
+})();
+const embeddingsRequested = urlParams.get("embeddings") === "1";
+const forceCpu = urlParams.get("cpu") === "1";
+const webGpuParam = urlParams.get("webgpu");
+const webGpuRequested = webGpuParam === "1" || (embeddingsRequested && webGpuParam !== "0" && !forceCpu);
+const forceWebGpu = urlParams.get("force_webgpu") === "1";
+const isFirefox = (() => {
+  const ua = (self.navigator && self.navigator.userAgent) || "";
+  return ua.includes("Firefox/") && !ua.includes("Seamonkey/");
+})();
+const isFirefoxNightly = (() => {
+  const ua = (self.navigator && self.navigator.userAgent) || "";
+  // Nightly user agents usually look like: "Firefox/123.0a1"
+  return /Firefox\/[0-9]+(\.[0-9]+)*a1\b/.test(ua);
+})();
+const webGpuAvailable = Boolean(self.navigator && self.navigator.gpu);
+self.LLMX_ENABLE_WEBGPU = webGpuRequested && webGpuAvailable;
+self.LLMX_ENABLE_EMBEDDINGS = embeddingsRequested;
+if (webGpuRequested && !webGpuAvailable) {
+  console.warn(
+    "WebGPU unavailable (navigator.gpu missing). To use embeddings, either use a WebGPU-capable Chromium browser or add ?cpu=1 to allow slow CPU embeddings."
+  );
+}
+if (webGpuRequested && isFirefox && !isFirefoxNightly && !forceWebGpu) {
+  self.LLMX_ENABLE_WEBGPU = false;
+  console.warn(
+    "WebGPU requested on Firefox, but is disabled by default due to stability issues. Use Chromium, use Firefox Nightly, or add ?force_webgpu=1 to override."
+  );
+}
+if (!embeddingsRequested) {
+  console.log("Embeddings disabled (add ?embeddings=1 to enable).");
+}
+
 let ready = false;
 let ingestor = null;
 let embedder = null;
@@ -8,9 +47,7 @@ let embeddingsMeta = null; // { dim, count, modelId }
 let chunkMeta = null; // Array<{ id, ref, path, kind, start_line, end_line, heading_path, heading_joined, symbol, snippet }>
 let buildEmbeddingsPromise = null;
 
-const readyPromise = init().then(() => {
-  ready = true;
-});
+let readyPromise = null;
 
 function toError(error) {
   if (error instanceof Error) {
@@ -26,16 +63,72 @@ function toError(error) {
   }
 }
 
+function ensureInitStarted() {
+  if (readyPromise) {
+    return readyPromise;
+  }
+
+  readyPromise = (async () => {
+    try {
+      // Be explicit about the WASM path. Some browsers/extensions/tooling can
+      // cause wasm-bindgen's default resolution to fall back to the document base.
+      const wasmUrl = new URL("./pkg/ingestor_wasm_bg.wasm", self.location.href);
+      await init({ module_or_path: wasmUrl });
+      ready = true;
+    } catch (error) {
+      ready = false;
+      throw error;
+    }
+  })();
+
+  return readyPromise;
+}
+
+function attachGlobalErrorLogging() {
+  self.addEventListener("unhandledrejection", (event) => {
+    const reason = event?.reason;
+    const message = `Worker unhandledrejection: ${toError(reason)}`;
+    console.error(message, reason);
+  });
+
+  self.addEventListener("error", (event) => {
+    const message = event?.message ? `Worker error: ${event.message}` : "Worker error";
+    console.error(message, event?.error);
+  });
+}
+
+attachGlobalErrorLogging();
+
 async function ensureReady() {
-  await readyPromise;
+  await ensureInitStarted();
   if (!ready) {
     throw new Error("WASM not initialized");
   }
 }
 
 async function ensureEmbedder() {
+  if (!self.LLMX_ENABLE_EMBEDDINGS) {
+    throw new Error("Embeddings disabled (add ?embeddings=1).");
+  }
+
   if (!embedder) {
-    embedder = await Embedder.create();
+    const requestedBackend = self.LLMX_ENABLE_WEBGPU ? "WebGPU" : "CPU";
+    console.log(`Embedder init: starting (backend=${requestedBackend})`);
+
+    try {
+      embedder = await Embedder.create();
+      console.log(`Embedder init: ready (backend=${requestedBackend})`);
+    } catch (error) {
+      // If WebGPU was requested but failed, try falling back to CPU if allowed
+      if (self.LLMX_ENABLE_WEBGPU && forceCpu) {
+        console.warn(`WebGPU embedder creation failed, falling back to CPU: ${toError(error)}`);
+        self.LLMX_ENABLE_WEBGPU = false;
+        embedder = await Embedder.create();
+        console.log("Embedder init: ready (backend=CPU, fallback)");
+      } else {
+        throw error;
+      }
+    }
   }
   return embedder;
 }
@@ -60,6 +153,7 @@ function passesFilters(chunk, filters) {
 }
 
 function shouldUseEmbeddings() {
+  if (!self.LLMX_ENABLE_EMBEDDINGS) return false;
   if (!embeddings || !embeddingsMeta || !chunkMeta) return false;
   if (!embedder) return false;
   if (embeddingsMeta.modelId !== embedder.modelId()) return false;
@@ -111,6 +205,9 @@ function dotProduct(a, b, bOffset, dim) {
 }
 
 async function buildEmbeddingsIndex() {
+  if (!self.LLMX_ENABLE_EMBEDDINGS) {
+    throw new Error("Embeddings disabled (add ?embeddings=1).");
+  }
   if (!ingestor) {
     throw new Error("No index loaded");
   }
@@ -122,6 +219,12 @@ async function buildEmbeddingsIndex() {
   const refs = index.chunk_refs || {};
   const dim = embed.dimension();
   const modelId = embed.modelId();
+
+  const count = chunks.length;
+  const estimatedMb = (count * dim * 4) / 1024 / 1024;
+  console.log(
+    `Embeddings: building (model=${modelId}, chunks=${count}, dim=${dim}, approx=${estimatedMb.toFixed(1)}MB)`
+  );
 
   chunkMeta = chunks.map((chunk) => {
     const headingPath = Array.isArray(chunk.heading_path) ? chunk.heading_path : [];
@@ -163,7 +266,6 @@ async function buildEmbeddingsIndex() {
     return embeddingsMeta;
   }
 
-  const count = chunkMeta.length;
   const view = new Float32Array(count * dim);
   const batchSize = 8;
 
@@ -190,6 +292,15 @@ async function buildEmbeddingsIndex() {
     delete meta.content;
   }
 
+  // Store embeddings in the index for persistence via exportIndexJson
+  try {
+    ingestor.setEmbeddings(embeddings, modelId, dim);
+    console.log("Embeddings stored in index for persistence");
+  } catch (error) {
+    console.warn("Failed to store embeddings in index:", error);
+    // Non-fatal: embeddings are still available in memory
+  }
+
   return embeddingsMeta;
 }
 
@@ -205,6 +316,18 @@ self.onmessage = async (event) => {
     switch (op) {
       case "ping": {
         self.postMessage({ id, ok: true, data: { ready: true } });
+        return;
+      }
+      case "getCapabilities": {
+        self.postMessage({
+          id,
+          ok: true,
+          data: {
+            webgpu: self.LLMX_ENABLE_WEBGPU,
+            embeddings: self.LLMX_ENABLE_EMBEDDINGS,
+            forceCpu,
+          },
+        });
         return;
       }
       case "ingest": {
@@ -223,6 +346,10 @@ self.onmessage = async (event) => {
         return;
       }
       case "initEmbedder": {
+        if (!self.LLMX_ENABLE_EMBEDDINGS) {
+          throw new Error("Embeddings disabled (add ?embeddings=1).");
+        }
+
         await ensureEmbedder();
         self.postMessage({
           id,
@@ -451,11 +578,51 @@ self.onmessage = async (event) => {
         self.postMessage({ id, ok: true, data: { content } });
         return;
       }
+      case "exportLlmPointer": {
+        if (!ingestor) {
+          throw new Error("No index loaded");
+        }
+        const content = ingestor.exportLlmPointer();
+        self.postMessage({ id, ok: true, data: { content } });
+        return;
+      }
+      case "exportManifestLlmTsv": {
+        if (!ingestor) {
+          throw new Error("No index loaded");
+        }
+        const content = ingestor.exportManifestLlmTsv();
+        self.postMessage({ id, ok: true, data: { content } });
+        return;
+      }
+      case "exportCatalogLlmMd": {
+        if (!ingestor) {
+          throw new Error("No index loaded");
+        }
+        const content = ingestor.exportCatalogLlmMd();
+        self.postMessage({ id, ok: true, data: { content } });
+        return;
+      }
+      case "exportOutline": {
+        if (!ingestor) {
+          throw new Error("No index loaded");
+        }
+        const content = ingestor.exportLlm();
+        self.postMessage({ id, ok: true, data: { content } });
+        return;
+      }
       case "exportZip": {
         if (!ingestor) {
           throw new Error("No index loaded");
         }
         const bytes = ingestor.exportZip();
+        self.postMessage({ id, ok: true, data: { bytes } }, [bytes.buffer]);
+        return;
+      }
+      case "exportZipCompact": {
+        if (!ingestor) {
+          throw new Error("No index loaded");
+        }
+        const bytes = ingestor.exportZipCompact();
         self.postMessage({ id, ok: true, data: { bytes } }, [bytes.buffer]);
         return;
       }

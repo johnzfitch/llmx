@@ -274,6 +274,12 @@ pub fn llmx_index_handler(store: &mut IndexStore, input: IndexInput) -> Result<I
 pub fn llmx_search_handler(store: &mut IndexStore, input: SearchInput) -> Result<SearchOutput> {
     let index = store.load(&input.index_id)?;
 
+    // Build chunk lookup map once - O(n) instead of O(n*m) lookups
+    let chunk_map: std::collections::HashMap<&str, &crate::Chunk> = index.chunks
+        .iter()
+        .map(|c| (c.id.as_str(), c))
+        .collect();
+
     let filters = input.filters.as_ref().map(|f| SearchFilters {
         path_exact: None,
         path_prefix: f.path_prefix.clone(),
@@ -327,9 +333,8 @@ pub fn llmx_search_handler(store: &mut IndexStore, input: SearchInput) -> Result
     let mut truncated = vec![];
 
     for result in &search_results {
-        let chunk = index.chunks.iter()
-            .find(|c| c.id == result.chunk_id)
-            .context("Chunk not found")?;
+        let chunk = chunk_map.get(result.chunk_id.as_str())
+            .context("Chunk not found in index")?;
 
         if tokens_used + chunk.token_estimate <= max_tokens {
             results.push(SearchResultOutput {

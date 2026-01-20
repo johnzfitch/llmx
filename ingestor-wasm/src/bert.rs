@@ -14,7 +14,7 @@ const INTERMEDIATE_SIZE: usize = 1_536;
 const MAX_POSITION_EMBEDDINGS: usize = 512;
 const TYPE_VOCAB_SIZE: usize = 2;
 const LAYER_NORM_EPS: f64 = 1e-12;
-const DROPOUT_PROB: f64 = 0.1;
+const DROPOUT_PROB: f64 = 0.0;
 
 pub type Model<B> = BertModel<B>;
 
@@ -114,6 +114,9 @@ impl<B: Backend> BertSelfAttention<B> {
             .reshape([batch_size, seq_len, NUM_ATTENTION_HEADS, head_dim])
             .swap_dims(1, 2);
 
+        // Note: attention_mask.clone() here is necessary as Burn's attention() takes Option<Tensor>
+        // This clone happens 12× per forward pass (once per layer)
+        // Potential optimization: Check if future Burn versions accept Option<&Tensor>
         let context = attention(query, key, value, Some(attention_mask.clone()));
         context
             .swap_dims(1, 2)
@@ -323,6 +326,9 @@ impl<B: Backend> BertModel<B> {
 }
 
 fn build_attention_mask<B: Backend>(attention_mask: Tensor<B, 2, Int>) -> Tensor<B, 4, Bool> {
+    // Input format: 1 = valid token (attend), 0 = padding (mask out)
+    // Output format for Burn attention: true = mask out, false = attend
+    // Inversion via bool_not() converts standard BERT mask to Burn's expected format
     let mask = attention_mask.bool().bool_not();
     mask.unsqueeze_dim::<3>(1).unsqueeze_dim::<4>(2)
 }

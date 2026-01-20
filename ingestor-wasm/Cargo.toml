@@ -21,9 +21,9 @@ sha2 = "0.10"
 getrandom = { version = "0.3.3", default-features = false, features = ["wasm_js"] }
 
 # Phase 6: Burn framework for WebGPU embeddings
-burn = { version = "0.20", default-features = false }
-burn-wgpu = { version = "0.20", optional = true }
-burn-ndarray = { version = "0.20", optional = true }
+burn = { git = "https://github.com/tracel-ai/burn", branch = "main", default-features = false }
+burn-wgpu = { git = "https://github.com/tracel-ai/burn", branch = "main", optional = true }
+burn-ndarray = { git = "https://github.com/tracel-ai/burn", branch = "main", optional = true }
 # Tokenizers with WASM support (using unstable_wasm feature for pure Rust regex)
 tokenizers = { version = "0.20", default-features = false, features = ["unstable_wasm"] }
 
@@ -54,18 +54,18 @@ features = [
 ]
 
 [features]
-default = ["wgpu-backend", "ndarray-backend"]
+default = ["ndarray-backend"]
 wgpu-backend = ["burn-wgpu"]
 ndarray-backend = ["burn-ndarray"]
 
 [build-dependencies]
-burn = { version = "0.20", default-features = false }
-burn-ndarray = { version = "0.20" }
-burn-import = { version = "0.20" }
+burn = { git = "https://github.com/tracel-ai/burn", branch = "main", default-features = false }
+burn-ndarray = { git = "https://github.com/tracel-ai/burn", branch = "main" }
+burn-import = { git = "https://github.com/tracel-ai/burn", branch = "main" }
 reqwest = { version = "0.12", features = ["blocking"] }
 
 [dev-dependencies]
-burn-import = { version = "0.20" }
+burn-import = { git = "https://github.com/tracel-ai/burn", branch = "main" }
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = false

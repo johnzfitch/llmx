@@ -4,6 +4,7 @@ const state = {
   indexLoaded: false,
   busy: false,
   indexId: null,
+  sourceLabel: null,
   files: [],
   searchSeq: 0,
 };
@@ -22,22 +23,64 @@ const elements = {
   symbolFilter: document.getElementById("symbol-filter"),
   kindFilter: document.getElementById("kind-filter"),
   runSearch: document.getElementById("run-search"),
+  buildEmbeddings: document.getElementById("build-embeddings"),
   results: document.getElementById("results"),
   chunkView: document.getElementById("chunk-view"),
   chunkTitle: document.getElementById("chunk-title"),
   chunkContent: document.getElementById("chunk-content"),
   closeChunk: document.getElementById("close-chunk"),
-  exportLlm: document.getElementById("export-llm"),
-  exportZip: document.getElementById("export-zip"),
-  saveIndex: document.getElementById("save-index"),
+  downloadExport: document.getElementById("download-export"),
+  downloadIndexJson: document.getElementById("download-index-json"),
   indexId: document.getElementById("index-id"),
   chunkCount: document.getElementById("chunk-count"),
   warningCount: document.getElementById("warning-count"),
   warningList: document.getElementById("warning-list"),
-  savedIndexes: document.getElementById("saved-indexes"),
-  loadSavedIndex: document.getElementById("load-saved-index"),
-  deleteSavedIndex: document.getElementById("delete-saved-index"),
+  backendInfo: document.getElementById("backend-info"),
 };
+
+const urlParams = (() => {
+  try {
+    return new URL(window.location.href).searchParams;
+  } catch {
+    return new URLSearchParams();
+  }
+})();
+const embeddingsRequested = urlParams.get("embeddings") === "1";
+const forceCpu = urlParams.get("cpu") === "1";
+const webGpuParam = urlParams.get("webgpu");
+const webGpuRequested = webGpuParam === "1" || (embeddingsRequested && webGpuParam !== "0" && !forceCpu);
+const autoEmbeddingsRequested = urlParams.get("auto_embeddings") === "1";
+const forceWebGpu = urlParams.get("force_webgpu") === "1";
+const isFirefox = (() => {
+  const ua = window.navigator?.userAgent || "";
+  return ua.includes("Firefox/") && !ua.includes("Seamonkey/");
+})();
+const isFirefoxNightly = (() => {
+  const ua = window.navigator?.userAgent || "";
+  // Nightly user agents usually look like: "Firefox/123.0a1"
+  return /Firefox\/[0-9]+(\.[0-9]+)*a1\b/.test(ua);
+})();
+const webGpuAvailable = Boolean(window.navigator && window.navigator.gpu);
+globalThis.LLMX_ENABLE_WEBGPU = webGpuRequested && webGpuAvailable;
+globalThis.LLMX_ENABLE_EMBEDDINGS = embeddingsRequested;
+if (webGpuRequested && !webGpuAvailable) {
+  console.warn(
+    "WebGPU unavailable (navigator.gpu missing). To use embeddings, either use a WebGPU-capable Chromium browser or add ?cpu=1 to allow slow CPU embeddings."
+  );
+}
+if (webGpuRequested && isFirefox && !isFirefoxNightly && !forceWebGpu) {
+  globalThis.LLMX_ENABLE_WEBGPU = false;
+  console.warn(
+    "WebGPU requested on Firefox, but is disabled by default due to stability issues. Use Chromium, use Firefox Nightly, or add ?force_webgpu=1 to override."
+  );
+}
+if (embeddingsRequested && !globalThis.LLMX_ENABLE_WEBGPU && !forceCpu) {
+  console.warn(
+    "Embeddings require WebGPU by default. Use a WebGPU-capable Chromium browser, or add ?cpu=1 to allow slow CPU embeddings. On Firefox, add ?force_webgpu=1 to override the default WebGPU disable."
+  );
+}
+const shouldAutoBuildEmbeddings =
+  embeddingsRequested && (globalThis.LLMX_ENABLE_WEBGPU || (autoEmbeddingsRequested && forceCpu));
 
 const ALLOWED_EXTENSIONS = [
   ".md",
@@ -58,12 +101,33 @@ const ALLOWED_EXTENSIONS = [
 ];
 const SKIP_DIRS = [".git", "node_modules", "target", "dist", "build", ".cache"];
 const DEFAULT_LIMITS = {
-  maxFileBytes: 10 * 1024 * 1024,
-  maxTotalBytes: 50 * 1024 * 1024,
+  maxFileBytes: 5 * 1024 * 1024,     // 5MB per file (reduced from 10MB)
+  maxTotalBytes: 25 * 1024 * 1024,   // 25MB total (reduced from 50MB)
+  maxFileCount: 500,                  // Maximum 500 files
+  warnFileBytes: 1 * 1024 * 1024,    // Warn at 1MB per file
+  warnTotalBytes: 10 * 1024 * 1024,  // Warn at 10MB total
 };
 
 function setStatus(message) {
   elements.status.textContent = message;
+}
+
+function updateBackendInfo(backendType, capabilities) {
+  let info = backendType;
+  if (capabilities) {
+    const parts = [];
+    if (capabilities.embeddings) {
+      if (capabilities.webgpu) {
+        parts.push("WebGPU");
+      } else if (capabilities.forceCpu) {
+        parts.push("CPU");
+      }
+    }
+    if (parts.length > 0) {
+      info += ` (${parts.join(", ")})`;
+    }
+  }
+  elements.backendInfo.textContent = info;
 }
 
 function hasFolderPickerSupport() {
@@ -104,7 +168,12 @@ function callWorker(op, payload, transfer) {
 }
 
 function createWorkerBackend() {
-  const worker = new Worker(new URL("./worker.js", import.meta.url), { type: "module" });
+  const workerUrl = new URL("./worker.js", import.meta.url);
+  // Pass feature flags via URL search params (current approach)
+  // Note: Could alternatively pass config via postMessage after worker creation,
+  // which would be more robust for blob URLs, but current approach works for module workers
+  workerUrl.search = window.location.search || "";
+  const worker = new Worker(workerUrl, { type: "module" });
   worker.onmessage = (event) => {
     const msg = event.data || {};
     const pending = pendingCalls.get(msg.id);
@@ -120,6 +189,11 @@ function createWorkerBackend() {
   };
   worker.onerror = (event) => {
     const message = event?.message ? `Worker error: ${event.message}` : "Worker error";
+    if (event?.error?.stack) {
+      console.error(`${message}\n${event.error.stack}`);
+    } else {
+      console.error(message, event?.error);
+    }
     rejectAllPendingWorkerCalls(message);
     setStatus(message);
   };
@@ -145,9 +219,14 @@ function createWorkerBackend() {
   };
 }
 
+// Local backend runs WASM in the main thread (for debugging/comparison)
+// Note: Intentionally duplicates worker.js embedding logic for architectural separation
+// Worker backend: runs in separate thread, doesn't block UI
+// Local backend: runs in main thread, useful for debugging and comparison
 async function createLocalBackend() {
   const wasmModule = await import("./pkg/ingestor_wasm.js");
-  await wasmModule.default();
+  const wasmUrl = new URL("./pkg/ingestor_wasm_bg.wasm", import.meta.url);
+  await wasmModule.default({ module_or_path: wasmUrl });
   const WasmIngestor = wasmModule.Ingestor;
   const WasmEmbedder = wasmModule.Embedder;
   let ingestor = null;
@@ -484,9 +563,18 @@ async function createLocalBackend() {
         case "exportLlm":
           if (!ingestor) throw new Error("No index loaded");
           return { content: ingestor.exportLlm() };
+        case "exportLlmPointer":
+          if (!ingestor) throw new Error("No index loaded");
+          return { content: ingestor.exportLlmPointer() };
+        case "exportOutline":
+          if (!ingestor) throw new Error("No index loaded");
+          return { content: ingestor.exportLlm() };
         case "exportZip":
           if (!ingestor) throw new Error("No index loaded");
           return { bytes: ingestor.exportZip() };
+        case "exportZipCompact":
+          if (!ingestor) throw new Error("No index loaded");
+          return { bytes: ingestor.exportZipCompact() };
         case "files":
           if (!ingestor) throw new Error("No index loaded");
           return { files: await ingestor.files() };
@@ -501,14 +589,6 @@ async function createLocalBackend() {
   };
 }
 
-async function warmEmbeddings() {
-  try {
-    await callWorker("initEmbedder", {});
-  } catch (error) {
-    console.warn("Embedding init skipped:", error);
-  }
-}
-
 async function initWorker() {
   let initError = null;
 
@@ -519,9 +599,18 @@ async function initWorker() {
       throw new Error("Worker did not initialize");
     }
     state.workerReady = true;
+
+    // Query worker capabilities and update UI
+    try {
+      const caps = await callWorker("getCapabilities", {});
+      updateBackendInfo("Worker", caps);
+    } catch (capError) {
+      console.warn("Failed to get worker capabilities:", capError);
+      elements.backendInfo.textContent = "Worker";
+    }
+
     setStatus("Ready for ingestion.");
     await populateSavedIndexes();
-    void warmEmbeddings();
     return;
   } catch (error) {
     initError = error;
@@ -539,9 +628,17 @@ async function initWorker() {
   state.backend = local;
   state.workerReady = true;
   const reason = initError ? ` (${formatErrorForUi(initError)})` : "";
+
+  // Update backend info for local mode
+  const caps = {
+    embeddings: embeddingsRequested,
+    webgpu: globalThis.LLMX_ENABLE_WEBGPU,
+    forceCpu,
+  };
+  updateBackendInfo("Local", caps);
+
   setStatus(`Ready for ingestion (worker disabled)${reason}.`);
   await populateSavedIndexes();
-  void warmEmbeddings();
 }
 
 if (typeof window !== "undefined") {
@@ -565,9 +662,21 @@ async function collectFilesFromInput(fileList) {
   let totalBytes = 0;
   let skippedLarge = 0;
   let skippedTotal = 0;
+  let skippedCount = 0;
+  let rootName = null;
   for (const file of fileList) {
     const path = file.webkitRelativePath || file.name;
+    if (!rootName && file.webkitRelativePath) {
+      const first = String(file.webkitRelativePath).split("/")[0];
+      if (first) {
+        rootName = first;
+      }
+    }
     if (!isAllowedPath(path)) {
+      continue;
+    }
+    if (entries.length >= DEFAULT_LIMITS.maxFileCount) {
+      skippedCount += 1;
       continue;
     }
     if (file.size > DEFAULT_LIMITS.maxFileBytes) {
@@ -581,27 +690,33 @@ async function collectFilesFromInput(fileList) {
     entries.push({ path, file });
     totalBytes += file.size;
   }
-  return { entries, skippedLarge, skippedTotal };
+  return { entries, skippedLarge, skippedTotal, skippedCount, totalBytes, rootName };
 }
 
-async function collectFilesFromHandle(handle, basePath = "", budget = null) {
+async function collectFilesFromHandle(handle, basePath = "", budget = null, rootName = null) {
   const entries = [];
   const shared = budget || {
     totalBytes: 0,
+    fileCount: 0,
     skippedLarge: 0,
     skippedTotal: 0,
+    skippedCount: 0,
   };
   for await (const [name, entry] of handle.entries()) {
     if (entry.kind === "directory") {
       if (SKIP_DIRS.includes(name)) {
         continue;
       }
-      const nested = await collectFilesFromHandle(entry, `${basePath}${name}/`, shared);
+      const nested = await collectFilesFromHandle(entry, `${basePath}${name}/`, shared, rootName);
       entries.push(...nested.entries);
       continue;
     }
     const path = `${basePath}${name}`;
     if (!isAllowedPath(path)) {
+      continue;
+    }
+    if (shared.fileCount >= DEFAULT_LIMITS.maxFileCount) {
+      shared.skippedCount += 1;
       continue;
     }
     const file = await entry.getFile();
@@ -615,8 +730,16 @@ async function collectFilesFromHandle(handle, basePath = "", budget = null) {
     }
     entries.push({ path, file });
     shared.totalBytes += file.size;
+    shared.fileCount += 1;
   }
-  return { entries, skippedLarge: shared.skippedLarge, skippedTotal: shared.skippedTotal };
+  return {
+    entries,
+    skippedLarge: shared.skippedLarge,
+    skippedTotal: shared.skippedTotal,
+    skippedCount: shared.skippedCount,
+    totalBytes: shared.totalBytes,
+    rootName,
+  };
 }
 
 function isImagePath(path) {
@@ -667,6 +790,78 @@ async function fingerprintFile(file) {
   return sha256Hex(combined);
 }
 
+function sanitizeFilenameBase(input) {
+  const raw = String(input || "").trim().toLowerCase();
+  if (!raw) return "project";
+  let out = "";
+  let prevDash = false;
+  for (const ch of raw) {
+    const isOk =
+      (ch >= "a" && ch <= "z") ||
+      (ch >= "0" && ch <= "9") ||
+      ch === "-" ||
+      ch === "_" ||
+      ch === ".";
+    if (isOk) {
+      out += ch;
+      prevDash = false;
+    } else if (!prevDash) {
+      out += "-";
+      prevDash = true;
+    }
+  }
+  out = out.replace(/^-+/, "").replace(/-+$/, "");
+  return out || "project";
+}
+
+function inferSourceLabel(entries, collectedMeta) {
+  const direct = collectedMeta?.rootName;
+  if (direct && String(direct).trim()) {
+    return String(direct).trim();
+  }
+
+  const counts = new Map();
+  for (const entry of entries || []) {
+    const path = entry?.path || "";
+    const first = path.includes("/") ? path.split("/")[0] : "";
+    if (!first) continue;
+    counts.set(first, (counts.get(first) || 0) + 1);
+  }
+  if (!counts.size) return null;
+  let best = null;
+  let bestCount = 0;
+  for (const [name, count] of counts.entries()) {
+    if (count > bestCount) {
+      best = name;
+      bestCount = count;
+    }
+  }
+  const total = (entries || []).length || 1;
+  if (best && bestCount / total >= 0.6) {
+    return best;
+  }
+  return null;
+}
+
+function exportBaseName() {
+  const label = sanitizeFilenameBase(state.sourceLabel || "project");
+  const id = typeof state.indexId === "string" ? state.indexId : "";
+  const shortId = id ? id.slice(0, 8) : "";
+  return shortId ? `${label}.llmx-${shortId}` : `${label}.llmx`;
+}
+
+function updateExportUiLabels() {
+  const base = exportBaseName();
+  if (elements.downloadExport) {
+    elements.downloadExport.textContent = `Download ${base}.zip`;
+    elements.downloadExport.title = `Download export bundle: ${base}.zip`;
+  }
+  if (elements.downloadIndexJson) {
+    elements.downloadIndexJson.textContent = `Download ${base}.index.json`;
+    elements.downloadIndexJson.title = `Download index file: ${base}.index.json`;
+  }
+}
+
 async function runIngest(entries, collectedMeta) {
   if (!state.workerReady) {
     setStatus("Backend not ready.");
@@ -678,10 +873,20 @@ async function runIngest(entries, collectedMeta) {
   }
   const skippedLarge = collectedMeta?.skippedLarge || 0;
   const skippedTotal = collectedMeta?.skippedTotal || 0;
+  const skippedCount = collectedMeta?.skippedCount || 0;
+  const totalBytes = collectedMeta?.totalBytes || 0;
   const skippedNote =
-    skippedLarge || skippedTotal
-      ? ` (skipped: ${skippedLarge} too large, ${skippedTotal} over total cap)`
+    skippedLarge || skippedTotal || skippedCount
+      ? ` (skipped: ${skippedLarge} too large, ${skippedTotal} over total limit, ${skippedCount} too many files)`
       : "";
+
+  // Warn if approaching limits
+  if (totalBytes > DEFAULT_LIMITS.warnTotalBytes) {
+    console.warn(`Large upload: ${(totalBytes / 1024 / 1024).toFixed(1)}MB. Browser may slow down.`);
+  }
+  if (entries.length > DEFAULT_LIMITS.maxFileCount * 0.8) {
+    console.warn(`Many files: ${entries.length}. Processing may take time.`);
+  }
 
   const prevByPath = new Map((state.files || []).map((meta) => [meta.path, meta]));
   const currentPaths = new Set(entries.map((e) => e.path));
@@ -696,11 +901,13 @@ async function runIngest(entries, collectedMeta) {
 
   try {
     state.busy = true;
+    state.sourceLabel = inferSourceLabel(entries, collectedMeta);
 
     if (!state.indexLoaded) {
       setStatus(`Ingesting ${entries.length} files${skippedNote}...`);
       const files = [];
-      for (const entry of entries) {
+      for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i];
         const data = await entry.file.arrayBuffer();
         files.push({
           path: entry.path,
@@ -708,6 +915,11 @@ async function runIngest(entries, collectedMeta) {
           mtime_ms: Number.isFinite(entry.file.lastModified) ? entry.file.lastModified : null,
           fingerprint_sha256: null,
         });
+        // Yield to browser every 10 files to prevent freezing
+        if (i % 10 === 0 && i > 0) {
+          setStatus(`Ingesting ${entries.length} files (${i}/${entries.length})${skippedNote}...`);
+          await new Promise(resolve => setTimeout(resolve, 0));
+        }
       }
       const transfer = files.map((f) => f.data);
       await callWorker("ingest", { files }, state.backend?.kind === "worker" ? transfer : undefined);
@@ -806,6 +1018,7 @@ async function runIngest(entries, collectedMeta) {
     const idResult = await callWorker("indexId", {});
     state.indexId = idResult.indexId || null;
     state.files = filesResult.files || [];
+    updateExportUiLabels();
 
     elements.indexId.textContent = state.indexId || "(unknown)";
     elements.chunkCount.textContent = statsResult.stats.total_chunks;
@@ -816,7 +1029,9 @@ async function runIngest(entries, collectedMeta) {
     await populateSavedIndexes();
     state.indexLoaded = true;
     setStatus("Index ready.");
-    void callWorker("buildEmbeddings", {}).catch(() => {});
+    if (shouldAutoBuildEmbeddings) {
+      void callWorker("buildEmbeddings", {}).catch(() => {});
+    }
   } catch (error) {
     setStatus(`Ingestion failed: ${formatErrorForUi(error)}`);
   } finally {
@@ -843,7 +1058,7 @@ elements.selectFolder.addEventListener("click", async () => {
   if (supportsDirectoryPicker) {
     try {
       const handle = await window.showDirectoryPicker();
-      const collected = await collectFilesFromHandle(handle);
+      const collected = await collectFilesFromHandle(handle, "", null, handle?.name || null);
       await runIngest(collected.entries, collected);
       return;
     } catch (error) {
@@ -899,6 +1114,47 @@ elements.runSearch.addEventListener("click", async () => {
   await runSearch();
 });
 
+if (elements.buildEmbeddings) {
+  if (!embeddingsRequested) {
+    elements.buildEmbeddings.disabled = true;
+    elements.buildEmbeddings.title = "Embeddings are disabled. Add ?embeddings=1 to the URL to enable.";
+  } else if (!globalThis.LLMX_ENABLE_WEBGPU && !forceCpu) {
+    elements.buildEmbeddings.disabled = true;
+    elements.buildEmbeddings.title =
+      "Embeddings require WebGPU by default. Use a WebGPU-capable Chromium browser, or add ?cpu=1 to force CPU.";
+  } else {
+    elements.buildEmbeddings.title = "Build embeddings for semantic search.";
+  }
+
+  elements.buildEmbeddings.addEventListener("click", async () => {
+    if (!state.indexLoaded) {
+      setStatus("No index loaded.");
+      return;
+    }
+    if (!embeddingsRequested) {
+      setStatus("Embeddings disabled. Add ?embeddings=1 to the URL.");
+      return;
+    }
+    if (!globalThis.LLMX_ENABLE_WEBGPU && !forceCpu) {
+      setStatus("Embeddings require WebGPU. Use Chromium with WebGPU, or add ?cpu=1 to force CPU.");
+      return;
+    }
+    const backendLabel = globalThis.LLMX_ENABLE_WEBGPU ? "webgpu" : "cpu";
+    setStatus(`Embeddings: building (${backendLabel})...`);
+    try {
+      const result = await callWorker("buildEmbeddings", {});
+      const meta = result?.meta;
+      if (meta && typeof meta.modelId === "string") {
+        setStatus(`Embeddings ready: model=${meta.modelId}, dim=${meta.dim}, count=${meta.count}`);
+      } else {
+        setStatus("Embeddings ready.");
+      }
+    } catch (error) {
+      setStatus(`Embeddings failed: ${formatErrorForUi(error)}`);
+    }
+  });
+}
+
 elements.query.addEventListener("keydown", async (event) => {
   if (event.key === "Enter") {
     await runSearch();
@@ -929,52 +1185,30 @@ elements.closeChunk.addEventListener("click", () => {
   elements.chunkView.hidden = true;
 });
 
-elements.exportLlm.addEventListener("click", () => {
+elements.downloadExport?.addEventListener("click", () => {
   if (!state.indexLoaded) {
     setStatus("No index to export.");
     return;
   }
-  callWorker("exportLlm", {})
-    .then(({ content }) => {
-      downloadFile("llm.md", content, "text/markdown");
-    })
-    .catch(() => setStatus("Export failed."));
-});
-
-elements.exportZip.addEventListener("click", () => {
-  if (!state.indexLoaded) {
-    setStatus("No index to export.");
-    return;
-  }
-  callWorker("exportZip", {})
+  callWorker("exportZipCompact", {})
     .then(({ bytes }) => {
-      downloadFile("export.zip", bytes, "application/zip");
+      const name = `${exportBaseName()}.zip`;
+      downloadFile(name, bytes, "application/zip");
     })
     .catch(() => setStatus("Export failed."));
 });
 
-elements.saveIndex.addEventListener("click", async () => {
+elements.downloadIndexJson?.addEventListener("click", () => {
   if (!state.indexLoaded) {
-    setStatus("No index to save.");
+    setStatus("No index to export.");
     return;
   }
-  try {
-    const { json } = await callWorker("exportIndexJson", {});
-    let embeddings = null;
-    let embeddingsMeta = null;
-    try {
-      const result = await callWorker("getEmbeddings", {});
-      if (result.embeddings && result.meta) {
-        embeddings = result.embeddings;
-        embeddingsMeta = result.meta;
-      }
-    } catch {}
-    await saveIndex(state.indexId || "index", json, embeddings, embeddingsMeta);
-    await populateSavedIndexes();
-    setStatus("Index saved locally.");
-  } catch {
-    setStatus("Index save failed.");
-  }
+  callWorker("exportIndexJson", {})
+    .then(({ json }) => {
+      const name = `${exportBaseName()}.index.json`;
+      downloadFile(name, json, "application/json");
+    })
+    .catch(() => setStatus("Export failed."));
 });
 
 async function runSearch() {
@@ -1255,7 +1489,9 @@ elements.loadSavedIndex?.addEventListener("click", async () => {
     populateFileFilter();
     await updateOutlineSymbols();
     setStatus("Loaded saved index.");
-    void callWorker("buildEmbeddings", {}).catch(() => {});
+    if (shouldAutoBuildEmbeddings) {
+      void callWorker("buildEmbeddings", {}).catch(() => {});
+    }
   } catch {
     setStatus("Failed to load saved index.");
   } finally {
