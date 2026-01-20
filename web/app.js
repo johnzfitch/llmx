@@ -3,6 +3,7 @@ const state = {
   workerReady: false,
   indexLoaded: false,
   busy: false,
+  buildingEmbeddings: false,
   indexId: null,
   sourceLabel: null,
   files: [],
@@ -23,6 +24,7 @@ const elements = {
   kindFilter: document.getElementById("kind-filter"),
   runSearch: document.getElementById("run-search"),
   buildEmbeddings: document.getElementById("build-embeddings"),
+  embeddingsStatus: document.getElementById("embeddings-status"),
   results: document.getElementById("results"),
   chunkView: document.getElementById("chunk-view"),
   chunkTitle: document.getElementById("chunk-title"),
@@ -1034,7 +1036,47 @@ async function runIngest(entries, collectedMeta) {
     state.indexLoaded = true;
     setStatus("Index ready.");
     if (shouldAutoBuildEmbeddings) {
-      void callWorker("buildEmbeddings", {}).catch(() => {});
+      const backendLabel = globalThis.LLMX_ENABLE_WEBGPU ? "webgpu" : "cpu";
+      state.buildingEmbeddings = true;
+      if (elements.buildEmbeddings) elements.buildEmbeddings.disabled = true;
+      if (elements.downloadExport) elements.downloadExport.disabled = true;
+      if (elements.downloadIndexJson) elements.downloadIndexJson.disabled = true;
+      if (elements.embeddingsStatus) {
+        elements.embeddingsStatus.textContent = `Building (${backendLabel})...`;
+        elements.embeddingsStatus.classList.add("building");
+      }
+      setStatus(`Auto-building embeddings (${backendLabel})...`);
+
+      callWorker("buildEmbeddings", {})
+        .then((result) => {
+          const meta = result?.meta;
+          if (meta && typeof meta.modelId === "string") {
+            if (elements.embeddingsStatus) {
+              elements.embeddingsStatus.textContent = `Ready (${meta.count} chunks)`;
+              elements.embeddingsStatus.classList.remove("building");
+            }
+            setStatus(`Embeddings ready: model=${meta.modelId}, dim=${meta.dim}, count=${meta.count}`);
+          } else {
+            if (elements.embeddingsStatus) {
+              elements.embeddingsStatus.textContent = "Ready";
+              elements.embeddingsStatus.classList.remove("building");
+            }
+            setStatus("Embeddings ready.");
+          }
+        })
+        .catch((error) => {
+          if (elements.embeddingsStatus) {
+            elements.embeddingsStatus.textContent = "Failed";
+            elements.embeddingsStatus.classList.remove("building");
+          }
+          setStatus(`Embeddings failed: ${formatErrorForUi(error)}`);
+        })
+        .finally(() => {
+          state.buildingEmbeddings = false;
+          if (elements.buildEmbeddings) elements.buildEmbeddings.disabled = false;
+          if (elements.downloadExport) elements.downloadExport.disabled = false;
+          if (elements.downloadIndexJson) elements.downloadIndexJson.disabled = false;
+        });
     }
   } catch (error) {
     setStatus(`Ingestion failed: ${formatErrorForUi(error)}`);
@@ -1144,17 +1186,47 @@ if (elements.buildEmbeddings) {
     }
 
     const backendLabel = globalThis.LLMX_ENABLE_WEBGPU ? "webgpu" : "cpu";
+
+    // Set building state
+    state.buildingEmbeddings = true;
+    elements.buildEmbeddings.disabled = true;
+    elements.downloadExport.disabled = true;
+    elements.downloadIndexJson.disabled = true;
+
+    if (elements.embeddingsStatus) {
+      elements.embeddingsStatus.textContent = `Building (${backendLabel})...`;
+      elements.embeddingsStatus.classList.add("building");
+    }
     setStatus(`Embeddings: building (${backendLabel})...`);
+
     try {
       const result = await callWorker("buildEmbeddings", {});
       const meta = result?.meta;
       if (meta && typeof meta.modelId === "string") {
+        if (elements.embeddingsStatus) {
+          elements.embeddingsStatus.textContent = `Ready (${meta.count} chunks)`;
+          elements.embeddingsStatus.classList.remove("building");
+        }
         setStatus(`Embeddings ready: model=${meta.modelId}, dim=${meta.dim}, count=${meta.count}`);
       } else {
+        if (elements.embeddingsStatus) {
+          elements.embeddingsStatus.textContent = "Ready";
+          elements.embeddingsStatus.classList.remove("building");
+        }
         setStatus("Embeddings ready.");
       }
     } catch (error) {
+      if (elements.embeddingsStatus) {
+        elements.embeddingsStatus.textContent = "Failed";
+        elements.embeddingsStatus.classList.remove("building");
+      }
       setStatus(`Embeddings failed: ${formatErrorForUi(error)}`);
+    } finally {
+      // Re-enable buttons
+      state.buildingEmbeddings = false;
+      elements.buildEmbeddings.disabled = false;
+      elements.downloadExport.disabled = false;
+      elements.downloadIndexJson.disabled = false;
     }
   });
 }
@@ -1494,7 +1566,47 @@ elements.loadSavedIndex?.addEventListener("click", async () => {
     await updateOutlineSymbols();
     setStatus("Loaded saved index.");
     if (shouldAutoBuildEmbeddings) {
-      void callWorker("buildEmbeddings", {}).catch(() => {});
+      const backendLabel = globalThis.LLMX_ENABLE_WEBGPU ? "webgpu" : "cpu";
+      state.buildingEmbeddings = true;
+      if (elements.buildEmbeddings) elements.buildEmbeddings.disabled = true;
+      if (elements.downloadExport) elements.downloadExport.disabled = true;
+      if (elements.downloadIndexJson) elements.downloadIndexJson.disabled = true;
+      if (elements.embeddingsStatus) {
+        elements.embeddingsStatus.textContent = `Building (${backendLabel})...`;
+        elements.embeddingsStatus.classList.add("building");
+      }
+      setStatus(`Auto-building embeddings (${backendLabel})...`);
+
+      callWorker("buildEmbeddings", {})
+        .then((result) => {
+          const meta = result?.meta;
+          if (meta && typeof meta.modelId === "string") {
+            if (elements.embeddingsStatus) {
+              elements.embeddingsStatus.textContent = `Ready (${meta.count} chunks)`;
+              elements.embeddingsStatus.classList.remove("building");
+            }
+            setStatus(`Embeddings ready: model=${meta.modelId}, dim=${meta.dim}, count=${meta.count}`);
+          } else {
+            if (elements.embeddingsStatus) {
+              elements.embeddingsStatus.textContent = "Ready";
+              elements.embeddingsStatus.classList.remove("building");
+            }
+            setStatus("Embeddings ready.");
+          }
+        })
+        .catch((error) => {
+          if (elements.embeddingsStatus) {
+            elements.embeddingsStatus.textContent = "Failed";
+            elements.embeddingsStatus.classList.remove("building");
+          }
+          setStatus(`Embeddings failed: ${formatErrorForUi(error)}`);
+        })
+        .finally(() => {
+          state.buildingEmbeddings = false;
+          if (elements.buildEmbeddings) elements.buildEmbeddings.disabled = false;
+          if (elements.downloadExport) elements.downloadExport.disabled = false;
+          if (elements.downloadIndexJson) elements.downloadIndexJson.disabled = false;
+        });
     }
   } catch {
     setStatus("Failed to load saved index.");
