@@ -1140,6 +1140,23 @@ if (elements.buildEmbeddings) {
       setStatus("Embeddings require WebGPU. Use Chromium with WebGPU, or add ?cpu=1 to force CPU.");
       return;
     }
+
+    // Warn about CPU embeddings being slow and potentially unstable
+    if (forceCpu && !globalThis.LLMX_ENABLE_WEBGPU) {
+      const chunkCount = state.files.reduce((sum, f) => sum + (f.chunks || 0), 0);
+      if (chunkCount > 100) {
+        const proceed = confirm(
+          `CPU embeddings with ${chunkCount} chunks may take 5-10 minutes and could crash the browser.\n\n` +
+          `For better performance, use Chrome/Edge with WebGPU support.\n\n` +
+          `Continue with CPU anyway?`
+        );
+        if (!proceed) {
+          setStatus("Embeddings cancelled.");
+          return;
+        }
+      }
+    }
+
     const backendLabel = globalThis.LLMX_ENABLE_WEBGPU ? "webgpu" : "cpu";
     setStatus(`Embeddings: building (${backendLabel})...`);
     try {

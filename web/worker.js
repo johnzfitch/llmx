@@ -267,11 +267,23 @@ async function buildEmbeddingsIndex() {
   }
 
   const view = new Float32Array(count * dim);
-  const batchSize = 8;
+  // Reduce batch size for CPU to prevent browser crashes
+  const batchSize = 2;
+  const totalBatches = Math.ceil(count / batchSize);
 
   for (let offset = 0; offset < count; offset += batchSize) {
+    const batchNum = Math.floor(offset / batchSize) + 1;
+    if (batchNum % 20 === 0 || batchNum === 1) {
+      console.log(`Embeddings: processing batch ${batchNum}/${totalBatches} (${offset}/${count} chunks)`);
+    }
     const batch = chunkMeta.slice(offset, offset + batchSize);
     const texts = batch.map((item) => item.content);
+
+    // Add yield point to prevent blocking and allow GC
+    if (batchNum % 5 === 0) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+
     const out = embed.embedBatch(texts);
     if (!out || typeof out.length !== "number") {
       throw new Error("Embedding batch returned unexpected type");
