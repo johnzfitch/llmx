@@ -1101,8 +1101,10 @@ elements.dropZone.addEventListener("dragover", (event) => {
   elements.dropZone.classList.add("active");
 });
 
-elements.dropZone.addEventListener("dragleave", () => {
-  elements.dropZone.classList.remove("active");
+elements.dropZone.addEventListener("dragleave", (event) => {
+  if (event.target === elements.dropZone) {
+    elements.dropZone.classList.remove("active");
+  }
 });
 
 elements.dropZone.addEventListener("drop", async (event) => {

@@ -12,9 +12,42 @@
   box-sizing: border-box;
 }
 
+/* Local Graphik Font */
+@font-face {
+  font-family: 'Graphik';
+  src: url('fonts/Graphik-Regular.woff') format('woff');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Graphik';
+  src: url('fonts/Graphik-Medium.woff') format('woff');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Graphik';
+  src: url('fonts/Graphik-Semibold-Web.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Graphik';
+  src: url('fonts/Graphik-Bold.woff') format('woff');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 body {
   margin: 0;
-  font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+  font-family: "Graphik", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: var(--ink);
   background:
     radial-gradient(circle at 20% 20%, #f0dfc9 0%, transparent 45%),
@@ -49,8 +82,11 @@ body {
 }
 
 h1 {
+  font-family: "Graphik", -apple-system, sans-serif;
   font-size: clamp(2.5rem, 3vw, 3.5rem);
+  font-weight: 700;
   margin: 0 0 8px;
+  letter-spacing: -0.02em;
 }
 
 .lead {
@@ -92,7 +128,10 @@ h1 {
 }
 
 .panel-header h2 {
+  font-family: "Graphik", -apple-system, sans-serif;
+  font-weight: 600;
   margin: 0 0 6px;
+  letter-spacing: -0.01em;
 }
 
 .panel-header p {
@@ -106,6 +145,104 @@ h1 {
   flex-wrap: wrap;
   gap: 12px;
   align-items: center;
+}
+
+/* Ingest Drop Zone Panel */
+.ingest-panel-drop {
+  padding: 0;
+  overflow: hidden;
+  min-height: 280px;
+}
+
+.drop-zone-full {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 280px;
+  padding: 32px 24px 20px;
+  background:
+    radial-gradient(circle at 50% 30%, rgba(13, 107, 111, 0.03) 0%, transparent 60%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0.7) 100%);
+  border: 2px dashed rgba(13, 107, 111, 0.2);
+  border-radius: 16px;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.drop-zone-full:hover {
+  background:
+    radial-gradient(circle at 50% 30%, rgba(13, 107, 111, 0.06) 0%, transparent 60%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.85) 100%);
+  border-color: rgba(13, 107, 111, 0.35);
+}
+
+.drop-zone-full.active {
+  background:
+    radial-gradient(circle at 50% 30%, rgba(13, 107, 111, 0.12) 0%, transparent 60%),
+    linear-gradient(135deg, rgba(13, 107, 111, 0.08) 0%, rgba(13, 107, 111, 0.04) 100%);
+  border-color: var(--accent);
+  border-width: 3px;
+  transform: scale(0.99);
+}
+
+.drop-zone-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+  flex: 1;
+  justify-content: center;
+}
+
+.drop-icon {
+  color: var(--accent);
+  opacity: 0.6;
+  transition: all 0.2s ease;
+}
+
+.drop-zone-full:hover .drop-icon {
+  opacity: 0.9;
+  transform: translateY(-4px);
+}
+
+.drop-zone-full.active .drop-icon {
+  opacity: 1;
+  transform: scale(1.1);
+  color: var(--accent-dark);
+}
+
+.drop-zone-content h2 {
+  font-family: "Graphik", -apple-system, sans-serif;
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin: 0;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+
+.drop-zone-content p {
+  font-size: 0.88rem;
+  color: var(--muted);
+  margin: 0;
+  max-width: 400px;
+}
+
+.ingest-button-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px 28px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  width: 100%;
+  max-width: 320px;
+}
+
+.ingest-button-bottom svg {
+  flex-shrink: 0;
 }
 
 .saved-indexes {
@@ -122,45 +259,51 @@ h1 {
 
 button {
   font-family: inherit;
+  font-weight: 500;
   border: none;
-  padding: 10px 16px;
-  border-radius: 999px;
+  padding: 9px 18px;
+  border-radius: 6px;
   background: var(--panel-strong);
   color: var(--ink);
   cursor: pointer;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transition: none;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.1);
 }
 
 button:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 6px 14px var(--shadow);
+  background: #e8e0d3;
+}
+
+button:active {
+  box-shadow:
+    inset 0 2px 4px rgba(0, 0, 0, 0.15),
+    inset 0 1px 2px rgba(0, 0, 0, 0.2);
+  transform: translateY(1px);
 }
 
 button.primary {
   background: var(--accent);
   color: #fff;
+  box-shadow:
+    0 1px 2px rgba(13, 107, 111, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.2);
 }
 
 button.primary:hover {
   background: var(--accent-dark);
 }
 
-.drop-zone {
-  flex: 1;
-  min-width: 220px;
-  border: 2px dashed #c7b9a3;
-  border-radius: 14px;
-  padding: 18px;
-  text-align: center;
-  color: var(--muted);
-  background: rgba(255, 255, 255, 0.6);
+button.primary:active {
+  box-shadow:
+    inset 0 2px 4px rgba(0, 0, 0, 0.3),
+    inset 0 1px 2px rgba(0, 0, 0, 0.4);
+  transform: translateY(1px);
 }
 
-.drop-zone.active {
-  border-color: var(--accent);
-  color: var(--accent-dark);
-  background: rgba(13, 107, 111, 0.08);
-}
 
 .status {
   margin-top: 12px;
@@ -174,36 +317,101 @@ button.primary:hover {
   color: #8b2c1e;
 }
 
+/* Settings Panel */
 .settings-grid {
-  margin-top: 16px;
-  display: grid;
-  gap: 12px;
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.setting-item {
+.setting-row {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px;
-  background: rgba(255, 255, 255, 0.6);
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(13, 107, 111, 0.1);
   border-radius: 8px;
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
-.setting-item:hover {
-  background: rgba(255, 255, 255, 0.9);
+.setting-row:hover {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(13, 107, 111, 0.2);
 }
 
-.setting-item input[type="checkbox"] {
+.setting-row:has(.setting-checkbox:checked) {
+  background: rgba(13, 107, 111, 0.05);
+  border-color: rgba(13, 107, 111, 0.25);
+}
+
+.setting-checkbox {
   width: 18px;
   height: 18px;
+  margin: 2px 0 0 0;
   cursor: pointer;
+  accent-color: var(--accent);
+  flex-shrink: 0;
 }
 
-.setting-item span {
+.setting-content {
   flex: 1;
+  min-width: 0;
+}
+
+.setting-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.setting-title {
+  font-family: "Graphik", -apple-system, sans-serif;
   font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+
+.setting-description {
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--muted);
+  margin: 0;
+}
+
+/* Settings Actions */
+.settings-actions {
+  margin-top: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding-top: 14px;
+  border-top: 1px solid rgba(13, 107, 111, 0.12);
+}
+
+@media (max-width: 600px) {
+  .setting-row {
+    gap: 10px;
+    padding: 9px 10px;
+  }
+
+  .setting-checkbox {
+    width: 16px;
+    height: 16px;
+  }
+
+  .setting-title {
+    font-size: 0.9rem;
+  }
+
+  .setting-description {
+    font-size: 0.8rem;
+  }
 }
 
 .filters {
@@ -301,6 +509,7 @@ select {
 .panel:nth-of-type(3) {
   animation-delay: 0.28s;
 }
+
 
 @media (prefers-reduced-motion: reduce) {
   *,
