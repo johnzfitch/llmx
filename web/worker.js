@@ -267,8 +267,11 @@ async function buildEmbeddingsIndex() {
   }
 
   const view = new Float32Array(count * dim);
+  // Detect Firefox for extra-conservative batching (stricter WASM memory limits)
+  const isFirefox = typeof navigator !== 'undefined' && /Firefox/.test(navigator.userAgent);
   // Reduce batch size for CPU to prevent browser crashes
-  const batchSize = 2;
+  // Firefox needs batch size 1 due to stricter WASM memory limits
+  const batchSize = isFirefox ? 1 : 2;
   const totalBatches = Math.ceil(count / batchSize);
 
   for (let offset = 0; offset < count; offset += batchSize) {

@@ -1145,9 +1145,13 @@ if (elements.buildEmbeddings) {
     if (forceCpu && !globalThis.LLMX_ENABLE_WEBGPU) {
       const chunkCount = state.files.reduce((sum, f) => sum + (f.chunks || 0), 0);
       if (chunkCount > 100) {
+        const firefoxWarning = isFirefox
+          ? `\n\nWARNING: Firefox has strict WASM memory limits. CPU embeddings with ${chunkCount} chunks will be VERY slow (10-20 minutes) and may still crash.\n\n`
+          : '';
         const proceed = confirm(
-          `CPU embeddings with ${chunkCount} chunks may take 5-10 minutes and could crash the browser.\n\n` +
-          `For better performance, use Chrome/Edge with WebGPU support.\n\n` +
+          `CPU embeddings with ${chunkCount} chunks may take 5-10 minutes and could crash the browser.` +
+          firefoxWarning +
+          `For better performance, use Chrome/Edge.\n\n` +
           `Continue with CPU anyway?`
         );
         if (!proceed) {
