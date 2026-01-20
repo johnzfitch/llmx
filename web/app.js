@@ -1550,6 +1550,14 @@ function applySettings() {
   }
 
   const newUrl = `${window.location.pathname}${params.toString() ? "?" + params.toString() : ""}`;
+  const currentUrl = `${window.location.pathname}${window.location.search}`;
+
+  // Only reload if settings actually changed
+  if (newUrl === currentUrl) {
+    setStatus("Settings unchanged.");
+    return;
+  }
+
   window.location.href = newUrl;
 }
 
