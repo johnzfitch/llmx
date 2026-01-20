@@ -42,7 +42,8 @@ fi
 export PATH
 
 LLMX_EMBEDDING_MODEL_URL="$MODEL_URL" \
-  wasm-pack build --target web --out-dir ../web/pkg --mode no-install --release
+  wasm-pack build --target web --out-dir ../web/pkg --mode no-install --release \
+  --features wgpu-backend,ndarray-backend
 
 echo ""
 echo "Ready to deploy: $WEB_DIR"
