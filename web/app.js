@@ -36,6 +36,12 @@ const elements = {
   warningCount: document.getElementById("warning-count"),
   warningList: document.getElementById("warning-list"),
   backendInfo: document.getElementById("backend-info"),
+  settingEmbeddings: document.getElementById("setting-embeddings"),
+  settingForceCpu: document.getElementById("setting-force-cpu"),
+  settingForceWebgpu: document.getElementById("setting-force-webgpu"),
+  settingAutoEmbeddings: document.getElementById("setting-auto-embeddings"),
+  applySettings: document.getElementById("apply-settings"),
+  resetSettings: document.getElementById("reset-settings"),
 };
 
 const urlParams = (() => {
@@ -1535,6 +1541,50 @@ elements.deleteSavedIndex?.addEventListener("click", async () => {
   }
 });
 
+// Settings UI
+function loadSettingsFromUrl() {
+  if (elements.settingEmbeddings) {
+    elements.settingEmbeddings.checked = embeddingsRequested;
+  }
+  if (elements.settingForceCpu) {
+    elements.settingForceCpu.checked = forceCpu;
+  }
+  if (elements.settingForceWebgpu) {
+    elements.settingForceWebgpu.checked = forceWebGpu;
+  }
+  if (elements.settingAutoEmbeddings) {
+    elements.settingAutoEmbeddings.checked = autoEmbeddingsRequested;
+  }
+}
+
+function applySettings() {
+  const params = new URLSearchParams();
+
+  if (elements.settingEmbeddings?.checked) {
+    params.set("embeddings", "1");
+  }
+  if (elements.settingForceCpu?.checked) {
+    params.set("cpu", "1");
+  }
+  if (elements.settingForceWebgpu?.checked) {
+    params.set("force_webgpu", "1");
+  }
+  if (elements.settingAutoEmbeddings?.checked) {
+    params.set("auto_embeddings", "1");
+  }
+
+  const newUrl = `${window.location.pathname}${params.toString() ? "?" + params.toString() : ""}`;
+  window.location.href = newUrl;
+}
+
+function resetSettings() {
+  window.location.href = window.location.pathname;
+}
+
+elements.applySettings?.addEventListener("click", applySettings);
+elements.resetSettings?.addEventListener("click", resetSettings);
+
+loadSettingsFromUrl();
 configureFolderPickerUi();
 initWorker().catch((error) => {
   setStatus(`Failed to start backend: ${formatErrorForUi(error)}`);
