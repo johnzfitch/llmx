@@ -31,7 +31,7 @@ const MODEL_CACHE_KEY: &str = "arctic-embed-s-q8-a80e2e953bcd.bin";
 const MODEL_SHA256: &str = "a80e2e953bcd6a2cfe102043d84adfead9f21b4c2f89fa70527eebf4c2cf0821";
 const MODEL_URL: &str = match option_env!("LLMX_EMBEDDING_MODEL_URL") {
     Some(value) => value,
-    None => "",
+    None => "./models/arctic-embed-s.bin", // Default to bundled model
 };
 const MAX_MODEL_BYTES: usize = 80 * 1024 * 1024;
 
