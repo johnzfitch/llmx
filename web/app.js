@@ -12,7 +12,6 @@ const state = {
 const elements = {
   status: document.getElementById("ingest-status"),
   selectFolder: document.getElementById("select-folder"),
-  selectFiles: document.getElementById("select-files"),
   folderInput: document.getElementById("folder-input"),
   filesInput: document.getElementById("files-input"),
   dropZone: document.getElementById("drop-zone"),
@@ -145,11 +144,8 @@ function hasFolderPickerSupport() {
 }
 
 function configureFolderPickerUi() {
-  if (hasFolderPickerSupport()) {
-    return;
-  }
-  elements.selectFolder.disabled = true;
-  elements.selectFolder.title = "Folder selection is not supported in this browser. Use Select files or drag-and-drop.";
+  // Button now triggers file selection which is always supported
+  return;
 }
 
 let workerCallId = 0;
@@ -1060,32 +1056,9 @@ function renderWarnings(warnings) {
 }
 
 elements.selectFolder.addEventListener("click", async () => {
-  const supportsDirectoryPicker = typeof window.showDirectoryPicker === "function";
-  const supportsWebkitDirectory = elements.folderInput && "webkitdirectory" in elements.folderInput;
-
-  if (supportsDirectoryPicker) {
-    try {
-      const handle = await window.showDirectoryPicker();
-      const collected = await collectFilesFromHandle(handle, "", null, handle?.name || null);
-      await runIngest(collected.entries, collected);
-      return;
-    } catch (error) {
-      setStatus("Folder selection cancelled.");
-      return;
-    }
-  }
-
-  if (supportsWebkitDirectory) {
-    elements.folderInput.click();
-    return;
-  }
-
-  setStatus("Folder selection is not supported in this browser. Use Select files or drag-and-drop.");
-});
-
-elements.selectFiles.addEventListener("click", () => {
   elements.filesInput.click();
 });
+
 
 elements.folderInput.addEventListener("change", async (event) => {
   const collected = await collectFilesFromInput(event.target.files || []);
