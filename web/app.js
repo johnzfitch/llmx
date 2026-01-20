@@ -94,6 +94,7 @@ const ALLOWED_EXTENSIONS = [
   ".json",
   ".txt",
   ".log",
+  ".har",
   ".js",
   ".ts",
   ".tsx",
