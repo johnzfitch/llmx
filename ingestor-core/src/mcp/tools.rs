@@ -1,5 +1,5 @@
 use crate::mcp::storage::{IndexStore, IndexMetadata};
-use crate::{ingest_files, search, FileInput, IngestOptions, SearchFilters};
+use crate::{ingest_files, search, FileInput, HybridStrategy, IngestOptions, SearchFilters};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "mcp")]
@@ -73,6 +73,10 @@ pub struct SearchInput {
     #[serde(default)]
     #[cfg_attr(feature = "mcp", schemars(description = "Enable semantic search with embeddings (default false)"))]
     pub use_semantic: Option<bool>,
+    /// Phase 6: Hybrid search strategy (rrf or linear, default rrf)
+    #[serde(default)]
+    #[cfg_attr(feature = "mcp", schemars(description = "Hybrid search strategy: 'rrf' (Reciprocal Rank Fusion, default) or 'linear' (weighted combination)"))]
+    pub hybrid_strategy: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -270,6 +274,12 @@ pub fn llmx_index_handler(store: &mut IndexStore, input: IndexInput) -> Result<I
 pub fn llmx_search_handler(store: &mut IndexStore, input: SearchInput) -> Result<SearchOutput> {
     let index = store.load(&input.index_id)?;
 
+    // Build chunk lookup map once - O(n) instead of O(n*m) lookups
+    let chunk_map: std::collections::HashMap<&str, &crate::Chunk> = index.chunks
+        .iter()
+        .map(|c| (c.id.as_str(), c))
+        .collect();
+
     let filters = input.filters.as_ref().map(|f| SearchFilters {
         path_exact: None,
         path_prefix: f.path_prefix.clone(),
@@ -286,12 +296,13 @@ pub fn llmx_search_handler(store: &mut IndexStore, input: SearchInput) -> Result
         #[cfg(feature = "embeddings")]
         {
             use crate::embeddings::generate_embedding;
-            use crate::index::hybrid_search;
+            use crate::index::hybrid_search_with_strategy;
 
             // Check if embeddings are available
             if let Some(embeddings) = &index.embeddings {
                 let query_embedding = generate_embedding(&input.query);
-                hybrid_search(
+                let strategy = parse_hybrid_strategy(input.hybrid_strategy.as_deref())?;
+                hybrid_search_with_strategy(
                     &index.chunks,
                     &index.inverted_index,
                     &index.chunk_refs,
@@ -300,6 +311,7 @@ pub fn llmx_search_handler(store: &mut IndexStore, input: SearchInput) -> Result
                     &query_embedding,
                     &filters,
                     limit * 2,
+                    strategy,
                 )
             } else {
                 // Fall back to BM25 if embeddings not available
@@ -321,9 +333,8 @@ pub fn llmx_search_handler(store: &mut IndexStore, input: SearchInput) -> Result
     let mut truncated = vec![];
 
     for result in &search_results {
-        let chunk = index.chunks.iter()
-            .find(|c| c.id == result.chunk_id)
-            .context("Chunk not found")?;
+        let chunk = chunk_map.get(result.chunk_id.as_str())
+            .context("Chunk not found in index")?;
 
         if tokens_used + chunk.token_estimate <= max_tokens {
             results.push(SearchResultOutput {
@@ -405,6 +416,16 @@ fn parse_chunk_kind(s: &str) -> Option<crate::ChunkKind> {
         "text" => Some(crate::ChunkKind::Text),
         "image" => Some(crate::ChunkKind::Image),
         _ => None,
+    }
+}
+
+fn parse_hybrid_strategy(value: Option<&str>) -> Result<HybridStrategy> {
+    let normalized = value.map(|v| v.to_ascii_lowercase());
+    match normalized.as_deref() {
+        None => Ok(HybridStrategy::default()),
+        Some("rrf") => Ok(HybridStrategy::Rrf),
+        Some("linear") => Ok(HybridStrategy::Linear),
+        Some(other) => anyhow::bail!("Invalid hybrid_strategy: {other}. Use 'rrf' or 'linear'."),
     }
 }
 

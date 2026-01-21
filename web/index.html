@@ -29,31 +29,86 @@
           <span class="label">Warnings</span>
           <span id="warning-count" class="value">0</span>
         </div>
+        <div class="hero-stat">
+          <span class="label">Backend</span>
+          <span id="backend-info" class="value">Loading...</span>
+        </div>
       </div>
     </header>
 
-    <section class="panel" id="ingest-panel">
-      <div class="panel-header">
-        <h2>Ingest</h2>
-        <p>Select a folder (supported browsers) or select/drop files. Only whitelisted extensions are read.</p>
-      </div>
-      <div class="actions">
-        <button id="select-folder" class="primary">Select folder</button>
-        <button id="select-files">Select files</button>
+    <section class="panel ingest-panel-drop" id="ingest-panel">
+      <div id="drop-zone" class="drop-zone-full">
+        <div class="drop-zone-content">
+          <svg class="drop-icon" width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M21 15V19C21 19.5304 20.7893 20.0391 20.4142 20.4142C20.0391 20.7893 19.5304 21 19 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <polyline points="17 8 12 3 7 8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <line x1="12" y1="3" x2="12" y2="15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <h2>Drop files or folders here</h2>
+          <p>Supports .md, .json, .txt, .log, .har, .js, .ts, .html, images and more</p>
+        </div>
+        <button id="select-folder" class="primary ingest-button-bottom">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M22 19C22 19.5304 21.7893 20.0391 21.4142 20.4142C21.0391 20.7893 20.5304 21 20 21H4C3.46957 21 2.96086 20.7893 2.58579 20.4142C2.21071 20.0391 2 19.5304 2 19V5C2 4.46957 2.21071 3.96086 2.58579 3.58579C2.96086 3.21071 3.46957 3 4 3H9L11 6H20C20.5304 6 21.0391 6.21071 21.4142 6.58579C21.7893 6.96086 22 7.46957 22 8V19Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span>Select Files</span>
+        </button>
         <input id="folder-input" type="file" webkitdirectory directory multiple hidden />
         <input
           id="files-input"
           type="file"
           multiple
-          accept=".md,.markdown,.json,.txt,.js,.ts,.tsx,.html,.htm,.png,.jpg,.jpeg,.webp,.gif,.bmp"
+          accept=".md,.markdown,.json,.txt,.log,.har,.js,.ts,.tsx,.html,.htm,.png,.jpg,.jpeg,.webp,.gif,.bmp"
           hidden
         />
-        <div id="drop-zone" class="drop-zone">
-          <span>Drop files here</span>
-        </div>
       </div>
-      <div class="status" id="ingest-status">Idle</div>
+      <div class="status" id="ingest-status"></div>
       <div class="warning-list" id="warning-list"></div>
+    </section>
+
+    <section class="panel settings-panel">
+      <div class="panel-header">
+        <h2>Settings</h2>
+        <p>Configure embeddings and backend options.</p>
+      </div>
+
+      <div class="settings-grid">
+        <label class="setting-row">
+          <input type="checkbox" id="setting-embeddings" class="setting-checkbox" />
+          <div class="setting-content">
+            <div class="setting-text">
+              <span class="setting-title">Enable Embeddings</span>
+              <span class="setting-description">Semantic search with WebGPU or CPU backend</span>
+            </div>
+          </div>
+        </label>
+
+        <label class="setting-row">
+          <input type="checkbox" id="setting-force-webgpu" class="setting-checkbox" />
+          <div class="setting-content">
+            <div class="setting-text">
+              <span class="setting-title">Force WebGPU on Firefox</span>
+              <span class="setting-description">Experimental, may cause instability</span>
+            </div>
+          </div>
+        </label>
+      </div>
+
+      <div class="settings-actions">
+        <button id="apply-settings" class="primary">Apply Settings</button>
+        <button id="reset-settings">Reset to Defaults</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <h2>Embeddings</h2>
+        <p>Build semantic search index for better results.</p>
+      </div>
+      <div class="actions">
+        <button id="build-embeddings" class="primary">Build Embeddings</button>
+        <span id="embeddings-status" class="embeddings-status"></span>
+      </div>
     </section>
 
     <section class="panel">
@@ -73,17 +128,17 @@
         <select id="symbol-filter">
           <option value="">All symbols</option>
         </select>
-        <select id="kind-filter">
-          <option value="">All types</option>
-          <option value="markdown">Markdown</option>
-          <option value="json">JSON</option>
-          <option value="java_script">JavaScript</option>
-          <option value="html">HTML</option>
-          <option value="text">Text</option>
-          <option value="image">Image</option>
-        </select>
-        <button id="run-search">Search</button>
-      </div>
+	        <select id="kind-filter">
+	          <option value="">All types</option>
+	          <option value="markdown">Markdown</option>
+	          <option value="json">JSON</option>
+	          <option value="java_script">JavaScript</option>
+	          <option value="html">HTML</option>
+	          <option value="text">Text</option>
+	          <option value="image">Image</option>
+	        </select>
+	        <button id="run-search">Search</button>
+	      </div>
       <div id="results" class="results"></div>
       <div id="chunk-view" class="chunk-view" hidden>
         <div class="chunk-header">
@@ -94,25 +149,17 @@
       </div>
     </section>
 
-    <section class="panel">
-      <div class="panel-header">
-        <h2>Export</h2>
-        <p>LLM-friendly bundles and local index storage.</p>
-      </div>
-      <div class="actions">
-        <button id="export-llm">Download llm.md</button>
-        <button id="export-zip">Download export.zip</button>
-        <button id="save-index">Save index locally</button>
-      </div>
-      <div class="saved-indexes">
-        <select id="saved-indexes">
-          <option value="">No saved indexes</option>
-        </select>
-        <button id="load-saved-index">Load saved</button>
-        <button id="delete-saved-index">Delete saved</button>
-      </div>
-    </section>
-  </main>
+	    <section class="panel">
+	      <div class="panel-header">
+	        <h2>Export</h2>
+	        <p>LLM-friendly bundles and local index storage.</p>
+	      </div>
+	      <div class="actions">
+	        <button id="download-export" class="primary">Download export.zip</button>
+	        <button id="download-index-json">Download index.json</button>
+	      </div>
+	    </section>
+	  </main>
 
   <script type="module" src="app.js"></script>
 </body>

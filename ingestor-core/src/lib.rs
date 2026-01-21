@@ -10,10 +10,16 @@ pub mod mcp;
 #[cfg(feature = "embeddings")]
 pub mod embeddings;
 
-pub use crate::export::{export_chunks, export_llm, export_manifest_json, export_zip};
+// Phase 6: Reciprocal Rank Fusion for hybrid search
+pub mod rrf;
+
+pub use crate::export::{
+    export_catalog_llm_md, export_chunks, export_chunks_compact, export_llm, export_llm_pointer,
+    export_manifest_json, export_manifest_llm_tsv, export_manifest_min_json, export_zip, export_zip_compact,
+};
 pub use crate::index::{build_inverted_index, compute_stats, list_outline, list_symbols, search_index};
 #[cfg(feature = "embeddings")]
-pub use crate::index::{hybrid_search, vector_search};
+pub use crate::index::{hybrid_search, hybrid_search_with_strategy, vector_search};
 pub use crate::model::*;
 use crate::util::{build_chunk_refs, detect_kind, sha256_hex};
 use std::collections::BTreeMap;

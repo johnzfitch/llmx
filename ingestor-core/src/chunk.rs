@@ -2,8 +2,24 @@ use crate::model::{Chunk, ChunkKind, IngestOptions};
 use crate::util::{estimate_tokens, sha256_hex, short_id, slugify};
 use regex::Regex;
 use std::collections::BTreeMap;
+use std::sync::OnceLock;
 #[cfg(feature = "treesitter")]
 use tree_sitter::{Language, Node, Parser};
+
+fn markdown_heading_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"^(#{1,6})\s+(.+)").expect("markdown heading regex"))
+}
+
+fn html_heading_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?i)<h([1-6])[^>]*>(.*?)</h[1-6]>").expect("html heading regex"))
+}
+
+fn html_tag_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"<[^>]+>").expect("html tag regex"))
+}
 
 #[derive(Debug, Clone)]
 struct ChunkDraft {
@@ -96,7 +112,7 @@ fn chunk_markdown(text: &str, options: &IngestOptions) -> Vec<ChunkDraft> {
     let mut current_heading = heading_stack.clone();
     let mut start_line = 1;
     let mut in_fence = false;
-    let heading_re = Regex::new(r"^(#{1,6})\s+(.+)").unwrap();
+    let heading_re = markdown_heading_re();
 
     for (idx, line) in text.lines().enumerate() {
         let line_no = idx + 1;
@@ -149,12 +165,37 @@ fn chunk_markdown(text: &str, options: &IngestOptions) -> Vec<ChunkDraft> {
 }
 
 fn chunk_text(text: &str, options: &IngestOptions) -> Vec<ChunkDraft> {
-    let lines: Vec<&str> = text.lines().collect();
     let mut drafts = Vec::new();
     let mut buf: Vec<String> = Vec::new();
     let mut start_line = 1;
-    for (idx, line) in lines.iter().enumerate() {
+    for (idx, line) in text.lines().enumerate() {
         let line_no = idx + 1;
+
+        if line.len() > options.chunk_max_chars {
+            flush_chunk(&mut drafts, &mut buf, &[], ChunkFlushParams {
+                start_line,
+                end_line: line_no.saturating_sub(1),
+                kind: ChunkKind::Text,
+                symbol: None,
+                address: None,
+            });
+
+            for slice in split_string_by_chars(line, options.chunk_max_chars) {
+                drafts.push(ChunkDraft {
+                    kind: ChunkKind::Text,
+                    start_line: line_no,
+                    end_line: line_no,
+                    content: slice.trim().to_string(),
+                    heading_path: Vec::new(),
+                    symbol: None,
+                    address: None,
+                });
+            }
+
+            start_line = line_no + 1;
+            continue;
+        }
+
         if line.trim().is_empty() && !buf.is_empty() {
             if buffer_len(&buf) >= options.chunk_target_chars {
                 flush_chunk(&mut drafts, &mut buf, &[], ChunkFlushParams {
@@ -170,7 +211,7 @@ fn chunk_text(text: &str, options: &IngestOptions) -> Vec<ChunkDraft> {
             }
             continue;
         }
-        buf.push((*line).to_string());
+        buf.push(line.to_string());
         if buffer_len(&buf) >= options.chunk_max_chars {
             flush_chunk(&mut drafts, &mut buf, &[], ChunkFlushParams {
                 start_line,
@@ -190,6 +231,39 @@ fn chunk_text(text: &str, options: &IngestOptions) -> Vec<ChunkDraft> {
         address: None,
     });
     drafts
+}
+
+fn split_string_by_chars(input: &str, max_chars: usize) -> Vec<String> {
+    if max_chars == 0 {
+        return vec![String::new()];
+    }
+    // Fast path: if bytes <= max_chars then chars <= max_chars (each char is >= 1 byte).
+    if input.len() <= max_chars {
+        return vec![input.to_string()];
+    }
+
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    let mut count = 0usize;
+    for (idx, ch) in input.char_indices() {
+        if count == max_chars {
+            out.push(input[start..idx].to_string());
+            start = idx;
+            count = 0;
+        }
+        count += 1;
+        if ch == '\n' {
+            // Should never occur because we split by `lines()`, but keep this defensive.
+            out.push(input[start..idx].to_string());
+            start = idx + ch.len_utf8();
+            count = 0;
+        }
+    }
+
+    if start < input.len() {
+        out.push(input[start..].to_string());
+    }
+    out
 }
 
 fn decode_html_entity(entity: &str) -> Option<char> {
@@ -293,8 +367,8 @@ fn chunk_html(text: &str, options: &IngestOptions) -> Vec<ChunkDraft> {
     let mut heading_stack: Vec<String> = Vec::new();
     let mut current_heading = heading_stack.clone();
     let mut start_line = 1;
-    let heading_re = Regex::new(r"(?i)<h([1-6])[^>]*>(.*?)</h[1-6]>").unwrap();
-    let tag_re = Regex::new(r"<[^>]+>").unwrap();
+    let heading_re = html_heading_re();
+    let tag_re = html_tag_re();
     let mut in_script = false;
     let mut in_style = false;
 
@@ -369,6 +443,14 @@ fn chunk_html(text: &str, options: &IngestOptions) -> Vec<ChunkDraft> {
 
 fn chunk_json(text: &str, options: &IngestOptions) -> Vec<ChunkDraft> {
     let mut drafts = Vec::new();
+    const MAX_JSON_PARSE_BYTES: usize = 512 * 1024;
+    if text.len() > MAX_JSON_PARSE_BYTES {
+        return chunk_text(text, options)
+            .into_iter()
+            .map(|draft| ChunkDraft { kind: ChunkKind::Json, ..draft })
+            .collect();
+    }
+
     let value: serde_json::Value = match serde_json::from_str(text) {
         Ok(value) => value,
         Err(_) => {
@@ -383,25 +465,77 @@ fn chunk_json(text: &str, options: &IngestOptions) -> Vec<ChunkDraft> {
         serde_json::Value::Object(map) => {
             for (key, value) in map {
                 let address = format!("$.{}", key);
-                let content = serde_json::to_string_pretty(&value).unwrap_or_default();
-                drafts.push(ChunkDraft {
-                    kind: ChunkKind::Json,
-                    start_line: 1,
-                    end_line: line_count,
-                    content,
-                    heading_path: vec![key.clone()],
-                    symbol: Some(key),
-                    address: Some(address),
-                });
+                let content = serde_json::to_string(&value).unwrap_or_default();
+                if content.len() <= options.chunk_max_chars {
+                    drafts.push(ChunkDraft {
+                        kind: ChunkKind::Json,
+                        start_line: 1,
+                        end_line: line_count,
+                        content,
+                        heading_path: vec![key.clone()],
+                        symbol: Some(key),
+                        address: Some(address),
+                    });
+                } else {
+                    for (idx, slice) in split_string_by_chars(&content, options.chunk_max_chars).into_iter().enumerate() {
+                        drafts.push(ChunkDraft {
+                            kind: ChunkKind::Json,
+                            start_line: 1,
+                            end_line: line_count,
+                            content: slice,
+                            heading_path: vec![key.clone()],
+                            symbol: Some(key.clone()),
+                            address: Some(format!("{address}#{}", idx + 1)),
+                        });
+                    }
+                }
             }
         }
         serde_json::Value::Array(list) => {
             let mut start = 0usize;
             while start < list.len() {
-                let end = (start + 50).min(list.len());
+                let mut end = (start + 50).min(list.len());
+                while end > start + 1 {
+                    let slice = &list[start..end];
+                    let content = serde_json::to_string(&slice).unwrap_or_default();
+                    if content.len() <= options.chunk_max_chars {
+                        break;
+                    }
+                    end = start + ((end - start) / 2).max(1);
+                }
+
                 let slice = &list[start..end];
                 let address = format!("$[{}:{}]", start, end);
-                let content = serde_json::to_string_pretty(&slice).unwrap_or_default();
+                let content = serde_json::to_string(&slice).unwrap_or_default();
+                if content.len() <= options.chunk_max_chars {
+                    drafts.push(ChunkDraft {
+                        kind: ChunkKind::Json,
+                        start_line: 1,
+                        end_line: line_count,
+                        content,
+                        heading_path: Vec::new(),
+                        symbol: None,
+                        address: Some(address),
+                    });
+                } else {
+                    for (idx, slice) in split_string_by_chars(&content, options.chunk_max_chars).into_iter().enumerate() {
+                        drafts.push(ChunkDraft {
+                            kind: ChunkKind::Json,
+                            start_line: 1,
+                            end_line: line_count,
+                            content: slice,
+                            heading_path: Vec::new(),
+                            symbol: None,
+                            address: Some(format!("{address}#{}", idx + 1)),
+                        });
+                    }
+                }
+                start = end;
+            }
+        }
+        _ => {
+            let content = serde_json::to_string(&value).unwrap_or_default();
+            if content.len() <= options.chunk_max_chars {
                 drafts.push(ChunkDraft {
                     kind: ChunkKind::Json,
                     start_line: 1,
@@ -409,21 +543,21 @@ fn chunk_json(text: &str, options: &IngestOptions) -> Vec<ChunkDraft> {
                     content,
                     heading_path: Vec::new(),
                     symbol: None,
-                    address: Some(address),
+                    address: Some("$".to_string()),
                 });
-                start = end;
+            } else {
+                for (idx, slice) in split_string_by_chars(&content, options.chunk_max_chars).into_iter().enumerate() {
+                    drafts.push(ChunkDraft {
+                        kind: ChunkKind::Json,
+                        start_line: 1,
+                        end_line: line_count,
+                        content: slice,
+                        heading_path: Vec::new(),
+                        symbol: None,
+                        address: Some(format!("$#{}", idx + 1)),
+                    });
+                }
             }
-        }
-        _ => {
-            drafts.push(ChunkDraft {
-                kind: ChunkKind::Json,
-                start_line: 1,
-                end_line: line_count,
-                content: serde_json::to_string_pretty(&value).unwrap_or_default(),
-                heading_path: Vec::new(),
-                symbol: None,
-                address: Some("$".to_string()),
-            });
         }
     }
     drafts
@@ -607,18 +741,15 @@ fn strip_extension(name: &str) -> &str {
 }
 
 fn truncate_slug(input: &str, max_len: usize) -> String {
-    let mut out = if input.len() <= max_len {
+    // Truncate to max_len first
+    let truncated: String = if input.len() <= max_len {
         input.to_string()
     } else {
         input.chars().take(max_len).collect()
     };
-    while out.ends_with('-') {
-        out.pop();
-    }
-    while out.starts_with('-') {
-        out.remove(0);
-    }
-    out
+
+    // Trim dashes from both ends in one pass (O(n) instead of O(n^2))
+    truncated.trim_matches('-').to_string()
 }
 
 fn strip_redundant_prefix(context: &str, base: &str) -> String {

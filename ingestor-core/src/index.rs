@@ -1,5 +1,5 @@
 use crate::model::{Chunk, FileMeta, IndexStats, SearchFilters, SearchResult, TermEntry};
-use crate::util::{snippet, tokenize};
+use crate::util::{snippet, tokenize, tokenize_counts};
 use std::collections::{BTreeMap, HashMap};
 
 #[cfg(feature = "embeddings")]
@@ -10,14 +10,10 @@ use std::collections::HashSet;
 pub fn build_inverted_index(chunks: &[Chunk]) -> BTreeMap<String, TermEntry> {
     let mut term_map: BTreeMap<String, Vec<(String, usize, usize)>> = BTreeMap::new();
     for chunk in chunks {
-        let tokens = tokenize(&chunk.content);
-        if tokens.is_empty() {
-            continue;
-        }
-        let doc_len = tokens.len();
         let mut counts: HashMap<String, usize> = HashMap::new();
-        for token in tokens {
-            *counts.entry(token).or_insert(0) += 1;
+        let doc_len = tokenize_counts(&chunk.content, &mut counts);
+        if doc_len == 0 {
+            continue;
         }
         for (token, tf) in counts {
             term_map
@@ -158,8 +154,8 @@ fn passes_filters(chunk: &Chunk, filters: &SearchFilters) -> bool {
         }
     }
     if let Some(prefix) = &filters.heading_prefix {
-        let heading = chunk.heading_path.join("/");
-        if !heading.starts_with(prefix) {
+        // Optimized: check prefix match incrementally instead of joining
+        if !heading_matches_prefix(&chunk.heading_path, prefix) {
             return false;
         }
     }
@@ -173,6 +169,51 @@ fn passes_filters(chunk: &Chunk, filters: &SearchFilters) -> bool {
         }
     }
     true
+}
+
+/// Check if a heading path matches a prefix without allocating a joined string.
+fn heading_matches_prefix(heading_path: &[String], prefix: &str) -> bool {
+    if heading_path.is_empty() {
+        return prefix.is_empty();
+    }
+
+    // Build the joined path incrementally and check prefix at each step
+    let mut accumulated_len = 0usize;
+    let prefix_bytes = prefix.as_bytes();
+
+    for (i, part) in heading_path.iter().enumerate() {
+        let part_bytes = part.as_bytes();
+
+        // Check if prefix could still match
+        if i > 0 {
+            // Check the '/' separator
+            if accumulated_len < prefix_bytes.len() {
+                if prefix_bytes[accumulated_len] != b'/' {
+                    return false;
+                }
+            }
+            accumulated_len += 1;
+        }
+
+        // Check the part
+        for (j, &byte) in part_bytes.iter().enumerate() {
+            let pos = accumulated_len + j;
+            if pos < prefix_bytes.len() {
+                if prefix_bytes[pos] != byte {
+                    return false;
+                }
+            }
+        }
+        accumulated_len += part_bytes.len();
+
+        // If we've matched at least the prefix length, it's a match
+        if accumulated_len >= prefix_bytes.len() {
+            return true;
+        }
+    }
+
+    // Final check: if accumulated equals or exceeds prefix length
+    accumulated_len >= prefix_bytes.len()
 }
 
 pub fn list_outline(chunks: &[Chunk], path: &str) -> Vec<String> {
@@ -218,7 +259,7 @@ pub fn vector_search(
         return Vec::new();
     }
 
-    let mut results: Vec<(usize, f32)> = Vec::new();
+    let mut results: Vec<(usize, f32)> = Vec::with_capacity(chunks.len().min(limit * 2));
 
     for (idx, chunk) in chunks.iter().enumerate() {
         if !passes_filters(chunk, filters) {
@@ -254,9 +295,11 @@ pub fn vector_search(
         .collect()
 }
 
-/// Hybrid search combining BM25 and semantic similarity.
+/// Phase 6: Hybrid search combining BM25 and semantic similarity.
 ///
-/// Uses weighted score combination: `final_score = 0.5 * normalized_bm25 + 0.5 * semantic_similarity`
+/// Supports two strategies:
+/// - RRF (Reciprocal Rank Fusion): More robust, doesn't require normalization (default)
+/// - Linear: Weighted combination of normalized scores (Phase 5 compatibility)
 #[cfg(feature = "embeddings")]
 pub fn hybrid_search(
     chunks: &[Chunk],
@@ -268,62 +311,176 @@ pub fn hybrid_search(
     filters: &SearchFilters,
     limit: usize,
 ) -> Vec<SearchResult> {
+    hybrid_search_with_strategy(
+        chunks,
+        inverted,
+        chunk_refs,
+        embeddings,
+        query,
+        query_embedding,
+        filters,
+        limit,
+        crate::model::HybridStrategy::Rrf,
+    )
+}
+
+/// Phase 6: Hybrid search with configurable strategy
+#[cfg(feature = "embeddings")]
+pub fn hybrid_search_with_strategy(
+    chunks: &[Chunk],
+    inverted: &BTreeMap<String, TermEntry>,
+    chunk_refs: &BTreeMap<String, String>,
+    embeddings: &[Vec<f32>],
+    query: &str,
+    query_embedding: &[f32],
+    filters: &SearchFilters,
+    limit: usize,
+    strategy: crate::model::HybridStrategy,
+) -> Vec<SearchResult> {
+    use crate::model::HybridStrategy;
+
+    // Build chunk lookup map once - O(n) instead of O(n*m) lookups
+    let chunk_map: HashMap<&str, &Chunk> = chunks
+        .iter()
+        .map(|c| (c.id.as_str(), c))
+        .collect();
+
+    // Get results from both search methods
     let bm25_results = search_index(chunks, inverted, chunk_refs, query, filters, limit * 2);
     let semantic_results = vector_search(chunks, chunk_refs, embeddings, query_embedding, filters, limit * 2);
 
-    let mut bm25_map: HashMap<String, f32> = HashMap::new();
-    let mut max_bm25 = 0.0f32;
-    for result in &bm25_results {
-        max_bm25 = max_bm25.max(result.score);
-        bm25_map.insert(result.chunk_id.clone(), result.score);
-    }
+    match strategy {
+        HybridStrategy::Rrf => {
+            use crate::rrf::{rrf_fusion, to_ranked_results, RrfConfig};
 
-    let mut semantic_map: HashMap<String, f32> = HashMap::new();
-    for result in &semantic_results {
-        semantic_map.insert(result.chunk_id.clone(), result.score);
-    }
+            // Convert scored results to ranked results for RRF
+            let bm25_scored: Vec<(&str, f32)> = bm25_results
+                .iter()
+                .map(|r| (r.chunk_id.as_str(), r.score))
+                .collect();
+            let semantic_scored: Vec<(&str, f32)> = semantic_results
+                .iter()
+                .map(|r| (r.chunk_id.as_str(), r.score))
+                .collect();
 
-    let mut all_chunk_ids: HashSet<String> = HashSet::new();
-    for result in &bm25_results {
-        all_chunk_ids.insert(result.chunk_id.clone());
-    }
-    for result in &semantic_results {
-        all_chunk_ids.insert(result.chunk_id.clone());
-    }
+            let bm25_ranked = to_ranked_results(&bm25_scored);
+            let semantic_ranked = to_ranked_results(&semantic_scored);
 
-    let mut hybrid_results: Vec<SearchResult> = Vec::new();
+            let merged = rrf_fusion(
+                vec![bm25_ranked, semantic_ranked],
+                RrfConfig::default(),
+                limit,
+            );
 
-    for chunk_id in all_chunk_ids {
-        let bm25_score = bm25_map.get(&chunk_id).copied().unwrap_or(0.0);
-        let semantic_score = semantic_map.get(&chunk_id).copied().unwrap_or(0.0);
+            // Convert RRF results back to SearchResult format
+            let mut hybrid_results: Vec<SearchResult> = Vec::with_capacity(merged.len());
+            for (chunk_id, rrf_score) in merged {
+                if let Some(&chunk) = chunk_map.get(chunk_id.as_str()) {
+                    let chunk_ref = chunk_refs
+                        .get(chunk_id.as_str())
+                        .cloned()
+                        .unwrap_or_else(|| chunk.short_id.clone());
+                    hybrid_results.push(SearchResult {
+                        chunk_id: chunk_id.clone(),
+                        chunk_ref,
+                        score: rrf_score,
+                        path: chunk.path.clone(),
+                        start_line: chunk.start_line,
+                        end_line: chunk.end_line,
+                        snippet: snippet(&chunk.content, 200),
+                        heading_path: chunk.heading_path.clone(),
+                    });
+                }
+            }
+            hybrid_results
+        }
+        HybridStrategy::Linear => {
+            // Phase 5 linear combination (backward compatibility)
+            let mut bm25_map: HashMap<String, f32> = HashMap::with_capacity(bm25_results.len());
+            let mut max_bm25 = 0.0f32;
+            for result in &bm25_results {
+                max_bm25 = max_bm25.max(result.score);
+                bm25_map.insert(result.chunk_id.clone(), result.score);
+            }
 
-        let normalized_bm25 = if max_bm25 > 0.0 {
-            bm25_score / max_bm25
-        } else {
-            0.0
-        };
+            let mut semantic_map: HashMap<String, f32> = HashMap::with_capacity(semantic_results.len());
+            for result in &semantic_results {
+                semantic_map.insert(result.chunk_id.clone(), result.score);
+            }
 
-        let final_score = 0.5 * normalized_bm25 + 0.5 * semantic_score;
+            let mut all_chunk_ids: HashSet<String> = HashSet::with_capacity(bm25_results.len() + semantic_results.len());
+            for result in &bm25_results {
+                all_chunk_ids.insert(result.chunk_id.clone());
+            }
+            for result in &semantic_results {
+                all_chunk_ids.insert(result.chunk_id.clone());
+            }
 
-        if let Some(chunk) = chunks.iter().find(|c| c.id == chunk_id) {
-            let chunk_ref = chunk_refs
-                .get(chunk_id.as_str())
-                .cloned()
-                .unwrap_or_else(|| chunk.short_id.clone());
-            hybrid_results.push(SearchResult {
-                chunk_id: chunk_id.clone(),
-                chunk_ref,
-                score: final_score,
-                path: chunk.path.clone(),
-                start_line: chunk.start_line,
-                end_line: chunk.end_line,
-                snippet: snippet(&chunk.content, 200),
-                heading_path: chunk.heading_path.clone(),
-            });
+            let mut hybrid_results: Vec<SearchResult> = Vec::with_capacity(all_chunk_ids.len());
+            for chunk_id in all_chunk_ids {
+                let bm25_score = bm25_map.get(&chunk_id).copied().unwrap_or(0.0);
+                let semantic_score = semantic_map.get(&chunk_id).copied().unwrap_or(0.0);
+
+                let normalized_bm25 = if max_bm25 > 0.0 {
+                    bm25_score / max_bm25
+                } else {
+                    0.0
+                };
+
+                let final_score = 0.5 * normalized_bm25 + 0.5 * semantic_score;
+
+                if let Some(&chunk) = chunk_map.get(chunk_id.as_str()) {
+                    let chunk_ref = chunk_refs
+                        .get(chunk_id.as_str())
+                        .cloned()
+                        .unwrap_or_else(|| chunk.short_id.clone());
+                    hybrid_results.push(SearchResult {
+                        chunk_id: chunk_id.clone(),
+                        chunk_ref,
+                        score: final_score,
+                        path: chunk.path.clone(),
+                        start_line: chunk.start_line,
+                        end_line: chunk.end_line,
+                        snippet: snippet(&chunk.content, 200),
+                        heading_path: chunk.heading_path.clone(),
+                    });
+                }
+            }
+
+            hybrid_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+            hybrid_results.truncate(limit);
+            hybrid_results
         }
     }
+}
 
-    hybrid_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
-    hybrid_results.truncate(limit);
-    hybrid_results
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_heading_matches_prefix() {
+        // Empty cases
+        assert!(heading_matches_prefix(&[], ""));
+        assert!(!heading_matches_prefix(&[], "foo"));
+
+        // Single element
+        let single = vec!["API".to_string()];
+        assert!(heading_matches_prefix(&single, ""));
+        assert!(heading_matches_prefix(&single, "A"));
+        assert!(heading_matches_prefix(&single, "API"));
+        assert!(!heading_matches_prefix(&single, "API/"));
+        assert!(!heading_matches_prefix(&single, "B"));
+
+        // Multiple elements
+        let multi = vec!["API".to_string(), "Auth".to_string()];
+        assert!(heading_matches_prefix(&multi, ""));
+        assert!(heading_matches_prefix(&multi, "A"));
+        assert!(heading_matches_prefix(&multi, "API"));
+        assert!(heading_matches_prefix(&multi, "API/"));
+        assert!(heading_matches_prefix(&multi, "API/A"));
+        assert!(heading_matches_prefix(&multi, "API/Auth"));
+        assert!(!heading_matches_prefix(&multi, "API/B"));
+        assert!(!heading_matches_prefix(&multi, "B"));
+    }
 }

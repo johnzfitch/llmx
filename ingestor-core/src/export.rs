@@ -2,12 +2,83 @@ use crate::model::{Chunk, ChunkKind, FileMeta, IndexFile};
 use crate::util::build_chunk_refs;
 use serde::Serialize;
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
-use std::io::{Cursor, Write};
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write;
+use std::io::{Cursor, Write as IoWrite};
 use zip::write::FileOptions;
 
+// ============================================================================
+// Shared export data structures
+// ============================================================================
+
+/// Pre-computed data for minimal exports. Built once and shared between
+/// export_manifest_llm_tsv, export_catalog_llm_md, and export_chunks_compact.
+#[derive(Debug, Clone)]
+struct MinExportData {
+    paths: Vec<String>,
+    kinds: Vec<String>,
+    entries: Vec<MinExportEntry>,
+    dirs: Vec<String>,
+    path_dirs: Vec<usize>,
+    path_bases: Vec<String>,
+    file_summaries: Vec<FileSummary>,
+}
+
+impl MinExportData {
+    fn build(index: &IndexFile) -> Self {
+        let (paths, kinds, entries) = build_min_export_entries(index);
+        let file_summaries = build_file_summaries(&entries);
+        let (dirs, path_dirs, path_bases) = split_paths_dirs_bases(&paths);
+        Self {
+            paths,
+            kinds,
+            entries,
+            dirs,
+            path_dirs,
+            path_bases,
+            file_summaries,
+        }
+    }
+}
+
+// ============================================================================
+// Public export functions
+// ============================================================================
+
+pub fn export_llm_pointer(index: &IndexFile) -> String {
+    let mut out = String::with_capacity(1024);
+    out.push_str("# llm.md\n\n");
+    out.push_str("index_id: ");
+    out.push_str(&index.index_id);
+    let _ = write!(out, "\nfiles: {} chunks: {}\n\n", index.files.len(), index.chunks.len());
+
+    if !index.warnings.is_empty() {
+        let _ = write!(out, "warnings: {}\n\n", index.warnings.len());
+    }
+
+    out.push_str("artifacts:\n");
+    out.push_str("- manifest.llm.tsv\n");
+    out.push_str("- chunks/<ref>.md\n");
+    out.push_str("- images/ (optional)\n\n");
+
+    out.push_str("workflow (token-efficient):\n");
+    out.push_str("1) Scan `manifest.llm.tsv` `F` rows to pick files by path/label.\n");
+    out.push_str("2) Resolve `path_i` via `P` rows (and `kind_i` via `K`).\n");
+    out.push_str("3) Within chosen files, scan `C` rows for best chunk labels + token counts.\n");
+    out.push_str("4) Open only the referenced `chunks/<ref>.md` files.\n\n");
+
+    out.push_str("manifest.llm.tsv rows:\n");
+    out.push_str("- D\\t<dir_i>\\t<dir>\n");
+    out.push_str("- P\\t<path_i>\\t<dir_i>\\t<base>  (path = dir + base)\n");
+    out.push_str("- K\\t<kind_i>\\t<kind>\n");
+    out.push_str("- F\\t<path_i>\\t<kind_i>\\t<chunks>\\t<tok_total>\\t<end_max>\\t<label>\n");
+    out.push_str("- C\\t<ref>\\t<path_i>\\t<kind_i>\\t<start>\\t<end>\\t<tok>\\t<label>\n");
+    out.push_str("\nchunks/<ref>.md header:\n");
+    out.push_str("- @llmx\\t<ref>\\t<path_i>\\t<kind_i>\\t<start>\\t<end>\\t<label>\n");
+    out
+}
+
 pub fn export_llm(index: &IndexFile) -> String {
-    let mut out = String::new();
     let mut chunks = index.chunks.clone();
     chunks.sort_by(chunk_sort);
 
@@ -18,26 +89,25 @@ pub fn export_llm(index: &IndexFile) -> String {
         index.chunk_refs.clone()
     };
 
-    out.push_str("# llm.md (pointer manifest)\n\n");
+    let mut out = String::with_capacity(chunks.len() * 80);
+    out.push_str("# outline.md\n\n");
     out.push_str("Index ID: ");
     out.push_str(&index.index_id);
-    out.push_str("\nFiles: ");
-    out.push_str(&index.files.len().to_string());
-    out.push_str("  Chunks: ");
-    out.push_str(&chunks.len().to_string());
-    out.push_str("\n\n");
+    let _ = write!(out, "\nFiles: {}  Chunks: {}\n\n", index.files.len(), chunks.len());
     out.push_str("Chunk files live under `chunks/` and are named `{ref}.md`.\n");
-    out.push_str("Prefer search to find refs, then open only the referenced chunk files.\n\n");
+    out.push_str("Prefer search to find refs, then open only the referenced chunk files.\n");
+    out.push_str("For a token-minimal export, prefer `export.compact.zip`.\n\n");
 
     if !index.warnings.is_empty() {
         out.push_str("## Warnings\n\n");
         out.push_str("Some files were skipped or truncated.\n\n");
         for warning in &index.warnings {
-            out.push_str(&format!(
+            let _ = write!(
+                out,
                 "- {}: {}\n",
                 markdown_code_span(&warning.path),
                 sanitize_single_line(&warning.message)
-            ));
+            );
         }
         out.push('\n');
     }
@@ -47,15 +117,12 @@ pub fn export_llm(index: &IndexFile) -> String {
     let mut current_path = String::new();
     for chunk in &chunks {
         if chunk.path != current_path {
-            current_path = chunk.path.clone();
+            current_path.clone_from(&chunk.path);
             if let Some(meta) = file_meta.get(current_path.as_str()) {
                 let kind_short = kind_short_label(meta.kind);
-                out.push_str(&format!(
-                    "### {} ({}, {} lines)\n",
-                    &current_path, kind_short, meta.line_count
-                ));
+                let _ = write!(out, "### {} ({}, {} lines)\n", &current_path, kind_short, meta.line_count);
             } else {
-                out.push_str(&format!("### {}\n", &current_path));
+                let _ = write!(out, "### {}\n", &current_path);
             }
         }
 
@@ -75,20 +142,53 @@ pub fn export_chunks(index: &IndexFile) -> Vec<(String, String)> {
     } else {
         index.chunk_refs.clone()
     };
-    chunks
-        .into_iter()
-        .enumerate()
-        .map(|(idx, chunk)| {
-            let mut body = String::new();
-            let (content, compacted) = compact_for_export(&chunk);
-            let chunk_ref = refs.get(chunk.id.as_str()).map(String::as_str).unwrap_or(&chunk.short_id);
-            body.push_str(&chunk_front_matter(idx + 1, &chunk, compacted, chunk_ref));
-            body.push_str("\n\n");
-            body.push_str(&content);
-            let name = format!("chunks/{}.md", chunk_ref);
-            (name, body)
-        })
-        .collect()
+    
+    let mut result = Vec::with_capacity(chunks.len());
+    for (idx, chunk) in chunks.into_iter().enumerate() {
+        let mut body = String::with_capacity(chunk.content.len() + 512);
+        let (content, compacted) = compact_for_export(&chunk);
+        let chunk_ref = refs.get(chunk.id.as_str()).map(String::as_str).unwrap_or(&chunk.short_id);
+        body.push_str(&chunk_front_matter(idx + 1, &chunk, compacted, chunk_ref));
+        body.push_str("\n\n");
+        body.push_str(&content);
+        let name = format!("chunks/{}.md", chunk_ref);
+        result.push((name, body));
+    }
+    result
+}
+
+pub fn export_chunks_compact(index: &IndexFile) -> Vec<(String, String)> {
+    let data = MinExportData::build(index);
+    export_chunks_compact_with_data(&data)
+}
+
+fn export_chunks_compact_with_data(data: &MinExportData) -> Vec<(String, String)> {
+    let mut result = Vec::with_capacity(data.entries.len());
+    for entry in &data.entries {
+        let (content, _) = compact_for_export(&entry.chunk);
+        let label = chunk_label(
+            &entry.chunk,
+            entry.symbol.as_deref(),
+            entry.heading_last.as_deref(),
+            entry.address.as_deref(),
+        );
+        let label = tsv_field(&label, 72);
+        let mut body = String::with_capacity(content.len() + 128);
+        let _ = write!(
+            body,
+            "@llmx\t{}\t{}\t{}\t{}\t{}\t{}\n\n{}",
+            entry.chunk_ref,
+            entry.path_i,
+            entry.kind_i,
+            entry.chunk.start_line,
+            entry.chunk.end_line,
+            label,
+            content
+        );
+        let name = format!("chunks/{}.md", entry.chunk_ref);
+        result.push((name, body));
+    }
+    result
 }
 
 pub fn export_zip(index: &IndexFile) -> Vec<u8> {
@@ -96,9 +196,17 @@ pub fn export_zip(index: &IndexFile) -> Vec<u8> {
     let mut writer = zip::ZipWriter::new(buffer);
     let options = FileOptions::default();
 
-    let llm = export_llm(index);
+    let llm = export_llm_pointer(index);
     writer.start_file("llm.md", options).ok();
     writer.write_all(llm.as_bytes()).ok();
+
+    let catalog = export_catalog_llm_md(index);
+    writer.start_file("catalog.llm.md", options).ok();
+    writer.write_all(catalog.as_bytes()).ok();
+
+    let outline = export_llm(index);
+    writer.start_file("outline.md", options).ok();
+    writer.write_all(outline.as_bytes()).ok();
 
     let index_json = serde_json::to_string(index).unwrap_or_default();
     writer.start_file("index.json", options).ok();
@@ -108,7 +216,47 @@ pub fn export_zip(index: &IndexFile) -> Vec<u8> {
     writer.start_file("manifest.json", options).ok();
     writer.write_all(manifest.as_bytes()).ok();
 
+    let manifest_min = export_manifest_min(index);
+    writer.start_file("manifest.min.json", options).ok();
+    writer.write_all(manifest_min.as_bytes()).ok();
+
+    let manifest_llm_tsv = export_manifest_llm_tsv(index);
+    writer.start_file("manifest.llm.tsv", options).ok();
+    writer.write_all(manifest_llm_tsv.as_bytes()).ok();
+
     for (name, content) in export_chunks(index) {
+        writer.start_file(name, options).ok();
+        writer.write_all(content.as_bytes()).ok();
+    }
+
+    match writer.finish() {
+        Ok(cursor) => cursor.into_inner(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Optimized compact export: builds MinExportData once and reuses it.
+pub fn export_zip_compact(index: &IndexFile) -> Vec<u8> {
+    let buffer = Cursor::new(Vec::new());
+    let mut writer = zip::ZipWriter::new(buffer);
+    let options = FileOptions::default();
+
+    // Build shared data once instead of 3x
+    let data = MinExportData::build(index);
+
+    let llm = export_llm_pointer(index);
+    writer.start_file("llm.md", options).ok();
+    writer.write_all(llm.as_bytes()).ok();
+
+    let catalog = export_catalog_llm_md_with_data(index, &data);
+    writer.start_file("catalog.llm.md", options).ok();
+    writer.write_all(catalog.as_bytes()).ok();
+
+    let manifest_llm_tsv = export_manifest_llm_tsv_with_data(index, &data);
+    writer.start_file("manifest.llm.tsv", options).ok();
+    writer.write_all(manifest_llm_tsv.as_bytes()).ok();
+
+    for (name, content) in export_chunks_compact_with_data(&data) {
         writer.start_file(name, options).ok();
         writer.write_all(content.as_bytes()).ok();
     }
@@ -122,6 +270,144 @@ pub fn export_zip(index: &IndexFile) -> Vec<u8> {
 pub fn export_manifest_json(index: &IndexFile) -> String {
     export_manifest(index)
 }
+
+pub fn export_manifest_min_json(index: &IndexFile) -> String {
+    export_manifest_min(index)
+}
+
+pub fn export_manifest_llm_tsv(index: &IndexFile) -> String {
+    let data = MinExportData::build(index);
+    export_manifest_llm_tsv_with_data(index, &data)
+}
+
+fn export_manifest_llm_tsv_with_data(index: &IndexFile, data: &MinExportData) -> String {
+    // Estimate size: header + D rows + P rows + K rows + F rows + C rows
+    let estimated_size = 128 
+        + data.dirs.len() * 32 
+        + data.paths.len() * 64 
+        + data.kinds.len() * 24
+        + data.file_summaries.len() * 96
+        + data.entries.len() * 96;
+    
+    let mut out = String::with_capacity(estimated_size);
+    let _ = write!(out, "llmx_manifest_llm_tsv\t4\t{}\n", index.index_id);
+
+    for (idx, dir) in data.dirs.iter().enumerate() {
+        let _ = write!(out, "D\t{}\t{}\n", idx, dir);
+    }
+
+    for (idx, _path) in data.paths.iter().enumerate() {
+        let dir_i = data.path_dirs[idx];
+        let base = &data.path_bases[idx];
+        let _ = write!(out, "P\t{}\t{}\t{}\n", idx, dir_i, base);
+    }
+
+    for (idx, kind) in data.kinds.iter().enumerate() {
+        let _ = write!(out, "K\t{}\t{}\n", idx, kind);
+    }
+
+    for summary in &data.file_summaries {
+        let _ = write!(
+            out, 
+            "F\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            summary.path_i,
+            summary.kind_i,
+            summary.chunk_count,
+            summary.tok_total,
+            summary.end_max,
+            tsv_field(&summary.label, 72)
+        );
+    }
+
+    for entry in &data.entries {
+        let label = chunk_label(
+            &entry.chunk, 
+            entry.symbol.as_deref(), 
+            entry.heading_last.as_deref(), 
+            entry.address.as_deref()
+        );
+        let _ = write!(
+            out,
+            "C\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            entry.chunk_ref,
+            entry.path_i,
+            entry.kind_i,
+            entry.chunk.start_line,
+            entry.chunk.end_line,
+            entry.chunk.token_estimate,
+            tsv_field(&label, 72)
+        );
+    }
+
+    out
+}
+
+pub fn export_catalog_llm_md(index: &IndexFile) -> String {
+    let data = MinExportData::build(index);
+    export_catalog_llm_md_with_data(index, &data)
+}
+
+fn export_catalog_llm_md_with_data(index: &IndexFile, data: &MinExportData) -> String {
+    let mut out = String::with_capacity(4096);
+    let _ = write!(
+        out,
+        "# catalog.llm.md\n\nindex_id: {}\nfiles: {} chunks: {}\n\n",
+        index.index_id,
+        index.files.len(),
+        index.chunks.len()
+    );
+
+    // Top directories by token mass.
+    let mut dir_tok: BTreeMap<usize, (usize, usize)> = BTreeMap::new();
+    for summary in &data.file_summaries {
+        let dir_i = data.path_dirs.get(summary.path_i).copied().unwrap_or(0);
+        let entry = dir_tok.entry(dir_i).or_insert((0, 0));
+        entry.0 += summary.tok_total;
+        entry.1 += 1;
+    }
+    let mut dir_rank: Vec<(usize, usize, usize)> = dir_tok
+        .into_iter()
+        .map(|(dir_i, (tok_total, file_count))| (dir_i, tok_total, file_count))
+        .collect();
+    dir_rank.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+
+    out.push_str("top_dirs:\n");
+    for (dir_i, tok_total, file_count) in dir_rank.into_iter().take(20) {
+        let dir = data.dirs.get(dir_i).map(String::as_str).unwrap_or("");
+        let _ = write!(out, "- {} files={} tok={}\n", dir, file_count, tok_total);
+    }
+    out.push('\n');
+
+    // Top files by token mass.
+    let mut file_rank: Vec<&FileSummary> = data.file_summaries.iter().collect();
+    file_rank.sort_by(|a, b| b.tok_total.cmp(&a.tok_total).then_with(|| a.path_i.cmp(&b.path_i)));
+
+    out.push_str("top_files:\n");
+    for summary in file_rank.into_iter().take(60) {
+        let dir_i = data.path_dirs.get(summary.path_i).copied().unwrap_or(0);
+        let dir = data.dirs.get(dir_i).map(String::as_str).unwrap_or("");
+        let base = data.path_bases.get(summary.path_i).map(String::as_str).unwrap_or("");
+        let kind = data.kinds.get(summary.kind_i).map(String::as_str).unwrap_or("?");
+        
+        let _ = write!(out, "- {}{} kind={} chunks={} tok={}", dir, base, kind, summary.chunk_count, summary.tok_total);
+        
+        if !summary.label.is_empty() {
+            let _ = write!(out, " label={}", tsv_field(&summary.label, 64));
+        }
+        if !summary.refs.is_empty() {
+            out.push_str(" refs=");
+            let refs_str: String = summary.refs.iter().take(4).cloned().collect::<Vec<_>>().join(",");
+            out.push_str(&refs_str);
+        }
+        out.push('\n');
+    }
+
+    out
+}
+
+// ============================================================================
+// Manifest structures
+// ============================================================================
 
 #[derive(Debug, Serialize)]
 struct ManifestV2 {
@@ -165,7 +451,7 @@ fn export_manifest(index: &IndexFile) -> String {
     let mut kinds: Vec<String> = Vec::new();
     let mut kind_ids: BTreeMap<String, usize> = BTreeMap::new();
 
-    let mut rows = Vec::new();
+    let mut rows = Vec::with_capacity(chunks.len());
     for chunk in chunks {
         let chunk_ref = refs
             .get(chunk.id.as_str())
@@ -237,6 +523,227 @@ fn export_manifest(index: &IndexFile) -> String {
     serde_json::to_string(&manifest).unwrap_or_default()
 }
 
+#[derive(Debug, Serialize)]
+struct ManifestMinV4 {
+    format_version: u32,
+    index_id: String,
+    paths: Vec<String>,
+    kinds: Vec<String>,
+    chunk_columns: Vec<&'static str>,
+    chunks: Vec<ManifestChunkRowMinV4>,
+}
+
+#[derive(Debug, Serialize)]
+struct ManifestChunkRowMinV4(
+    String,         // ref
+    usize,          // path_i
+    usize,          // kind_i
+    usize,          // start_line
+    usize,          // end_line
+    usize,          // token_estimate
+    Option<String>, // heading_last
+    Option<String>, // symbol
+    Option<String>, // address
+);
+
+#[derive(Debug, Clone)]
+struct MinExportEntry {
+    chunk: Chunk,
+    chunk_ref: String,
+    path_i: usize,
+    kind_i: usize,
+    heading_last: Option<String>,
+    symbol: Option<String>,
+    address: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct FileSummary {
+    path_i: usize,
+    kind_i: usize,
+    chunk_count: usize,
+    tok_total: usize,
+    end_max: usize,
+    label: String,
+    refs: Vec<String>,
+}
+
+fn build_file_summaries(entries: &[MinExportEntry]) -> Vec<FileSummary> {
+    if entries.is_empty() {
+        return Vec::new();
+    }
+    
+    // Estimate output size
+    let mut out = Vec::with_capacity(entries.len() / 4 + 1);
+    let mut current_path_i: Option<usize> = None;
+    let mut current_kind_i: usize = 0;
+    let mut chunk_count: usize = 0;
+    let mut tok_total: usize = 0;
+    let mut end_max: usize = 0;
+    let mut file_label: Option<String> = None;
+    let mut refs: Vec<String> = Vec::with_capacity(8);
+
+    for entry in entries {
+        if current_path_i != Some(entry.path_i) {
+            if let Some(path_i) = current_path_i {
+                out.push(FileSummary {
+                    path_i,
+                    kind_i: current_kind_i,
+                    chunk_count,
+                    tok_total,
+                    end_max,
+                    label: file_label.take().unwrap_or_default(),
+                    refs: std::mem::take(&mut refs),
+                });
+            }
+
+            current_path_i = Some(entry.path_i);
+            current_kind_i = entry.kind_i;
+            chunk_count = 0;
+            tok_total = 0;
+            end_max = 0;
+            file_label = None;
+            refs = Vec::with_capacity(8);
+        }
+
+        chunk_count += 1;
+        tok_total += entry.chunk.token_estimate;
+        end_max = end_max.max(entry.chunk.end_line);
+        if refs.len() < 8 {
+            refs.push(entry.chunk_ref.clone());
+        }
+        if file_label.is_none() {
+            let candidate = chunk_label(
+                &entry.chunk,
+                entry.symbol.as_deref(),
+                entry.heading_last.as_deref(),
+                entry.address.as_deref(),
+            );
+            if !candidate.trim().is_empty() && candidate != "chunk" {
+                file_label = Some(candidate);
+            }
+        }
+    }
+
+    if let Some(path_i) = current_path_i {
+        out.push(FileSummary {
+            path_i,
+            kind_i: current_kind_i,
+            chunk_count,
+            tok_total,
+            end_max,
+            label: file_label.unwrap_or_default(),
+            refs,
+        });
+    }
+
+    out
+}
+
+fn build_min_export_entries(index: &IndexFile) -> (Vec<String>, Vec<String>, Vec<MinExportEntry>) {
+    let mut chunks = index.chunks.clone();
+    chunks.sort_by(chunk_sort);
+    let refs = if index.chunk_refs.is_empty() {
+        build_chunk_refs(&chunks)
+    } else {
+        index.chunk_refs.clone()
+    };
+
+    let mut paths: Vec<String> = Vec::new();
+    let mut path_ids: BTreeMap<String, usize> = BTreeMap::new();
+    let mut kinds: Vec<String> = Vec::new();
+    let mut kind_ids: BTreeMap<String, usize> = BTreeMap::new();
+
+    let mut entries = Vec::with_capacity(chunks.len());
+    for chunk in chunks {
+        let chunk_ref = refs
+            .get(chunk.id.as_str())
+            .cloned()
+            .unwrap_or_else(|| chunk.short_id.clone());
+
+        let path_i = match path_ids.get(chunk.path.as_str()) {
+            Some(id) => *id,
+            None => {
+                let id = paths.len();
+                paths.push(chunk.path.clone());
+                path_ids.insert(chunk.path.clone(), id);
+                id
+            }
+        };
+
+        let kind_label = kind_label(chunk.kind).to_string();
+        let kind_i = match kind_ids.get(kind_label.as_str()) {
+            Some(id) => *id,
+            None => {
+                let id = kinds.len();
+                kinds.push(kind_label.clone());
+                kind_ids.insert(kind_label, id);
+                id
+            }
+        };
+
+        let heading_last = chunk.heading_path.last().cloned().filter(|s| !s.is_empty());
+        entries.push(MinExportEntry {
+            chunk_ref,
+            path_i,
+            kind_i,
+            heading_last,
+            symbol: chunk.symbol.clone(),
+            address: chunk.address.clone(),
+            chunk,
+        });
+    }
+
+    (paths, kinds, entries)
+}
+
+fn export_manifest_min(index: &IndexFile) -> String {
+    let (paths, kinds, entries) = build_min_export_entries(index);
+
+    let rows: Vec<ManifestChunkRowMinV4> = entries
+        .into_iter()
+        .map(|entry| {
+            let chunk = entry.chunk;
+            ManifestChunkRowMinV4(
+                entry.chunk_ref,
+                entry.path_i,
+                entry.kind_i,
+                chunk.start_line,
+                chunk.end_line,
+                chunk.token_estimate,
+                entry.heading_last,
+                entry.symbol,
+                entry.address,
+            )
+        })
+        .collect();
+
+    let manifest = ManifestMinV4 {
+        format_version: 4,
+        index_id: index.index_id.clone(),
+        paths,
+        kinds,
+        chunk_columns: vec![
+            "ref",
+            "path_i",
+            "kind_i",
+            "start_line",
+            "end_line",
+            "token_estimate",
+            "heading_last",
+            "symbol",
+            "address",
+        ],
+        chunks: rows,
+    };
+
+    serde_json::to_string(&manifest).unwrap_or_default()
+}
+
+// ============================================================================
+// Helper functions
+// ============================================================================
+
 fn chunk_front_matter(index: usize, chunk: &Chunk, compacted: bool, chunk_ref: &str) -> String {
     let compact_flag = if compacted { "true" } else { "false" };
     let heading_json = serde_json::to_string(&chunk.heading_path).unwrap_or_else(|_| "[]".to_string());
@@ -258,8 +765,7 @@ fn chunk_front_matter(index: usize, chunk: &Chunk, compacted: bool, chunk_ref: &
         compact_flag,
         heading_json,
         symbol_json,
-        address_json
-        ,
+        address_json,
         asset_json
     )
 }
@@ -384,6 +890,56 @@ fn sanitize_single_line(input: &str) -> String {
         .collect()
 }
 
+fn tsv_field(input: &str, max_len: usize) -> String {
+    let cleaned = sanitize_single_line(input);
+    let collapsed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    truncate_chars(&collapsed, max_len)
+}
+
+fn truncate_chars(input: &str, max_len: usize) -> String {
+    if input.chars().count() <= max_len {
+        return input.to_string();
+    }
+    let mut out = input.chars().take(max_len).collect::<String>();
+    while out.ends_with(' ') {
+        out.pop();
+    }
+    out
+}
+
+fn chunk_label(chunk: &Chunk, symbol: Option<&str>, heading_last: Option<&str>, address: Option<&str>) -> String {
+    if let Some(sym) = symbol.filter(|s| !s.trim().is_empty()) {
+        return sym.to_string();
+    }
+
+    if !chunk.heading_path.is_empty() {
+        let mut parts = chunk.heading_path.iter().rev().take(2).rev().cloned().collect::<Vec<_>>();
+        if parts.is_empty() {
+            if let Some(last) = heading_last.filter(|s| !s.trim().is_empty()) {
+                return last.to_string();
+            }
+        }
+        if parts.len() == 1 {
+            return parts.remove(0);
+        }
+        return parts.join(" > ");
+    }
+
+    if let Some(addr) = address.filter(|s| !s.trim().is_empty()) {
+        return addr.to_string();
+    }
+
+    if let Some(last) = heading_last.filter(|s| !s.trim().is_empty()) {
+        return last.to_string();
+    }
+
+    if !chunk.slug.trim().is_empty() {
+        return truncate_chars(&chunk.slug, 60);
+    }
+
+    "chunk".to_string()
+}
+
 fn markdown_code_span(input: &str) -> String {
     let cleaned = sanitize_single_line(input);
     let fence_len = max_backtick_run(&cleaned) + 1;
@@ -393,6 +949,43 @@ fn markdown_code_span(input: &str) -> String {
     } else {
         format!("{fence}{cleaned}{fence}")
     }
+}
+
+fn split_paths_dirs_bases(paths: &[String]) -> (Vec<String>, Vec<usize>, Vec<String>) {
+    let mut dir_set: BTreeSet<String> = BTreeSet::new();
+    dir_set.insert(String::new());
+
+    let mut dirs_raw: Vec<String> = Vec::with_capacity(paths.len());
+    let mut bases: Vec<String> = Vec::with_capacity(paths.len());
+
+    for path in paths {
+        if let Some((dir, base)) = path.rsplit_once('/') {
+            let dir = if dir.is_empty() {
+                String::new()
+            } else {
+                format!("{dir}/")
+            };
+            dir_set.insert(dir.clone());
+            dirs_raw.push(dir);
+            bases.push(base.to_string());
+        } else {
+            dirs_raw.push(String::new());
+            bases.push(path.clone());
+        }
+    }
+
+    let dirs: Vec<String> = dir_set.into_iter().collect();
+    let mut dir_ids: BTreeMap<&str, usize> = BTreeMap::new();
+    for (idx, dir) in dirs.iter().enumerate() {
+        dir_ids.insert(dir.as_str(), idx);
+    }
+
+    let dir_indexes: Vec<usize> = dirs_raw
+        .iter()
+        .map(|dir| *dir_ids.get(dir.as_str()).unwrap_or(&0))
+        .collect();
+
+    (dirs, dir_indexes, bases)
 }
 
 fn max_backtick_run(input: &str) -> usize {

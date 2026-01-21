@@ -42,7 +42,7 @@ Top-level fields:
 - `index_id`: sha256 of sorted (path, file hash) pairs.
 - `files`: list of file metadata.
 - `chunks`: ordered list of chunk records.
-- `chunk_refs`: map of `chunk_id -> ref` used by exports/UI (derived from `id` prefixes; collision-extended).
+- `chunk_refs`: map of `chunk_id -> ref` used by exports/UI (token-efficient `c0001` base36 sequence; deterministic ordering).
 - `inverted_index`: term -> postings (tf, doc_len).
 - `stats`: totals and averages.
 - `warnings`: skipped/truncated file notices.
@@ -144,32 +144,60 @@ Filters:
 
 ### llm.md
 
-- **Semantic outline manifest**: hierarchical list of chunks with rich context for agent scanning.
-- **Does not inline chunk bodies** (avoids "ingest everything at once").
-- **Format**: File headers show `### path (kind, N lines)`, chunks show `- ref (lines) semantic-label`
-- **Semantic labels**:
+Two variants exist:
+
+- `llm.md` (**pointer manifest**, compact): short, token-minimal guidance + pointers to `manifest.llm.tsv` / `manifest.min.json` and `chunks/<ref>.md`.
+- `outline.md` (**semantic outline manifest**, verbose): hierarchical list of chunks with rich context for scanning.
+
+Also provided:
+
+- `catalog.llm.md` (**LLM-first catalog**, optional): top directories and top files with suggested starting refs (included in the full export, and available via the WASM API).
+
+The semantic outline format:
+- Does not inline chunk bodies (avoids "ingest everything at once").
+- File headers show `### path (kind, N lines)`, chunks show `- ref (lines) semantic-label`.
+- Semantic labels:
   - Code chunks: function/class symbols (e.g., `` `loginUser()` ``)
   - Markdown chunks: heading breadcrumbs (e.g., `API Reference > Authentication`)
   - Fallback: slug derived from filename or first heading
-- **Chunk references** (`ref`) are derived from the stable chunk `id`:
-  - default: first 12 hex chars of `id`
-  - if a collision occurs, the prefix is deterministically extended (16/20/…).
+- Chunk references (`ref`) are deterministic and token-efficient:
+  - format: `c` + zero-padded base36 sequence (e.g., `c0001`)
+  - ordering: by `path`, then `start_line`/`end_line` (tie-breaker: `id`)
 
 ### chunks/*.md
 
-- One file per chunk: `chunks/{ref}.md` (slug is stored in front matter for readability).
-- YAML front matter header with provenance and hashes, followed by the chunk body.
-- For text chunks, repeated identical lines may be compacted during export when a
-  run exceeds the threshold (default: 3).
+Two variants exist:
+
+- Full: one file per chunk `chunks/{ref}.md` with YAML front matter (provenance + hashes), followed by the chunk body.
+- Compact: one file per chunk `chunks/{ref}.md` with a single-line header and the chunk body (no YAML front matter).
+  - Header format: `@llmx\t<ref>\t<path_i>\t<kind_i>\t<start_line>\t<end_line>\t<label>`
+  - `path_i` and `kind_i` refer to the tables in `manifest.llm.tsv` / `manifest.min.json`.
+
+For text chunks, repeated identical lines may be compacted during export when a run exceeds the threshold (default: 3).
 
 ### export.zip
 
-- Contains `llm.md`, `index.json`, `manifest.json`, and `chunks/`.
+Two variants exist:
+
+- Full: contains `llm.md` (pointer), `outline.md`, `index.json`, `manifest.json`, `manifest.min.json`, `manifest.llm.tsv`, and `chunks/` (plus `images/` if present).
+- Compact: contains `llm.md` (pointer), `manifest.llm.tsv`, and `chunks/` (plus `images/` if present).
+
+Notes:
 - `index.json` is written compact (not pretty-printed) to reduce export size.
 - `manifest.json` uses `format_version: 2` and is size-optimized:
   - Common values are deduplicated into top-level tables (`paths`, `kinds`).
   - Chunk records are stored as rows (arrays) with a `chunk_columns` header.
   - Chunk files are derivable as `chunks/{ref}.md` and are not stored per-row.
+- `manifest.min.json` uses `format_version: 4` and is further reduced:
+  - Omits per-chunk `id` and content hashes; uses stable `ref` + path/line provenance.
+  - Stores only the last heading (`heading_last`) instead of full `heading_path` arrays.
+- `manifest.llm.tsv` is a token-efficient alternative to JSON for LLM prompting.
+  - Header: `llmx_manifest_llm_tsv\t4\t<index_id>`
+  - Dir table rows: `D\t<dir_i>\t<dir>`
+  - Path table rows: `P\t<path_i>\t<dir_i>\t<base>` (full path = `dir` + `base`)
+  - Kind table rows: `K\t<kind_i>\t<kind>`
+  - File summary rows: `F\t<path_i>\t<kind_i>\t<chunks>\t<tok_total>\t<end_max>\t<label>`
+  - Chunk rows: `C\t<ref>\t<path_i>\t<kind_i>\t<start>\t<end>\t<tok>\t<label>`
 
 ## Safety & Privacy
 
