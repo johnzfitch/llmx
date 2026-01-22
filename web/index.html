@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>LLMX Ingestor</title>
   <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="favicon.ico" sizes="any" />
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png" />
+  <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
+  <meta name="theme-color" content="#0d6b6f" />
 </head>
 <body>
   <main class="shell">
@@ -19,7 +24,7 @@
       <div class="hero-card">
         <div class="hero-stat">
           <span class="label">Index</span>
-          <span id="index-id" class="value">Not built</span>
+          <span id="index-status" class="value">Not built</span>
         </div>
         <div class="hero-stat">
           <span class="label">Chunks</span>
@@ -36,23 +41,41 @@
       </div>
     </header>
 
+    <section class="panel status-panel">
+      <div class="panel-header status-header">
+        <h2>Activity</h2>
+        <span id="status-label" class="status-label">Idle</span>
+      </div>
+      <div id="ingest-status" class="status-message" role="status" aria-live="polite">
+        Ready for ingestion.
+      </div>
+      <div id="status-progress" class="status-progress" hidden>
+        <div class="status-progress-bar"></div>
+      </div>
+      <div id="status-meta" class="status-meta"></div>
+    </section>
+
     <section class="panel ingest-panel-drop" id="ingest-panel">
       <div id="drop-zone" class="drop-zone-full">
         <div class="drop-zone-content">
-          <svg class="drop-icon" width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M21 15V19C21 19.5304 20.7893 20.0391 20.4142 20.4142C20.0391 20.7893 19.5304 21 19 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            <polyline points="17 8 12 3 7 8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            <line x1="12" y1="3" x2="12" y2="15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
+          <img class="drop-icon" src="icons/upload.png" width="48" height="48" alt="" />
           <h2>Drop files or folders here</h2>
           <p>Supports .md, .json, .txt, .log, .har, .js, .ts, .html, images and more</p>
         </div>
-        <button id="select-folder" class="primary ingest-button-bottom">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M22 19C22 19.5304 21.7893 20.0391 21.4142 20.4142C21.0391 20.7893 20.5304 21 20 21H4C3.46957 21 2.96086 20.7893 2.58579 20.4142C2.21071 20.0391 2 19.5304 2 19V5C2 4.46957 2.21071 3.96086 2.58579 3.58579C2.96086 3.21071 3.46957 3 4 3H9L11 6H20C20.5304 6 21.0391 6.21071 21.4142 6.58579C21.7893 6.96086 22 7.46957 22 8V19Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          <span>Select Files</span>
-        </button>
+        <div class="drop-zone-footer">
+          <div class="picker-row">
+            <button id="select-folder" class="primary ingest-button-bottom" type="button">
+              <img class="button-icon" src="icons/folder.png" width="20" height="20" alt="" />
+              <span id="select-folder-label">Select Files or Folder</span>
+            </button>
+            <div id="picker-menu" class="picker-menu" hidden>
+              <button id="pick-folder" type="button">Pick folder</button>
+              <button id="pick-files" type="button">Pick files</button>
+            </div>
+          </div>
+          <div id="ingest-limits" class="ingest-limits"></div>
+          <div class="warning-list" id="warning-list" role="status" aria-live="polite"></div>
+        </div>
         <input id="folder-input" type="file" webkitdirectory directory multiple hidden />
         <input
           id="files-input"
@@ -62,8 +85,6 @@
           hidden
         />
       </div>
-      <div class="status" id="ingest-status"></div>
-      <div class="warning-list" id="warning-list"></div>
     </section>
 
     <section class="panel settings-panel">
@@ -84,11 +105,31 @@
         </label>
 
         <label class="setting-row">
+          <input type="checkbox" id="setting-force-cpu" class="setting-checkbox" />
+          <div class="setting-content">
+            <div class="setting-text">
+              <span class="setting-title">Force CPU Embeddings</span>
+              <span class="setting-description">Allow CPU fallback when WebGPU is unavailable (slow)</span>
+            </div>
+          </div>
+        </label>
+
+        <label class="setting-row">
           <input type="checkbox" id="setting-force-webgpu" class="setting-checkbox" />
           <div class="setting-content">
             <div class="setting-text">
               <span class="setting-title">Force WebGPU on Firefox</span>
               <span class="setting-description">Experimental, may cause instability</span>
+            </div>
+          </div>
+        </label>
+
+        <label class="setting-row">
+          <input type="checkbox" id="setting-auto-embeddings" class="setting-checkbox" />
+          <div class="setting-content">
+            <div class="setting-text">
+              <span class="setting-title">Auto-build Embeddings</span>
+              <span class="setting-description">Build embeddings after ingestion when enabled</span>
             </div>
           </div>
         </label>
@@ -98,19 +139,55 @@
         <button id="apply-settings" class="primary">Apply Settings</button>
         <button id="reset-settings">Reset to Defaults</button>
       </div>
+
+      <div class="settings-subpanel">
+        <div class="settings-subheader">
+          <h3>Index</h3>
+          <p>Current index identity and storage state.</p>
+        </div>
+        <div class="settings-meta-row">
+          <span class="meta-label">Index ID</span>
+          <span id="index-id" class="meta-value">Not built</span>
+        </div>
+      </div>
+
+      <div class="settings-subpanel">
+        <div class="settings-subheader">
+          <h3>Embeddings</h3>
+          <p>Build semantic search index for better results.</p>
+        </div>
+        <div class="actions">
+          <button id="build-embeddings" class="primary">Build Embeddings</button>
+          <span id="embeddings-status" class="embeddings-status"></span>
+        </div>
+      </div>
+
+      <div class="settings-subpanel">
+        <div class="settings-subheader">
+          <h3>Export</h3>
+          <p>Download a single bundle with index and chunks.</p>
+        </div>
+        <div class="actions">
+          <button id="download-export" class="export-button" type="button">Download export zip</button>
+        </div>
+      </div>
+
+      <div class="settings-subpanel">
+        <div class="settings-subheader">
+          <h3>Saved Indexes</h3>
+          <p>Persist indexes in this browser for later use.</p>
+        </div>
+        <div class="saved-indexes">
+          <button id="save-index" type="button">Save index</button>
+          <select id="saved-indexes"></select>
+          <button id="load-saved-index" type="button">Load</button>
+          <button id="delete-saved-index" type="button">Delete</button>
+        </div>
+        <p class="saved-indexes-note">Saved indexes stay in this browser only.</p>
+      </div>
     </section>
 
-    <section class="panel">
-      <div class="panel-header">
-        <h2>Embeddings</h2>
-        <p>Build semantic search index for better results.</p>
-      </div>
-      <div class="actions">
-        <button id="build-embeddings" class="primary">Build Embeddings</button>
-        <span id="embeddings-status" class="embeddings-status"></span>
-      </div>
-    </section>
-
+    <!--
     <section class="panel">
       <div class="panel-header">
         <h2>Search</h2>
@@ -128,17 +205,23 @@
         <select id="symbol-filter">
           <option value="">All symbols</option>
         </select>
-	        <select id="kind-filter">
-	          <option value="">All types</option>
-	          <option value="markdown">Markdown</option>
-	          <option value="json">JSON</option>
-	          <option value="java_script">JavaScript</option>
-	          <option value="html">HTML</option>
-	          <option value="text">Text</option>
-	          <option value="image">Image</option>
-	        </select>
-	        <button id="run-search">Search</button>
-	      </div>
+        <select id="kind-filter">
+          <option value="">All types</option>
+          <option value="markdown">Markdown</option>
+          <option value="json">JSON</option>
+          <option value="java_script">JavaScript</option>
+          <option value="html">HTML</option>
+          <option value="text">Text</option>
+          <option value="image">Image</option>
+        </select>
+        <button id="run-search">Search</button>
+      </div>
+      <div class="results-toolbar">
+        <div id="results-summary" class="results-summary">Enter a query to search.</div>
+        <div class="results-actions">
+          <button id="clear-filters">Clear filters</button>
+        </div>
+      </div>
       <div id="results" class="results"></div>
       <div id="chunk-view" class="chunk-view" hidden>
         <div class="chunk-header">
@@ -148,18 +231,8 @@
         <pre id="chunk-content"></pre>
       </div>
     </section>
-
-	    <section class="panel">
-	      <div class="panel-header">
-	        <h2>Export</h2>
-	        <p>LLM-friendly bundles and local index storage.</p>
-	      </div>
-	      <div class="actions">
-	        <button id="download-export" class="primary">Download export.zip</button>
-	        <button id="download-index-json">Download index.json</button>
-	      </div>
-	    </section>
-	  </main>
+    -->
+  </main>
 
   <script type="module" src="app.js"></script>
 </body>

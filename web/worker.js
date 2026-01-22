@@ -1,5 +1,65 @@
 import init, { Embedder, Ingestor } from "./pkg/ingestor_wasm.js";
 
+const LOG_BUFFER_MAX = 2000;
+const logBuffer = [];
+
+function formatLogArg(arg) {
+  if (arg == null) return String(arg);
+  if (typeof arg === "string") return arg;
+  if (typeof arg === "number" || typeof arg === "boolean" || typeof arg === "bigint") {
+    return String(arg);
+  }
+  if (arg instanceof Error) {
+    return arg.stack || arg.message || "Error";
+  }
+  if (arg instanceof ArrayBuffer) {
+    return `[ArrayBuffer byteLength=${arg.byteLength}]`;
+  }
+  if (ArrayBuffer.isView(arg)) {
+    const ctor = arg.constructor && arg.constructor.name ? arg.constructor.name : "TypedArray";
+    return `[${ctor} byteLength=${arg.byteLength}]`;
+  }
+  if (typeof arg === "object") {
+    try {
+      return JSON.stringify(arg);
+    } catch {
+      return Object.prototype.toString.call(arg);
+    }
+  }
+  try {
+    return String(arg);
+  } catch {
+    return "Unserializable";
+  }
+}
+
+function recordLog(level, args) {
+  const entry = {
+    t_ms: Date.now(),
+    level,
+    message: Array.from(args, formatLogArg).join(" "),
+  };
+  logBuffer.push(entry);
+  if (logBuffer.length > LOG_BUFFER_MAX) {
+    logBuffer.splice(0, logBuffer.length - LOG_BUFFER_MAX);
+  }
+}
+
+function installConsoleLogBuffer() {
+  if (console.__llmx_patched) return;
+  const methods = ["log", "info", "warn", "error", "debug"];
+  for (const method of methods) {
+    const original = console[method] ? console[method].bind(console) : null;
+    console[method] = (...args) => {
+      recordLog(method, args);
+      if (original) original(...args);
+    };
+  }
+  console.__llmx_patched = true;
+}
+
+installConsoleLogBuffer();
+
 const urlParams = (() => {
   try {
     return new URL(self.location.href).searchParams;
@@ -112,19 +172,22 @@ async function ensureEmbedder() {
   }
 
   if (!embedder) {
-    const requestedBackend = self.LLMX_ENABLE_WEBGPU ? "WebGPU" : "CPU";
-    console.log(`Embedder init: starting (backend=${requestedBackend})`);
+    const requestedBackend = self.LLMX_ENABLE_WEBGPU ? "WebGPU" : forceCpu ? "CPU" : "none";
+    console.log(`Embedder init: starting (requested=${requestedBackend})`);
 
     try {
-      embedder = await Embedder.create();
-      console.log(`Embedder init: ready (backend=${requestedBackend})`);
+      embedder = await Embedder.createWithPolicy(self.LLMX_ENABLE_WEBGPU, forceCpu, false);
+      const actualBackend = embedder.backendKind();
+      self.LLMX_ENABLE_WEBGPU = actualBackend === "webgpu";
+      console.log(`Embedder init: ready (backend=${actualBackend})`);
     } catch (error) {
       // If WebGPU was requested but failed, try falling back to CPU if allowed
       if (self.LLMX_ENABLE_WEBGPU && forceCpu) {
         console.warn(`WebGPU embedder creation failed, falling back to CPU: ${toError(error)}`);
         self.LLMX_ENABLE_WEBGPU = false;
-        embedder = await Embedder.create();
-        console.log("Embedder init: ready (backend=CPU, fallback)");
+        embedder = await Embedder.createWithPolicy(false, true, false);
+        const actualBackend = embedder.backendKind();
+        console.log(`Embedder init: ready (backend=${actualBackend}, fallback)`);
       } else {
         throw error;
       }
@@ -244,6 +307,21 @@ async function buildEmbeddingsIndex() {
     };
   });
 
+  if (index.embeddings_flat && index.embedding_model === modelId) {
+    const fromJson = index.embeddings_flat;
+    const count = chunkMeta.length;
+    if (!Array.isArray(fromJson) || fromJson.length !== count * dim) {
+      throw new Error("Saved embeddings_flat shape mismatch");
+    }
+    const view = new Float32Array(fromJson);
+    embeddings = view;
+    embeddingsMeta = { dim, count, modelId };
+    for (const meta of chunkMeta) {
+      delete meta.content;
+    }
+    return embeddingsMeta;
+  }
+
   if (index.embeddings && index.embedding_model === modelId) {
     const fromJson = index.embeddings;
     const count = chunkMeta.length;
@@ -287,7 +365,7 @@ async function buildEmbeddingsIndex() {
       await new Promise(resolve => setTimeout(resolve, 0));
     }
 
-    const out = embed.embedBatch(texts);
+    const out = await embed.embedBatch(texts);
     if (!out || typeof out.length !== "number") {
       throw new Error("Embedding batch returned unexpected type");
     }
@@ -329,11 +407,21 @@ self.onmessage = async (event) => {
     await ensureReady();
 
     switch (op) {
+      case "getLogs": {
+        self.postMessage({ id, ok: true, data: { logs: logBuffer.slice() } });
+        return;
+      }
+      case "clearLogs": {
+        logBuffer.length = 0;
+        self.postMessage({ id, ok: true, data: { cleared: true } });
+        return;
+      }
       case "ping": {
         self.postMessage({ id, ok: true, data: { ready: true } });
         return;
       }
       case "getCapabilities": {
+        const backendKind = embedder ? embedder.backendKind() : null;
         self.postMessage({
           id,
           ok: true,
@@ -341,6 +429,7 @@ self.onmessage = async (event) => {
             webgpu: self.LLMX_ENABLE_WEBGPU,
             embeddings: self.LLMX_ENABLE_EMBEDDINGS,
             forceCpu,
+            backendKind,
           },
         });
         return;
@@ -525,46 +614,51 @@ self.onmessage = async (event) => {
           return;
         }
 
-        await ensureEmbedder();
+        try {
+          await ensureEmbedder();
 
-        if (!shouldUseEmbeddings()) {
+          if (!shouldUseEmbeddings()) {
+            self.postMessage({ id, ok: true, data: { results: bm25Results } });
+            return;
+          }
+
+          const queryEmbedding = await embedder.embed(query);
+          const dim = embeddingsMeta.dim;
+
+          const semantic = [];
+          for (let i = 0; i < chunkMeta.length; i += 1) {
+            const meta = chunkMeta[i];
+            if (!passesFilters(meta, filters)) continue;
+            const score = dotProduct(queryEmbedding, embeddings, i * dim, dim);
+            semantic.push({ idx: i, score });
+          }
+
+          semantic.sort((a, b) => b.score - a.score);
+          const semanticTop = semantic.slice(0, limit * 2).map(({ idx, score }) => {
+            const meta = chunkMeta[idx];
+            return buildSearchResult(meta, score);
+          });
+
+          const merged = rrfFuse(bm25Results, semanticTop, limit);
+
+          const bm25ById = new Map(bm25Results.map((r) => [r.chunk_id, r]));
+          const results = merged.map(({ chunkId, score }) => {
+            const existing = bm25ById.get(chunkId);
+            if (existing) {
+              return { ...existing, score };
+            }
+            const idx = chunkMeta.findIndex((m) => m.id === chunkId);
+            if (idx !== -1) {
+              return buildSearchResult(chunkMeta[idx], score);
+            }
+            return { chunk_id: chunkId, chunk_ref: "", score, path: "", start_line: 0, end_line: 0, snippet: "", heading_path: [] };
+          });
+
+          self.postMessage({ id, ok: true, data: { results } });
+        } catch (error) {
+          console.warn("Semantic search failed, falling back to BM25:", toError(error));
           self.postMessage({ id, ok: true, data: { results: bm25Results } });
-          return;
         }
-
-        const queryEmbedding = embedder.embed(query);
-        const dim = embeddingsMeta.dim;
-
-        const semantic = [];
-        for (let i = 0; i < chunkMeta.length; i += 1) {
-          const meta = chunkMeta[i];
-          if (!passesFilters(meta, filters)) continue;
-          const score = dotProduct(queryEmbedding, embeddings, i * dim, dim);
-          semantic.push({ idx: i, score });
-        }
-
-        semantic.sort((a, b) => b.score - a.score);
-        const semanticTop = semantic.slice(0, limit * 2).map(({ idx, score }) => {
-          const meta = chunkMeta[idx];
-          return buildSearchResult(meta, score);
-        });
-
-        const merged = rrfFuse(bm25Results, semanticTop, limit);
-
-        const bm25ById = new Map(bm25Results.map((r) => [r.chunk_id, r]));
-        const results = merged.map(({ chunkId, score }) => {
-          const existing = bm25ById.get(chunkId);
-          if (existing) {
-            return { ...existing, score };
-          }
-          const idx = chunkMeta.findIndex((m) => m.id === chunkId);
-          if (idx !== -1) {
-            return buildSearchResult(chunkMeta[idx], score);
-          }
-          return { chunk_id: chunkId, chunk_ref: "", score, path: "", start_line: 0, end_line: 0, snippet: "", heading_path: [] };
-        });
-
-        self.postMessage({ id, ok: true, data: { results } });
         return;
       }
       case "getChunk": {

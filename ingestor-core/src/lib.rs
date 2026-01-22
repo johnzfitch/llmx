@@ -120,7 +120,9 @@ pub fn ingest_files(mut files: Vec<FileInput>, options: IngestOptions) -> IndexF
         stats,
         warnings,
         embeddings: None,
+        embeddings_flat: None,
         embedding_model: None,
+        embedding_dim: None,
     }
 }
 
@@ -239,7 +241,9 @@ pub fn update_index(prev: IndexFile, files: Vec<FileInput>, options: IngestOptio
         stats,
         warnings,
         embeddings: None,
+        embeddings_flat: None,
         embedding_model: None,
+        embedding_dim: None,
     }
 }
 
@@ -377,7 +381,9 @@ pub fn update_index_selective(
         stats,
         warnings,
         embeddings: None,
+        embeddings_flat: None,
         embedding_model: None,
+        embedding_dim: None,
     }
 }
 

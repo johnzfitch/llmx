@@ -12,12 +12,23 @@ use std::io::{Cursor, Write};
 use wasm_bindgen::prelude::*;
 use zip::write::FileOptions;
 
+pub(crate) fn set_panic_hook_once() {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use std::sync::Once;
+        static ONCE: Once = Once::new();
+        ONCE.call_once(|| {
+            std::panic::set_hook(Box::new(|info| {
+                web_sys::console::error_1(&JsValue::from_str(&info.to_string()));
+            }));
+        });
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(start)]
 pub fn wasm_start() {
-    std::panic::set_hook(Box::new(|info| {
-        web_sys::console::error_1(&JsValue::from_str(&info.to_string()));
-    }));
+    set_panic_hook_once();
 }
 
 // Phase 6: Burn-based embeddings for WebGPU
@@ -159,16 +170,13 @@ impl Ingestor {
             )));
         }
 
-        // Convert flat array to Vec<Vec<f32>>
-        let mut embeddings = Vec::with_capacity(chunk_count);
-        for i in 0..chunk_count {
-            let start = i * dimension;
-            let end = start + dimension;
-            embeddings.push(flat[start..end].to_vec());
-        }
-
-        self.index.embeddings = Some(embeddings);
+        // Store flat embeddings to avoid large intermediate allocations.
+        // Keep `embeddings` (nested) for backward compatibility when reading older indexes,
+        // but prefer writing only the flat representation.
+        self.index.embeddings = None;
+        self.index.embeddings_flat = Some(flat);
         self.index.embedding_model = Some(model_id);
+        self.index.embedding_dim = Some(dimension);
 
         Ok(())
     }

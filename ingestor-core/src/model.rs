@@ -120,9 +120,16 @@ pub struct IndexFile {
     /// Phase 5: Embeddings for semantic search (one per chunk)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embeddings: Option<Vec<Vec<f32>>>,
+    /// Phase 6: Flat embeddings for semantic search (one per chunk).
+    /// Flattened as `[chunk0_dim0, chunk0_dim1, ..., chunk1_dim0, ...]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embeddings_flat: Option<Vec<f32>>,
     /// Embedding model identifier for cache invalidation
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embedding_model: Option<String>,
+    /// Embedding dimension for validation (e.g., 384 for arctic-embed-s).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedding_dim: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

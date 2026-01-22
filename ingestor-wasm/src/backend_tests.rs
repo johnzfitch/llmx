@@ -1,7 +1,11 @@
 #[cfg(test)]
 mod tests {
-    use crate::bert::{BertModel, BertSelfAttention};
-    use burn::tensor::{backend::Backend, Bool, Int, Tensor, TensorData};
+    #[cfg(all(feature = "ndarray-backend", feature = "wgpu-backend"))]
+    use crate::bert::BertModel;
+    use crate::bert::BertSelfAttention;
+    use burn::tensor::{backend::Backend, Bool, Tensor, TensorData};
+    #[cfg(all(feature = "ndarray-backend", feature = "wgpu-backend"))]
+    use burn::tensor::Int;
     #[cfg(feature = "ndarray-backend")]
     use burn_ndarray::{NdArray, NdArrayDevice};
     #[cfg(all(feature = "ndarray-backend", feature = "wgpu-backend"))]
@@ -47,6 +51,7 @@ mod tests {
         )
     }
 
+    #[cfg(all(feature = "ndarray-backend", feature = "wgpu-backend"))]
     fn make_ids_mask<B: Backend>(
         device: &B::Device,
         batch: usize,

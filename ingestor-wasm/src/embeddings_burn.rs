@@ -22,19 +22,6 @@ pub const EMBEDDING_DIM: usize = 384;
 /// Maximum sequence length for the model
 const MAX_SEQ_LENGTH: usize = 512;
 
-fn set_panic_hook_once() {
-    #[cfg(target_arch = "wasm32")]
-    {
-        use std::sync::Once;
-        static ONCE: Once = Once::new();
-        ONCE.call_once(|| {
-            std::panic::set_hook(Box::new(|info| {
-                web_sys::console::error_1(&JsValue::from_str(&info.to_string()));
-            }));
-        });
-    }
-}
-
 #[cfg(all(feature = "wgpu-backend", target_arch = "wasm32"))]
 fn webgpu_opt_in_enabled() -> bool {
     let global = js_sys::global();
@@ -107,6 +94,18 @@ impl WgpuEmbeddingGenerator {
         // This panic is caught and converted to JsValue error in WASM
         let device = WgpuDevice::default();
 
+        // Burn WebGPU (cubecl-wgpu) requires async setup on WASM to avoid sync "block_on" paths.
+        // If we don't initialize the runtime with `init_setup_async`, cubecl may attempt a
+        // synchronous setup and trap with "unreachable executed".
+        #[cfg(target_arch = "wasm32")]
+        {
+            burn_wgpu::init_setup_async::<burn_wgpu::graphics::WebGpu>(
+                &device,
+                burn_wgpu::RuntimeOptions::default(),
+            )
+            .await;
+        }
+
         web_sys::console::log_1(&JsValue::from_str("WebGPU init: loading tokenizer..."));
 
         let tokenizer_bytes = fetch_tokenizer_bytes().await?;
@@ -133,11 +132,35 @@ impl WgpuEmbeddingGenerator {
 #[cfg(feature = "wgpu-backend")]
 impl EmbeddingBackend for WgpuEmbeddingGenerator {
     fn embed(&self, text: &str) -> Result<Vec<f32>, JsValue> {
-        embed_with_model(&self.model, &self.tokenizer, &self.device, text)
+        // WASM+WebGPU cannot synchronously read tensors back to the CPU.
+        // The JS-facing API uses async variants that await `into_data_async`.
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = text;
+            return Err(JsValue::from_str(
+                "WebGPU embeddings require async reads in WASM; use the async Embedder API",
+            ));
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            embed_with_model(&self.model, &self.tokenizer, &self.device, text)
+        }
     }
 
     fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, JsValue> {
-        embed_batch_with_model(&self.model, &self.tokenizer, &self.device, texts)
+        // WASM+WebGPU cannot synchronously read tensors back to the CPU.
+        // The JS-facing API uses async variants that await `into_data_async`.
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = texts;
+            return Err(JsValue::from_str(
+                "WebGPU embeddings require async reads in WASM; use the async Embedder API",
+            ));
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            embed_batch_with_model(&self.model, &self.tokenizer, &self.device, texts)
+        }
     }
 
     fn dimension(&self) -> usize {
@@ -249,21 +272,45 @@ pub enum SmartEmbeddingGenerator {
     Hash(HashEmbeddingGenerator),
 }
 
+#[derive(Debug, Clone, Copy)]
+struct BackendPolicy {
+    allow_webgpu: bool,
+    allow_cpu: bool,
+    allow_hash: bool,
+}
+
+impl Default for BackendPolicy {
+    fn default() -> Self {
+        Self {
+            allow_webgpu: true,
+            allow_cpu: true,
+            allow_hash: true,
+        }
+    }
+}
+
 impl SmartEmbeddingGenerator {
     /// Create embedding generator with automatic fallback chain:
     /// WebGPU → CPU → Hash-based
-    pub async fn new() -> Self {
-        set_panic_hook_once();
+    pub async fn new() -> Result<Self, JsValue> {
+        Self::new_with_policy(BackendPolicy::default()).await
+    }
+
+    async fn new_with_policy(policy: BackendPolicy) -> Result<Self, JsValue> {
+        crate::set_panic_hook_once();
+        let _ = policy.allow_webgpu;
+        let _ = policy.allow_cpu;
+        let _ = policy.allow_hash;
 
         // Try WebGPU first (may panic in WASM with Burn 0.21 - known issue)
         #[cfg(feature = "wgpu-backend")]
         {
-            if webgpu_opt_in_enabled() {
+            if policy.allow_webgpu && webgpu_opt_in_enabled() {
                 web_sys::console::log_1(&JsValue::from_str("WebGPU init: enabled; attempting..."));
                 match WgpuEmbeddingGenerator::new().await {
                     Ok(gen) => {
                         web_sys::console::log_1(&JsValue::from_str("Embeddings backend: WebGPU"));
-                        return Self::WebGpu(gen);
+                        return Ok(Self::WebGpu(gen));
                     }
                     Err(e) => {
                         web_sys::console::warn_1(&JsValue::from_str(&format!(
@@ -271,7 +318,7 @@ impl SmartEmbeddingGenerator {
                         )));
                     }
                 }
-            } else {
+            } else if policy.allow_webgpu {
                 web_sys::console::log_1(&JsValue::from_str(
                     "WebGPU init: disabled (set LLMX_ENABLE_WEBGPU=true or use ?webgpu=1); using CPU",
                 ));
@@ -280,16 +327,60 @@ impl SmartEmbeddingGenerator {
 
         // Fall back to CPU (reliable in WASM)
         #[cfg(feature = "ndarray-backend")]
-        if let Ok(gen) = CpuEmbeddingGenerator::new().await {
-            web_sys::console::log_1(&JsValue::from_str("Embeddings backend: CPU"));
-            return Self::Cpu(gen);
+        if policy.allow_cpu {
+            if let Ok(gen) = CpuEmbeddingGenerator::new().await {
+                web_sys::console::log_1(&JsValue::from_str("Embeddings backend: CPU"));
+                return Ok(Self::Cpu(gen));
+            }
         }
 
         // Last resort: hash-based
-        web_sys::console::warn_1(&JsValue::from_str(
-            "Embeddings backend: hash (models unavailable)",
-        ));
-        Self::Hash(HashEmbeddingGenerator::new())
+        if policy.allow_hash {
+            web_sys::console::warn_1(&JsValue::from_str(
+                "Embeddings backend: hash (models unavailable)",
+            ));
+            Ok(Self::Hash(HashEmbeddingGenerator::new()))
+        } else {
+            Err(JsValue::from_str("No embedding backend available"))
+        }
+    }
+
+    async fn embed_async(&self, text: &str) -> Result<Vec<f32>, JsValue> {
+        match self {
+            #[cfg(feature = "wgpu-backend")]
+            Self::WebGpu(gen) => {
+                embed_with_model_async(&gen.model, &gen.tokenizer, &gen.device, text).await
+            }
+            #[cfg(feature = "ndarray-backend")]
+            Self::Cpu(gen) => {
+                embed_with_model_async(&gen.model, &gen.tokenizer, &gen.device, text).await
+            }
+            Self::Hash(gen) => gen.embed(text),
+        }
+    }
+
+    async fn embed_batch_async(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, JsValue> {
+        match self {
+            #[cfg(feature = "wgpu-backend")]
+            Self::WebGpu(gen) => {
+                embed_batch_with_model_async(&gen.model, &gen.tokenizer, &gen.device, texts).await
+            }
+            #[cfg(feature = "ndarray-backend")]
+            Self::Cpu(gen) => {
+                embed_batch_with_model_async(&gen.model, &gen.tokenizer, &gen.device, texts).await
+            }
+            Self::Hash(gen) => gen.embed_batch(texts),
+        }
+    }
+
+    fn backend_kind(&self) -> &'static str {
+        match self {
+            #[cfg(feature = "wgpu-backend")]
+            Self::WebGpu(_) => "webgpu",
+            #[cfg(feature = "ndarray-backend")]
+            Self::Cpu(_) => "cpu",
+            Self::Hash(_) => "hash",
+        }
     }
 }
 
@@ -325,6 +416,7 @@ impl EmbeddingBackend for SmartEmbeddingGenerator {
     }
 }
 
+#[allow(dead_code)]
 fn embed_with_model<B: Backend>(
     model: &Model<B>,
     tokenizer: &Tokenizer,
@@ -380,6 +472,7 @@ fn embed_with_model<B: Backend>(
         })
 }
 
+#[allow(dead_code)]
 fn embed_batch_with_model<B: Backend>(
     model: &Model<B>,
     tokenizer: &Tokenizer,
@@ -470,6 +563,160 @@ fn embed_batch_with_model<B: Backend>(
     Ok(outputs)
 }
 
+async fn embed_with_model_async<B: Backend>(
+    model: &Model<B>,
+    tokenizer: &Tokenizer,
+    device: &B::Device,
+    text: &str,
+) -> Result<Vec<f32>, JsValue> {
+    let encoding = tokenizer
+        .encode(text, true)
+        .map_err(|e| {
+            web_sys::console::error_1(&JsValue::from_str(&format!("Tokenization failed: {e}")));
+            JsValue::from_str("Failed to tokenize input")
+        })?;
+
+    let input_ids: Vec<i64> = encoding
+        .get_ids()
+        .iter()
+        .take(MAX_SEQ_LENGTH)
+        .map(|&id| id as i64)
+        .collect();
+
+    let attention_mask: Vec<i64> = encoding
+        .get_attention_mask()
+        .iter()
+        .take(MAX_SEQ_LENGTH)
+        .map(|&mask| mask as i64)
+        .collect();
+
+    if input_ids.is_empty() {
+        return Err(JsValue::from_str("Tokenization produced no input ids"));
+    }
+
+    let seq_len = input_ids.len();
+    let input_ids =
+        Tensor::<B, 2, Int>::from_ints(TensorData::new(input_ids, [1, seq_len]), device);
+    let attention_mask = Tensor::<B, 2, Int>::from_ints(
+        TensorData::new(attention_mask, [1, seq_len]),
+        device,
+    );
+
+    let hidden = model.forward(input_ids, attention_mask.clone());
+    let pooled = mean_pool(hidden, attention_mask);
+    let normalized = l2_normalize(pooled);
+
+    let data = normalized.into_data_async().await.map_err(|err| {
+        web_sys::console::error_1(&JsValue::from_str(&format!(
+            "Embedding read failed (async): {err:?}"
+        )));
+        JsValue::from_str("Failed to read embedding")
+    })?;
+
+    data.to_vec::<f32>().map_err(|err| {
+        web_sys::console::error_1(&JsValue::from_str(&format!(
+            "Embedding read failed: {err:?}"
+        )));
+        JsValue::from_str("Failed to read embedding")
+    })
+}
+
+async fn embed_batch_with_model_async<B: Backend>(
+    model: &Model<B>,
+    tokenizer: &Tokenizer,
+    device: &B::Device,
+    texts: &[String],
+) -> Result<Vec<Vec<f32>>, JsValue> {
+    if texts.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut encoded_ids: Vec<Vec<i64>> = Vec::with_capacity(texts.len());
+    let mut encoded_masks: Vec<Vec<i64>> = Vec::with_capacity(texts.len());
+    let mut max_len = 0usize;
+
+    for text in texts {
+        let encoding = tokenizer
+            .encode(text.as_str(), true)
+            .map_err(|e| {
+                web_sys::console::error_1(&JsValue::from_str(&format!(
+                    "Tokenization failed: {e}"
+                )));
+                JsValue::from_str("Failed to tokenize input")
+            })?;
+
+        let ids: Vec<i64> = encoding
+            .get_ids()
+            .iter()
+            .take(MAX_SEQ_LENGTH)
+            .map(|&id| id as i64)
+            .collect();
+        let mask: Vec<i64> = encoding
+            .get_attention_mask()
+            .iter()
+            .take(MAX_SEQ_LENGTH)
+            .map(|&mask| mask as i64)
+            .collect();
+
+        if ids.is_empty() {
+            return Err(JsValue::from_str("Tokenization produced no input ids"));
+        }
+
+        max_len = max_len.max(ids.len());
+        encoded_ids.push(ids);
+        encoded_masks.push(mask);
+    }
+
+    let batch_size = encoded_ids.len();
+    let mut flat_ids: Vec<i64> = Vec::with_capacity(batch_size * max_len);
+    let mut flat_masks: Vec<i64> = Vec::with_capacity(batch_size * max_len);
+
+    for (mut ids, mut masks) in encoded_ids.into_iter().zip(encoded_masks) {
+        ids.resize(max_len, 0);
+        masks.resize(max_len, 0);
+        flat_ids.extend_from_slice(&ids);
+        flat_masks.extend_from_slice(&masks);
+    }
+
+    let input_ids = Tensor::<B, 2, Int>::from_ints(
+        TensorData::new(flat_ids, [batch_size, max_len]),
+        device,
+    );
+    let attention_mask = Tensor::<B, 2, Int>::from_ints(
+        TensorData::new(flat_masks, [batch_size, max_len]),
+        device,
+    );
+
+    let hidden = model.forward(input_ids, attention_mask.clone());
+    let pooled = mean_pool(hidden, attention_mask);
+    let normalized = l2_normalize(pooled);
+
+    let data = normalized.into_data_async().await.map_err(|err| {
+        web_sys::console::error_1(&JsValue::from_str(&format!(
+            "Embedding batch read failed (async): {err:?}"
+        )));
+        JsValue::from_str("Failed to read embeddings")
+    })?;
+
+    let flat = data.to_vec::<f32>().map_err(|err| {
+        web_sys::console::error_1(&JsValue::from_str(&format!(
+            "Embedding batch read failed: {err:?}"
+        )));
+        JsValue::from_str("Failed to read embeddings")
+    })?;
+
+    if flat.len() != batch_size * EMBEDDING_DIM {
+        return Err(JsValue::from_str("Embedding batch size mismatch"));
+    }
+
+    let mut outputs = Vec::with_capacity(batch_size);
+    for chunk in flat.chunks(EMBEDDING_DIM) {
+        outputs.push(chunk.to_vec());
+    }
+
+    Ok(outputs)
+}
+
 fn mean_pool<B: Backend>(hidden: Tensor<B, 3>, attention_mask: Tensor<B, 2, Int>) -> Tensor<B, 2> {
     // Convert attention_mask to float and expand dimensions for broadcasting
     // attention_mask: 1 = valid token, 0 = padding
@@ -539,21 +786,38 @@ impl Embedder {
     /// ```
     #[wasm_bindgen]
     pub async fn create() -> Result<Embedder, JsValue> {
-        set_panic_hook_once();
-        let inner = SmartEmbeddingGenerator::new().await;
+        crate::set_panic_hook_once();
+        let inner = SmartEmbeddingGenerator::new().await?;
+        Ok(Embedder { inner })
+    }
+
+    #[wasm_bindgen(js_name = createWithPolicy)]
+    pub async fn create_with_policy(
+        allow_webgpu: bool,
+        allow_cpu: bool,
+        allow_hash: bool,
+    ) -> Result<Embedder, JsValue> {
+        crate::set_panic_hook_once();
+        let policy = BackendPolicy {
+            allow_webgpu,
+            allow_cpu,
+            allow_hash,
+        };
+        let inner = SmartEmbeddingGenerator::new_with_policy(policy).await?;
         Ok(Embedder { inner })
     }
 
     /// Generate embedding for a single text
     #[wasm_bindgen]
-    pub fn embed(&self, text: &str) -> Result<Vec<f32>, JsValue> {
-        self.inner.embed(text)
+    pub async fn embed(&self, text: &str) -> Result<JsValue, JsValue> {
+        let embedding = self.inner.embed_async(text).await?;
+        Ok(js_sys::Float32Array::from(embedding.as_slice()).into())
     }
 
     /// Generate embeddings for multiple texts
     #[wasm_bindgen(js_name = embedBatch)]
-    pub fn embed_batch(&self, texts: Vec<String>) -> Result<JsValue, JsValue> {
-        let embeddings = self.inner.embed_batch(&texts)?;
+    pub async fn embed_batch(&self, texts: Vec<String>) -> Result<JsValue, JsValue> {
+        let embeddings = self.inner.embed_batch_async(&texts).await?;
 
         // Convert Vec<Vec<f32>> to JS array
         let js_array = js_sys::Array::new();
@@ -569,6 +833,11 @@ impl Embedder {
     #[wasm_bindgen]
     pub fn dimension(&self) -> usize {
         self.inner.dimension()
+    }
+
+    #[wasm_bindgen(js_name = backendKind)]
+    pub fn backend_kind(&self) -> String {
+        self.inner.backend_kind().to_string()
     }
 
     /// Get model identifier

@@ -10,6 +10,8 @@ const SAFETENSORS_FILE: &str = "models/arctic-embed-s.safetensors";
 const MODEL_BIN_FILE: &str = "models/arctic-embed-s.bin";
 const MODEL_SRC_FILE: &str = "src/bert.rs";
 const MAX_MODEL_BYTES: u64 = 100 * 1024 * 1024;
+const SAFETENSORS_SHA256: &str =
+    "0350e62666ee2403db0223fc7cef6293c951cc63d1d2e71468da9a5aea3b544a";
 
 // Model format version - must match model_loader.rs expectations
 // Format: BinFileRecorder<FullPrecisionSettings> + INT8 Q8S quantization
@@ -39,6 +41,8 @@ fn main() {
     } else {
         println!("cargo:warning=Using cached safetensors model");
     }
+    verify_sha256_file(SAFETENSORS_FILE, SAFETENSORS_SHA256)
+        .expect("Safetensors SHA256 mismatch; delete models/arctic-embed-s.safetensors and rebuild");
 
     if should_convert(SAFETENSORS_FILE, MODEL_BIN_FILE, MODEL_SRC_FILE) {
         println!("cargo:warning=Converting safetensors to Burn binary (INT8 Q8S)...");
@@ -176,4 +180,32 @@ fn download_file(url: &str, dest: &str) -> Result<(), Box<dyn std::error::Error>
     }
 
     Ok(())
+}
+
+fn verify_sha256_file(path: &str, expected_hex: &str) -> Result<(), Box<dyn std::error::Error>> {
+    use sha2::{Digest, Sha256};
+    use std::io::BufReader;
+
+    let file = fs::File::open(path)?;
+    let mut reader = BufReader::new(file);
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = reader.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+
+    let digest = hasher.finalize();
+    let computed = format!("{:x}", digest);
+    if computed.eq_ignore_ascii_case(expected_hex) {
+        Ok(())
+    } else {
+        Err(format!(
+            "SHA256 mismatch for {path}: expected {expected_hex}, got {computed}"
+        )
+        .into())
+    }
 }

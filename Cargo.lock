@@ -599,7 +599,6 @@ source = "git+https://github.com/tracel-ai/burn?branch=main#64871dfffaca8b57cc7c
 dependencies = [
  "burn-backend",
  "burn-cubecl",
- "burn-fusion",
  "cubecl",
 ]
 

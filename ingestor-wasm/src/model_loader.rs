@@ -100,11 +100,25 @@ pub(crate) async fn fetch_with_cache(
     allowed_origins: &[&str],
     max_bytes: usize,
 ) -> Result<Vec<u8>, JsValue> {
-    if let Some(bytes) = load_cached_bytes(cache_key).await? {
-        if verify_sha256(&bytes, expected_sha256) {
-            return Ok(bytes);
+    // Try to load from cache, but don't fail if IDB is unavailable
+    match load_cached_bytes(cache_key).await {
+        Ok(Some(bytes)) => {
+            if verify_sha256(&bytes, expected_sha256) {
+                return Ok(bytes);
+            }
+            // Invalid cached data, try to delete but don't fail
+            let _ = delete_cached_bytes(cache_key).await;
         }
-        let _ = delete_cached_bytes(cache_key).await;
+        Ok(None) => {
+            // Cache miss, continue to fetch
+        }
+        Err(err) => {
+            // IDB unavailable or error, log and continue to fetch
+            web_sys::console::warn_1(&JsValue::from_str(&format!(
+                "Cache read failed (continuing without cache): {:?}",
+                err
+            )));
+        }
     }
 
     if url.is_empty() {
@@ -118,7 +132,15 @@ pub(crate) async fn fetch_with_cache(
     enforce_rate_limit(cache_key)?;
 
     let bytes = fetch_with_retry(url, expected_sha256, max_bytes, allowed_origins).await?;
-    store_cached_bytes(cache_key, &bytes).await?;
+
+    // Try to cache the fetched bytes, but don't fail if IDB is unavailable
+    if let Err(err) = store_cached_bytes(cache_key, &bytes).await {
+        web_sys::console::warn_1(&JsValue::from_str(&format!(
+            "Cache write failed (model still usable): {:?}",
+            err
+        )));
+    }
+
     Ok(bytes)
 }
 
@@ -156,7 +178,9 @@ fn validate_final_fetch_url(
         .as_string()
         .ok_or_else(|| JsValue::from_str("Could not get origin"))?;
 
-    if final_url.starts_with(&origin) {
+    // Check for exact origin match or origin followed by path separator
+    // This prevents "https://origin.evil.com" from matching "https://origin"
+    if final_url == origin || final_url.starts_with(&format!("{}/", origin)) {
         Ok(())
     } else {
         Err(JsValue::from_str("Redirected off-origin"))
@@ -214,7 +238,11 @@ async fn try_fetch(
 ) -> Result<Vec<u8>, JsValue> {
     let opts = RequestInit::new();
     opts.set_method("GET");
-    opts.set_mode(RequestMode::Cors);
+    if is_same_origin_relative_url(url) {
+        opts.set_mode(RequestMode::SameOrigin);
+    } else {
+        opts.set_mode(RequestMode::Cors);
+    }
 
     let request = Request::new_with_str_and_init(url, &opts)?;
 
@@ -227,7 +255,17 @@ async fn try_fetch(
     let resp: Response = resp_value.dyn_into()?;
 
     if !resp.ok() {
-        return Err(JsValue::from_str("Failed to fetch resource"));
+        let status = resp.status();
+        let status_text = resp.status_text();
+        let suffix = if status_text.trim().is_empty() {
+            String::new()
+        } else {
+            format!(" {}", status_text.trim())
+        };
+        return Err(JsValue::from_str(&format!(
+            "Failed to fetch resource (HTTP {}{})",
+            status, suffix
+        )));
     }
 
     let final_url = resp.url();

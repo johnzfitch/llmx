@@ -8,14 +8,20 @@ const state = {
   sourceLabel: null,
   files: [],
   searchSeq: 0,
+  searching: false,
 };
 
 const elements = {
   status: document.getElementById("ingest-status"),
+  statusLabel: document.getElementById("status-label"),
+  statusProgress: document.getElementById("status-progress"),
+  statusMeta: document.getElementById("status-meta"),
   selectFolder: document.getElementById("select-folder"),
+  selectFolderLabel: document.getElementById("select-folder-label"),
   folderInput: document.getElementById("folder-input"),
   filesInput: document.getElementById("files-input"),
   dropZone: document.getElementById("drop-zone"),
+  ingestLimits: document.getElementById("ingest-limits"),
   query: document.getElementById("query"),
   pathFilter: document.getElementById("path-filter"),
   fileFilter: document.getElementById("file-filter"),
@@ -23,6 +29,8 @@ const elements = {
   symbolFilter: document.getElementById("symbol-filter"),
   kindFilter: document.getElementById("kind-filter"),
   runSearch: document.getElementById("run-search"),
+  clearFilters: document.getElementById("clear-filters"),
+  resultsSummary: document.getElementById("results-summary"),
   buildEmbeddings: document.getElementById("build-embeddings"),
   embeddingsStatus: document.getElementById("embeddings-status"),
   results: document.getElementById("results"),
@@ -31,8 +39,8 @@ const elements = {
   chunkContent: document.getElementById("chunk-content"),
   closeChunk: document.getElementById("close-chunk"),
   downloadExport: document.getElementById("download-export"),
-  downloadIndexJson: document.getElementById("download-index-json"),
   indexId: document.getElementById("index-id"),
+  indexStatus: document.getElementById("index-status"),
   chunkCount: document.getElementById("chunk-count"),
   warningCount: document.getElementById("warning-count"),
   warningList: document.getElementById("warning-list"),
@@ -43,7 +51,29 @@ const elements = {
   settingAutoEmbeddings: document.getElementById("setting-auto-embeddings"),
   applySettings: document.getElementById("apply-settings"),
   resetSettings: document.getElementById("reset-settings"),
+  savedIndexes: document.getElementById("saved-indexes"),
+  loadSavedIndex: document.getElementById("load-saved-index"),
+  deleteSavedIndex: document.getElementById("delete-saved-index"),
+  saveIndex: document.getElementById("save-index"),
+  pickerMenu: document.getElementById("picker-menu"),
+  pickFolder: document.getElementById("pick-folder"),
+  pickFiles: document.getElementById("pick-files"),
 };
+
+const searchEnabled = Boolean(
+  elements.query &&
+    elements.pathFilter &&
+    elements.fileFilter &&
+    elements.outlineFilter &&
+    elements.symbolFilter &&
+    elements.kindFilter &&
+    elements.runSearch &&
+    elements.results &&
+    elements.chunkView &&
+    elements.chunkTitle &&
+    elements.chunkContent &&
+    elements.closeChunk
+);
 
 const urlParams = (() => {
   try {
@@ -117,13 +147,58 @@ const DEFAULT_LIMITS = {
   warnTotalBytes: 10 * 1024 * 1024,  // Warn at 10MB total
 };
 
-function setStatus(message) {
-  elements.status.textContent = message;
-  if (message) {
-    elements.status.style.display = "block";
-  } else {
-    elements.status.style.display = "none";
+function formatMegabytes(bytes) {
+  const mb = bytes / (1024 * 1024);
+  const rounded = Math.round(mb * 10) / 10;
+  return Number.isInteger(rounded) ? `${rounded} MB` : `${rounded.toFixed(1)} MB`;
+}
+
+function updateLimitCopy() {
+  const fileLimit = formatMegabytes(DEFAULT_LIMITS.maxFileBytes);
+  const totalLimit = formatMegabytes(DEFAULT_LIMITS.maxTotalBytes);
+  const count = DEFAULT_LIMITS.maxFileCount.toLocaleString();
+  const text = `Limits: ${fileLimit} per file, ${totalLimit} total, ${count} files.`;
+  if (elements.ingestLimits) {
+    elements.ingestLimits.textContent = text;
   }
+  if (elements.statusMeta) {
+    elements.statusMeta.textContent = text;
+  }
+}
+
+function inferStatusLevel(message) {
+  const text = String(message || "").toLowerCase();
+  if (text.includes("failed") || text.includes("error")) return "error";
+  if (text.includes("warning") || text.includes("warn") || text.includes("disabled") || text.includes("cancelled")) {
+    return "warning";
+  }
+  return "info";
+}
+
+function refreshStatusState() {
+  const busy = state.busy || state.buildingEmbeddings || state.searching;
+  if (elements.statusLabel) {
+    let label = "Idle";
+    if (state.buildingEmbeddings) {
+      label = "Embeddings";
+    } else if (state.busy) {
+      label = "Ingesting";
+    } else if (state.searching) {
+      label = "Searching";
+    }
+    elements.statusLabel.textContent = label;
+  }
+  if (elements.statusProgress) {
+    elements.statusProgress.hidden = !busy;
+  }
+}
+
+function setStatus(message, level) {
+  if (!elements.status) return;
+  const text = String(message || "").trim();
+  const resolvedLevel = level || inferStatusLevel(text);
+  elements.status.textContent = text || "Idle.";
+  elements.status.dataset.level = resolvedLevel;
 }
 
 function updateBackendInfo(backendType, capabilities) {
@@ -131,7 +206,13 @@ function updateBackendInfo(backendType, capabilities) {
   if (capabilities) {
     const parts = [];
     if (capabilities.embeddings) {
-      if (capabilities.webgpu) {
+      if (typeof capabilities.backendKind === "string" && capabilities.backendKind) {
+        const kind = capabilities.backendKind.toLowerCase();
+        if (kind === "webgpu") parts.push("WebGPU");
+        else if (kind === "cpu") parts.push("CPU");
+        else if (kind === "hash") parts.push("Hash");
+        else parts.push(kind);
+      } else if (capabilities.webgpu) {
         parts.push("WebGPU");
       } else if (capabilities.forceCpu) {
         parts.push("CPU");
@@ -144,15 +225,104 @@ function updateBackendInfo(backendType, capabilities) {
   elements.backendInfo.textContent = info;
 }
 
-function hasFolderPickerSupport() {
+function configureFolderPickerUi() {
+  if (!elements.selectFolder) return;
   const supportsDirectoryPicker = typeof window.showDirectoryPicker === "function";
   const supportsWebkitDirectory = elements.folderInput && "webkitdirectory" in elements.folderInput;
-  return supportsDirectoryPicker || supportsWebkitDirectory;
-}
+  const supportsFilePicker = Boolean(elements.filesInput);
+  const supportsFolder = supportsDirectoryPicker || supportsWebkitDirectory;
+  const offersChoice = supportsFolder && supportsFilePicker;
 
-function configureFolderPickerUi() {
-  // Button now triggers file selection which is always supported
-  return;
+  const label = offersChoice ? "Select Files or Folder" : supportsFolder ? "Select Folder" : "Select Files";
+  if (elements.selectFolderLabel) {
+    elements.selectFolderLabel.textContent = label;
+  }
+  elements.selectFolder.title = offersChoice
+    ? "Choose a folder or select files for ingestion."
+    : supportsFolder
+      ? "Select a folder for ingestion."
+      : "Select files for ingestion.";
+
+  if (offersChoice) {
+    elements.selectFolder.setAttribute("aria-haspopup", "menu");
+    elements.selectFolder.setAttribute("aria-expanded", "false");
+  }
+
+  const hidePickerMenu = () => {
+    if (!elements.pickerMenu) return;
+    elements.pickerMenu.hidden = true;
+    if (offersChoice) {
+      elements.selectFolder?.setAttribute("aria-expanded", "false");
+    }
+  };
+
+  const togglePickerMenu = () => {
+    if (!elements.pickerMenu) return;
+    const willShow = elements.pickerMenu.hidden;
+    elements.pickerMenu.hidden = !willShow;
+    elements.selectFolder?.setAttribute("aria-expanded", willShow ? "true" : "false");
+  };
+
+  const pickFolder = async () => {
+    if (supportsDirectoryPicker) {
+      try {
+        const handle = await window.showDirectoryPicker();
+        const collected = await collectFilesFromHandle(handle, "", null, handle.name || null);
+        await runIngest(collected.entries, collected);
+      } catch (error) {
+        if (error?.name !== "AbortError") {
+          setStatus(`Folder selection failed: ${formatErrorForUi(error)}`, "error");
+        }
+      }
+      return;
+    }
+
+    if (supportsWebkitDirectory && elements.folderInput) {
+      elements.folderInput.click();
+      return;
+    }
+
+    elements.filesInput?.click();
+  };
+
+  const pickFiles = () => {
+    elements.filesInput?.click();
+  };
+
+  elements.pickFolder?.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    hidePickerMenu();
+    await pickFolder();
+  });
+
+  elements.pickFiles?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    hidePickerMenu();
+    pickFiles();
+  });
+
+  elements.pickerMenu?.addEventListener("click", (event) => {
+    event.stopPropagation();
+  });
+
+  if (offersChoice) {
+    document.addEventListener("click", () => {
+      hidePickerMenu();
+    });
+  }
+
+  elements.selectFolder.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    if (offersChoice) {
+      togglePickerMenu();
+      return;
+    }
+    if (supportsFolder) {
+      await pickFolder();
+      return;
+    }
+    pickFiles();
+  });
 }
 
 let workerCallId = 0;
@@ -177,6 +347,23 @@ function callWorker(op, payload, transfer) {
   }
   return state.backend.call(op, payload, transfer);
 }
+
+// Programmatic log access (useful for Helium / automation).
+// These are intentionally limited to the worker backend, since local backend logs already go to the main thread.
+globalThis.llmxWorkerGetLogs = async () => {
+  if (!state.backend || state.backend.kind !== "worker") {
+    throw new Error("Worker backend not active (set ?backend=worker or refresh).");
+  }
+  const { logs } = await callWorker("getLogs", {});
+  return logs;
+};
+globalThis.llmxWorkerClearLogs = async () => {
+  if (!state.backend || state.backend.kind !== "worker") {
+    throw new Error("Worker backend not active (set ?backend=worker or refresh).");
+  }
+  const { cleared } = await callWorker("clearLogs", {});
+  return Boolean(cleared);
+};
 
 function createWorkerBackend() {
   const workerUrl = new URL("./worker.js", import.meta.url);
@@ -317,7 +504,9 @@ async function createLocalBackend() {
 
   async function ensureEmbedder() {
     if (!embedder) {
-      embedder = await WasmEmbedder.create();
+      embedder = await WasmEmbedder.createWithPolicy(globalThis.LLMX_ENABLE_WEBGPU, forceCpu, false);
+      const actualBackend = embedder.backendKind();
+      globalThis.LLMX_ENABLE_WEBGPU = actualBackend === "webgpu";
     }
     return embedder;
   }
@@ -354,13 +543,48 @@ async function createLocalBackend() {
     });
 
     const count = chunkMeta.length;
+
+    if (index.embeddings_flat && index.embedding_model === modelId) {
+      const fromJson = index.embeddings_flat;
+      if (!Array.isArray(fromJson) || fromJson.length !== count * dim) {
+        throw new Error("Saved embeddings_flat shape mismatch");
+      }
+      embeddings = new Float32Array(fromJson);
+      embeddingsMeta = { dim, count, modelId };
+      for (const meta of chunkMeta) {
+        delete meta.content;
+      }
+      return embeddingsMeta;
+    }
+
+    if (index.embeddings && index.embedding_model === modelId) {
+      const fromJson = index.embeddings;
+      if (!Array.isArray(fromJson) || fromJson.length !== count) {
+        throw new Error("Saved embeddings shape mismatch");
+      }
+      const view = new Float32Array(count * dim);
+      for (let i = 0; i < count; i += 1) {
+        const row = fromJson[i];
+        if (!Array.isArray(row) || row.length !== dim) {
+          throw new Error("Saved embeddings dimension mismatch");
+        }
+        view.set(row, i * dim);
+      }
+      embeddings = view;
+      embeddingsMeta = { dim, count, modelId };
+      for (const meta of chunkMeta) {
+        delete meta.content;
+      }
+      return embeddingsMeta;
+    }
+
     const view = new Float32Array(count * dim);
     const batchSize = 8;
 
     for (let offset = 0; offset < count; offset += batchSize) {
       const batch = chunkMeta.slice(offset, offset + batchSize);
       const texts = batch.map((item) => item.content);
-      const out = embed.embedBatch(texts);
+      const out = await embed.embedBatch(texts);
       if (!out || typeof out.length !== "number") {
         throw new Error("Embedding batch returned unexpected type");
       }
@@ -391,6 +615,15 @@ async function createLocalBackend() {
       switch (op) {
         case "ping":
           return { ready: true };
+        case "getCapabilities": {
+          const backendKind = embedder ? embedder.backendKind() : null;
+          return {
+            webgpu: Boolean(globalThis.LLMX_ENABLE_WEBGPU),
+            embeddings: embeddingsRequested,
+            forceCpu,
+            backendKind,
+          };
+        }
         case "initEmbedder": {
           const embed = await ensureEmbedder();
           return { modelId: embed.modelId(), dimension: embed.dimension() };
@@ -514,53 +747,58 @@ async function createLocalBackend() {
               return { results: bm25Results };
             }
 
-            await ensureEmbedder();
-            if (!shouldUseEmbeddings()) {
+            try {
+              await ensureEmbedder();
+              if (!shouldUseEmbeddings()) {
+                return { results: bm25Results };
+              }
+
+              const queryEmbedding = await embedder.embed(query);
+              const dim = embeddingsMeta.dim;
+
+              const semantic = [];
+              for (let i = 0; i < chunkMeta.length; i += 1) {
+                const meta = chunkMeta[i];
+                if (!passesFilters(meta, filters)) continue;
+                const score = dotProduct(queryEmbedding, embeddings, i * dim, dim);
+                semantic.push({ idx: i, score });
+              }
+
+              semantic.sort((a, b) => b.score - a.score);
+              const semanticTop = semantic.slice(0, limit * 2).map(({ idx, score }) => {
+                const meta = chunkMeta[idx];
+                return buildSearchResult(meta, score);
+              });
+
+              const merged = rrfFuse(bm25Results, semanticTop, limit);
+
+              const bm25ById = new Map(bm25Results.map((r) => [r.chunk_id, r]));
+              const results = merged.map(({ chunkId, score }) => {
+                const existing = bm25ById.get(chunkId);
+                if (existing) {
+                  return { ...existing, score };
+                }
+                const idx = chunkMeta.findIndex((m) => m.id === chunkId);
+                if (idx !== -1) {
+                  return buildSearchResult(chunkMeta[idx], score);
+                }
+                return {
+                  chunk_id: chunkId,
+                  chunk_ref: "",
+                  score,
+                  path: "",
+                  start_line: 0,
+                  end_line: 0,
+                  snippet: "",
+                  heading_path: [],
+                };
+              });
+
+              return { results };
+            } catch (error) {
+              console.warn("Semantic search failed, falling back to BM25:", error);
               return { results: bm25Results };
             }
-
-            const queryEmbedding = embedder.embed(query);
-            const dim = embeddingsMeta.dim;
-
-            const semantic = [];
-            for (let i = 0; i < chunkMeta.length; i += 1) {
-              const meta = chunkMeta[i];
-              if (!passesFilters(meta, filters)) continue;
-              const score = dotProduct(queryEmbedding, embeddings, i * dim, dim);
-              semantic.push({ idx: i, score });
-            }
-
-            semantic.sort((a, b) => b.score - a.score);
-            const semanticTop = semantic.slice(0, limit * 2).map(({ idx, score }) => {
-              const meta = chunkMeta[idx];
-              return buildSearchResult(meta, score);
-            });
-
-            const merged = rrfFuse(bm25Results, semanticTop, limit);
-
-            const bm25ById = new Map(bm25Results.map((r) => [r.chunk_id, r]));
-            const results = merged.map(({ chunkId, score }) => {
-              const existing = bm25ById.get(chunkId);
-              if (existing) {
-                return { ...existing, score };
-              }
-              const idx = chunkMeta.findIndex((m) => m.id === chunkId);
-              if (idx !== -1) {
-                return buildSearchResult(chunkMeta[idx], score);
-              }
-              return {
-                chunk_id: chunkId,
-                chunk_ref: "",
-                score,
-                path: "",
-                start_line: 0,
-                end_line: 0,
-                snippet: "",
-                heading_path: [],
-              };
-            });
-
-            return { results };
           }
         case "getChunk":
           if (!ingestor) throw new Error("No index loaded");
@@ -675,8 +913,30 @@ async function collectFilesFromInput(fileList) {
   let skippedTotal = 0;
   let skippedCount = 0;
   let rootName = null;
+  const pathCounts = new Map();
+
   for (const file of fileList) {
-    const path = file.webkitRelativePath || file.name;
+    let path = file.webkitRelativePath || file.name;
+
+    // If webkitRelativePath is missing, ensure unique paths by adding counter
+    if (!file.webkitRelativePath && path === file.name) {
+      const baseName = file.name;
+      const count = pathCounts.get(baseName) || 0;
+      pathCounts.set(baseName, count + 1);
+
+      // Add counter suffix if we've seen this filename before
+      if (count > 0) {
+        const lastDot = baseName.lastIndexOf('.');
+        if (lastDot > 0) {
+          const name = baseName.substring(0, lastDot);
+          const ext = baseName.substring(lastDot);
+          path = `${name}-${count}${ext}`;
+        } else {
+          path = `${baseName}-${count}`;
+        }
+      }
+    }
+
     if (!rootName && file.webkitRelativePath) {
       const first = String(file.webkitRelativePath).split("/")[0];
       if (first) {
@@ -864,12 +1124,18 @@ function exportBaseName() {
 function updateExportUiLabels() {
   const base = exportBaseName();
   if (elements.downloadExport) {
-    elements.downloadExport.textContent = `Download ${base}.zip`;
+    elements.downloadExport.textContent = "Download export zip";
     elements.downloadExport.title = `Download export bundle: ${base}.zip`;
   }
-  if (elements.downloadIndexJson) {
-    elements.downloadIndexJson.textContent = `Download ${base}.index.json`;
-    elements.downloadIndexJson.title = `Download index file: ${base}.index.json`;
+}
+
+function updateIndexUi() {
+  const id = typeof state.indexId === "string" ? state.indexId : "";
+  if (elements.indexId) {
+    elements.indexId.textContent = id || (state.indexLoaded ? "(unknown)" : "Not built");
+  }
+  if (elements.indexStatus) {
+    elements.indexStatus.textContent = state.indexLoaded ? "Ready" : "Not built";
   }
 }
 
@@ -912,6 +1178,7 @@ async function runIngest(entries, collectedMeta) {
 
   try {
     state.busy = true;
+    refreshStatusState();
     state.sourceLabel = inferSourceLabel(entries, collectedMeta);
 
     if (!state.indexLoaded) {
@@ -1030,22 +1297,26 @@ async function runIngest(entries, collectedMeta) {
     state.indexId = idResult.indexId || null;
     state.files = filesResult.files || [];
     updateExportUiLabels();
-
-    elements.indexId.textContent = state.indexId || "(unknown)";
+    state.indexLoaded = true;
+    updateIndexUi();
     elements.chunkCount.textContent = statsResult.stats.total_chunks;
     elements.warningCount.textContent = warningsResult.warnings.length;
     renderWarnings(warningsResult.warnings);
-    populateFileFilter();
-    await updateOutlineSymbols();
     await populateSavedIndexes();
-    state.indexLoaded = true;
     setStatus("Index ready.");
+    if (searchEnabled) {
+      populateFileFilter();
+      await updateOutlineSymbols();
+      elements.results.replaceChildren();
+      elements.chunkView.hidden = true;
+      updateResultsSummary({ message: "Index ready. Run a search." });
+    }
     if (shouldAutoBuildEmbeddings) {
       const backendLabel = globalThis.LLMX_ENABLE_WEBGPU ? "webgpu" : "cpu";
       state.buildingEmbeddings = true;
+      refreshStatusState();
       if (elements.buildEmbeddings) elements.buildEmbeddings.disabled = true;
       if (elements.downloadExport) elements.downloadExport.disabled = true;
-      if (elements.downloadIndexJson) elements.downloadIndexJson.disabled = true;
       if (elements.embeddingsStatus) {
         elements.embeddingsStatus.textContent = `Building (${backendLabel})...`;
         elements.embeddingsStatus.classList.add("building");
@@ -1078,15 +1349,16 @@ async function runIngest(entries, collectedMeta) {
         })
         .finally(() => {
           state.buildingEmbeddings = false;
+          refreshStatusState();
           if (elements.buildEmbeddings) elements.buildEmbeddings.disabled = false;
           if (elements.downloadExport) elements.downloadExport.disabled = false;
-          if (elements.downloadIndexJson) elements.downloadIndexJson.disabled = false;
         });
     }
   } catch (error) {
     setStatus(`Ingestion failed: ${formatErrorForUi(error)}`);
   } finally {
     state.busy = false;
+    refreshStatusState();
   }
 }
 
@@ -1097,15 +1369,11 @@ function renderWarnings(warnings) {
   }
   for (const warning of warnings) {
     const div = document.createElement("div");
+    div.className = "warning-item";
     div.textContent = `${warning.path}: ${warning.message}`;
     elements.warningList.appendChild(div);
   }
 }
-
-elements.selectFolder.addEventListener("click", async () => {
-  elements.filesInput.click();
-});
-
 
 elements.folderInput.addEventListener("change", async (event) => {
   const collected = await collectFilesFromInput(event.target.files || []);
@@ -1135,14 +1403,16 @@ elements.dropZone.addEventListener("drop", async (event) => {
   await runIngest(collected.entries, collected);
 });
 
-elements.fileFilter.addEventListener("change", async () => {
-  await updateOutlineSymbols();
-  scheduleSearch();
-});
+if (searchEnabled) {
+  elements.fileFilter.addEventListener("change", async () => {
+    await updateOutlineSymbols();
+    scheduleSearch();
+  });
 
-elements.runSearch.addEventListener("click", async () => {
-  await runSearch();
-});
+  elements.runSearch.addEventListener("click", async () => {
+    await runSearch();
+  });
+}
 
 if (elements.buildEmbeddings) {
   if (!embeddingsRequested) {
@@ -1158,7 +1428,7 @@ if (elements.buildEmbeddings) {
 
   elements.buildEmbeddings.addEventListener("click", async () => {
     if (!state.indexLoaded) {
-      setStatus("No index loaded.");
+      setStatus("No index loaded.", "warning");
       return;
     }
     if (!embeddingsRequested) {
@@ -1166,7 +1436,7 @@ if (elements.buildEmbeddings) {
       return;
     }
     if (!globalThis.LLMX_ENABLE_WEBGPU && !forceCpu) {
-      setStatus("Embeddings require WebGPU. Use Chromium with WebGPU, or add ?cpu=1 to force CPU.");
+      setStatus("Embeddings require WebGPU. Use Chromium with WebGPU, or add ?cpu=1 to force CPU.", "warning");
       return;
     }
 
@@ -1194,9 +1464,9 @@ if (elements.buildEmbeddings) {
 
     // Set building state
     state.buildingEmbeddings = true;
+    refreshStatusState();
     elements.buildEmbeddings.disabled = true;
     elements.downloadExport.disabled = true;
-    elements.downloadIndexJson.disabled = true;
 
     if (elements.embeddingsStatus) {
       elements.embeddingsStatus.textContent = `Building (${backendLabel})...`;
@@ -1229,49 +1499,67 @@ if (elements.buildEmbeddings) {
     } finally {
       // Re-enable buttons
       state.buildingEmbeddings = false;
+      refreshStatusState();
       elements.buildEmbeddings.disabled = false;
       elements.downloadExport.disabled = false;
-      elements.downloadIndexJson.disabled = false;
     }
   });
 }
 
-elements.query.addEventListener("keydown", async (event) => {
-  if (event.key === "Enter") {
-    await runSearch();
-  }
-});
+if (searchEnabled) {
+  elements.query.addEventListener("keydown", async (event) => {
+    if (event.key === "Enter") {
+      await runSearch();
+    }
+  });
 
-elements.query.addEventListener("input", () => {
-  scheduleSearch();
-});
+  elements.query.addEventListener("input", () => {
+    scheduleSearch();
+  });
 
-elements.pathFilter.addEventListener("input", () => {
-  scheduleSearch();
-});
+  elements.pathFilter.addEventListener("input", () => {
+    scheduleSearch();
+  });
 
-elements.kindFilter.addEventListener("change", () => {
-  scheduleSearch();
-});
+  elements.kindFilter.addEventListener("change", () => {
+    scheduleSearch();
+  });
 
-elements.outlineFilter.addEventListener("change", () => {
-  scheduleSearch();
-});
+  elements.outlineFilter.addEventListener("change", () => {
+    scheduleSearch();
+  });
 
-elements.symbolFilter.addEventListener("change", () => {
-  scheduleSearch();
-});
+  elements.symbolFilter.addEventListener("change", () => {
+    scheduleSearch();
+  });
 
-elements.closeChunk.addEventListener("click", () => {
-  elements.chunkView.hidden = true;
-});
+  elements.clearFilters?.addEventListener("click", async () => {
+    elements.query.value = "";
+    elements.pathFilter.value = "";
+    elements.fileFilter.value = "";
+    elements.outlineFilter.value = "";
+    elements.symbolFilter.value = "";
+    elements.kindFilter.value = "";
+    elements.results.replaceChildren();
+    elements.chunkView.hidden = true;
+    await updateOutlineSymbols();
+    setStatus("Index ready.");
+    updateResultsSummary({ query: "", results: [], filters: null });
+  });
+
+  elements.closeChunk.addEventListener("click", () => {
+    elements.chunkView.hidden = true;
+  });
+}
+
+elements.downloadExport?.addEventListener("pointerdown", triggerHaptic);
 
 elements.downloadExport?.addEventListener("click", () => {
   if (!state.indexLoaded) {
-    setStatus("No index to export.");
+    setStatus("No index to export.", "warning");
     return;
   }
-  callWorker("exportZipCompact", {})
+  callWorker("exportZip", {})
     .then(({ bytes }) => {
       const name = `${exportBaseName()}.zip`;
       downloadFile(name, bytes, "application/zip");
@@ -1279,51 +1567,80 @@ elements.downloadExport?.addEventListener("click", () => {
     .catch(() => setStatus("Export failed."));
 });
 
-elements.downloadIndexJson?.addEventListener("click", async () => {
+elements.saveIndex?.addEventListener("click", async () => {
   if (!state.indexLoaded) {
-    setStatus("No index to export.");
+    setStatus("No index loaded.", "warning");
     return;
   }
+  const id = state.indexId || exportBaseName();
   try {
+    state.busy = true;
+    refreshStatusState();
+    setStatus("Saving index...");
     const { json } = await callWorker("exportIndexJson", {});
-    const index = JSON.parse(json);
-
-    // Try to get embeddings and include them if available
+    let embeddings = null;
+    let embeddingsMeta = null;
     try {
       const embResult = await callWorker("getEmbeddings", {});
       if (embResult.embeddings && embResult.meta) {
-        const floatArray = new Float32Array(embResult.embeddings);
-        const { dim, count, modelId } = embResult.meta;
-
-        // Convert Float32Array to nested arrays for JSON
-        const embeddingsArray = [];
-        for (let i = 0; i < count; i++) {
-          const start = i * dim;
-          const end = start + dim;
-          embeddingsArray.push(Array.from(floatArray.slice(start, end)));
-        }
-
-        index.embeddings = embeddingsArray;
-        index.embeddings_meta = { dim, count, modelId };
-        setStatus("Exporting index with embeddings...");
+        embeddings = embResult.embeddings;
+        embeddingsMeta = embResult.meta;
       }
     } catch (embErr) {
-      // No embeddings available, continue without them
-      console.log("No embeddings to export:", embErr);
+      console.log("No embeddings to save:", embErr);
     }
-
-    const name = `${exportBaseName()}.index.json`;
-    const updatedJson = JSON.stringify(index, null, 2);
-    downloadFile(name, updatedJson, "application/json");
-    setStatus("Index exported.");
+    await saveIndex(id, json, embeddings, embeddingsMeta);
+    await populateSavedIndexes();
+    setStatus("Index saved.");
   } catch (error) {
-    setStatus("Export failed.");
+    setStatus(`Save failed: ${formatErrorForUi(error)}`, "error");
+  } finally {
+    state.busy = false;
+    refreshStatusState();
   }
 });
 
+function formatFilterSummary(filters) {
+  const parts = [];
+  if (filters?.path_exact) {
+    parts.push(`File: ${filters.path_exact}`);
+  } else if (filters?.path_prefix) {
+    parts.push(`Path: ${filters.path_prefix}`);
+  }
+  if (filters?.kind) {
+    parts.push(`Type: ${filters.kind}`);
+  }
+  if (filters?.heading_prefix) {
+    parts.push(`Heading: ${filters.heading_prefix}`);
+  }
+  if (filters?.symbol_prefix) {
+    parts.push(`Symbol: ${filters.symbol_prefix}`);
+  }
+  return parts.length ? `Filters: ${parts.join(" | ")}` : "Filters: none";
+}
+
+function updateResultsSummary({ query, results, filters, message }) {
+  if (!elements.resultsSummary) return;
+  if (message) {
+    elements.resultsSummary.textContent = message;
+    return;
+  }
+  if (!query) {
+    elements.resultsSummary.textContent = "Enter a query to search.";
+    return;
+  }
+  const count = Array.isArray(results) ? results.length : 0;
+  const filterText = formatFilterSummary(filters);
+  elements.resultsSummary.textContent = `Found ${count} results for "${query}". ${filterText}.`;
+}
+
 async function runSearch() {
+  if (!searchEnabled) {
+    return;
+  }
   if (!state.indexLoaded) {
-    setStatus("No index loaded.");
+    setStatus("No index loaded.", "warning");
+    updateResultsSummary({ message: "Ingest files to start searching." });
     return;
   }
   const query = elements.query.value.trim();
@@ -1331,6 +1648,7 @@ async function runSearch() {
     elements.results.replaceChildren();
     elements.chunkView.hidden = true;
     setStatus("Index ready.");
+    updateResultsSummary({ query: "", results: [], filters: null });
     return;
   }
   const filters = {
@@ -1343,6 +1661,9 @@ async function runSearch() {
   const seq = ++state.searchSeq;
   elements.runSearch.disabled = true;
   setStatus("Searching...");
+  updateResultsSummary({ query, results: [], filters, message: "Searching..." });
+  state.searching = true;
+  refreshStatusState();
   try {
     const { results } = await callWorker("search", { query, filters, limit: 20 });
     if (seq !== state.searchSeq) {
@@ -1350,18 +1671,25 @@ async function runSearch() {
     }
     renderResults(results);
     setStatus(`Found ${results.length} results.`);
+    updateResultsSummary({ query, results, filters });
   } catch (error) {
     if (seq === state.searchSeq) {
-      setStatus("Search failed.");
+      setStatus("Search failed.", "error");
+      updateResultsSummary({ query, results: [], filters, message: "Search failed." });
     }
   } finally {
     if (seq === state.searchSeq) {
       elements.runSearch.disabled = false;
     }
+    state.searching = false;
+    refreshStatusState();
   }
 }
 
 function renderResults(results) {
+  if (!searchEnabled) {
+    return;
+  }
   elements.results.replaceChildren();
   if (!results.length) {
     const empty = document.createElement("div");
@@ -1407,6 +1735,32 @@ function renderResults(results) {
   }
 }
 
+function triggerHaptic() {
+  if (window.navigator?.vibrate) {
+    window.navigator.vibrate(10);
+    return;
+  }
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return;
+  try {
+    const context = new AudioContextClass();
+    if (context.state === "suspended") {
+      context.resume().catch(() => {});
+    }
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    gain.gain.value = 0.00001;
+    oscillator.frequency.value = 30;
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start();
+    oscillator.stop(context.currentTime + 0.015);
+    oscillator.onended = () => {
+      context.close();
+    };
+  } catch {}
+}
+
 function downloadFile(name, content, type) {
   let blob;
   if (content instanceof Uint8Array || Array.isArray(content)) {
@@ -1423,6 +1777,9 @@ function downloadFile(name, content, type) {
 }
 
 function populateFileFilter() {
+  if (!searchEnabled) {
+    return;
+  }
   elements.fileFilter.replaceChildren();
   const option = document.createElement("option");
   option.value = "";
@@ -1437,6 +1794,9 @@ function populateFileFilter() {
 }
 
 async function updateOutlineSymbols() {
+  if (!searchEnabled) {
+    return;
+  }
   elements.outlineFilter.replaceChildren();
   elements.symbolFilter.replaceChildren();
   const outlineOption = document.createElement("option");
@@ -1472,6 +1832,9 @@ async function updateOutlineSymbols() {
 }
 
 function selectPathPrefix() {
+  if (!searchEnabled) {
+    return null;
+  }
   if (elements.fileFilter.value) {
     return elements.fileFilter.value;
   }
@@ -1495,6 +1858,9 @@ function openDb() {
 
 let searchTimer = null;
 function scheduleSearch() {
+  if (!searchEnabled) {
+    return;
+  }
   if (!state.indexLoaded || state.busy) {
     return;
   }
@@ -1554,11 +1920,20 @@ async function populateSavedIndexes() {
   empty.value = "";
   empty.textContent = records.length ? "Select saved index" : "No saved indexes";
   elements.savedIndexes.appendChild(empty);
+  elements.savedIndexes.value = "";
   for (const record of records) {
     const option = document.createElement("option");
     option.value = record.id;
     option.textContent = `${record.id} (${record.saved_at || "unknown"})`;
     elements.savedIndexes.appendChild(option);
+  }
+  const hasRecords = records.length > 0;
+  elements.savedIndexes.disabled = !hasRecords;
+  if (elements.loadSavedIndex) {
+    elements.loadSavedIndex.disabled = !hasRecords;
+  }
+  if (elements.deleteSavedIndex) {
+    elements.deleteSavedIndex.disabled = !hasRecords;
   }
 }
 
@@ -1570,11 +1945,12 @@ elements.loadSavedIndex?.addEventListener("click", async () => {
   const records = await listIndexes();
   const record = records.find((r) => r.id === id);
   if (!record) {
-    setStatus("Saved index not found.");
+    setStatus("Saved index not found.", "warning");
     return;
   }
   try {
     state.busy = true;
+    refreshStatusState();
     await callWorker("loadIndexJson", { json: record.json });
     if (record.embeddings && record.embeddings_meta) {
       try {
@@ -1590,21 +1966,27 @@ elements.loadSavedIndex?.addEventListener("click", async () => {
     const warningsResult = await callWorker("warnings", {});
     const filesResult = await callWorker("files", {});
     state.indexId = idResult.indexId || null;
+    updateExportUiLabels();
     state.files = filesResult.files || [];
     state.indexLoaded = true;
-    elements.indexId.textContent = state.indexId || "(unknown)";
+    updateIndexUi();
     elements.chunkCount.textContent = statsResult.stats.total_chunks;
     elements.warningCount.textContent = warningsResult.warnings.length;
     renderWarnings(warningsResult.warnings);
-    populateFileFilter();
-    await updateOutlineSymbols();
     setStatus("Loaded saved index.");
+    if (searchEnabled) {
+      populateFileFilter();
+      await updateOutlineSymbols();
+      elements.results.replaceChildren();
+      elements.chunkView.hidden = true;
+      updateResultsSummary({ message: "Index ready. Run a search." });
+    }
     if (shouldAutoBuildEmbeddings) {
       const backendLabel = globalThis.LLMX_ENABLE_WEBGPU ? "webgpu" : "cpu";
       state.buildingEmbeddings = true;
+      refreshStatusState();
       if (elements.buildEmbeddings) elements.buildEmbeddings.disabled = true;
       if (elements.downloadExport) elements.downloadExport.disabled = true;
-      if (elements.downloadIndexJson) elements.downloadIndexJson.disabled = true;
       if (elements.embeddingsStatus) {
         elements.embeddingsStatus.textContent = `Building (${backendLabel})...`;
         elements.embeddingsStatus.classList.add("building");
@@ -1637,15 +2019,16 @@ elements.loadSavedIndex?.addEventListener("click", async () => {
         })
         .finally(() => {
           state.buildingEmbeddings = false;
+          refreshStatusState();
           if (elements.buildEmbeddings) elements.buildEmbeddings.disabled = false;
           if (elements.downloadExport) elements.downloadExport.disabled = false;
-          if (elements.downloadIndexJson) elements.downloadIndexJson.disabled = false;
         });
     }
   } catch {
     setStatus("Failed to load saved index.");
   } finally {
     state.busy = false;
+    refreshStatusState();
   }
 });
 
@@ -1716,6 +2099,10 @@ elements.resetSettings?.addEventListener("click", resetSettings);
 
 loadSettingsFromUrl();
 configureFolderPickerUi();
+updateLimitCopy();
+refreshStatusState();
+updateExportUiLabels();
+updateIndexUi();
 initWorker().catch((error) => {
   setStatus(`Failed to start backend: ${formatErrorForUi(error)}`);
 });

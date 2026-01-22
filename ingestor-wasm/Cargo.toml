@@ -22,7 +22,9 @@ getrandom = { version = "0.3.3", default-features = false, features = ["wasm_js"
 
 # Phase 6: Burn framework for WebGPU embeddings
 burn = { git = "https://github.com/tracel-ai/burn", branch = "main", default-features = false }
-burn-wgpu = { git = "https://github.com/tracel-ai/burn", branch = "main", optional = true }
+# IMPORTANT (WASM/WebGPU): disable burn-wgpu defaults to avoid sync/blocking paths (autotune/fusion)
+# that can trap on wasm with "Failed to read tensor data synchronously".
+burn-wgpu = { git = "https://github.com/tracel-ai/burn", branch = "main", optional = true, default-features = false, features = ["std", "webgpu"] }
 burn-ndarray = { git = "https://github.com/tracel-ai/burn", branch = "main", optional = true }
 # Tokenizers with WASM support (using unstable_wasm feature for pure Rust regex)
 tokenizers = { version = "0.20", default-features = false, features = ["unstable_wasm"] }
@@ -63,6 +65,7 @@ burn = { git = "https://github.com/tracel-ai/burn", branch = "main", default-fea
 burn-ndarray = { git = "https://github.com/tracel-ai/burn", branch = "main" }
 burn-import = { git = "https://github.com/tracel-ai/burn", branch = "main" }
 reqwest = { version = "0.12", features = ["blocking"] }
+sha2 = "0.10"
 
 [dev-dependencies]
 burn-import = { git = "https://github.com/tracel-ai/burn", branch = "main" }
