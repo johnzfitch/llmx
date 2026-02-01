@@ -6,6 +6,8 @@ Transform large codebases into searchable, intelligently-chunked datasets with r
 
 [Demo](https://llm.cat)
 
+**Proof:** [7,147 files indexed in 31 MB -> 1,625 tokens retrieved (99.98% savings)](#-real-world-example-apple-hig-corpus) | [180+ tests](ingestor-core/tests/) | [MCP server](ingestor-core/src/bin/mcp_server.rs)
+
 ---
 
 ## ![lightning](.github/assets/icons/lightning-24x24.png) Key Features
@@ -58,11 +60,37 @@ llmx exports token-efficient manifests (`llm.md` + `manifest.llm.tsv`) with sema
 - c0006 (103-156) API Reference > Rate Limiting > Quotas
 ```
 
-Agents can **scan headings, function names, and file types** to select relevant chunks—without opening any files.
+Agents can **scan headings, function names, and file types** to select relevant chunks--without opening any files.
 
 ---
 
 ## ![lightning](.github/assets/icons/lightning-24x24.png) Quick Start
+
+> [!NOTE]
+> **CLI is recommended** for most use cases. Web UI requires WASM build.
+
+### CLI Usage
+
+```bash
+# Build CLI
+cargo build --release --features cli
+
+# Index a codebase
+llmx index ./my-project
+
+# Search with token budget
+llmx search "authentication login" --limit 10 --max-tokens 4000
+
+# Explore structure
+llmx explore files
+llmx explore symbols --path src/
+
+# Export for agents
+llmx export --format zip -o ./export.zip
+```
+
+<details>
+<summary>Web UI Setup</summary>
 
 ### Build WASM
 
@@ -79,12 +107,14 @@ python3 -m http.server 8001 --bind 127.0.0.1 --directory web
 
 Open `http://127.0.0.1:8001` in your browser.
 
-### Index a Codebase
+### Index a Codebase (Web UI)
 
 1. **Select folder** (Chromium) or **drag files** (Firefox/all browsers)
 2. **Wait for indexing** (sub-second for typical repos)
 3. **Search** using the query box
-4. **Export** → Download an export bundle named after the selected folder (e.g. `my-repo.llmx-1a2b3c4d.zip`)
+4. **Export** -> Download an export bundle named after the selected folder (e.g. `my-repo.llmx-1a2b3c4d.zip`)
+
+</details>
 
 ---
 
@@ -118,6 +148,15 @@ llmx-export/
 ---
 
 ## ![gear](.github/assets/icons/gear-24x24.png) How It Works
+
+```mermaid
+flowchart LR
+    A[Codebase] --> B[Chunker]
+    B --> C[Index + BM25]
+    C --> D[llm.md manifest]
+    D --> E[Agent queries]
+    E --> F[Relevant chunks only]
+```
 
 ### Chunking Strategy
 
@@ -163,6 +202,47 @@ Runs fully client-side in **WASM** with GPU acceleration.
 | **manifest.json** | Optimized columnar format | Machine parsing, tooling |
 | **index.json** | Full index + inverted index | Offline search, backup |
 | **export.zip** | All above + chunk files + images | Complete portable package |
+
+---
+
+## ![document](.github/assets/icons/businessicons-png-24-file-1-business-office-ui-24x24.png) Real-World Example: Apple HIG Corpus
+
+Tested on the **Apple Human Interface Guidelines archive** (1980-2009):
+
+| Metric | Value |
+|--------|-------|
+| **Files** | 7,147 |
+| **Chunks** | 21,369 |
+| **Raw size** | 31 MB (~7.8M tokens) |
+
+### Token Savings
+
+| Access Method | Tokens | Savings |
+|---------------|--------|---------|
+| Read all files | ~7,800,000 | -- |
+| Scan manifest (`llm.md`) | ~208,000 | **97%** |
+| Targeted search (3 queries) | ~1,625 | **99.98%** |
+
+### Agent Workflow Demo
+
+An agent answering *"How did Apple's feedback guidelines evolve from Lisa to Aqua?"* retrieved:
+
+**Search: "user feedback error message design"**
+```
+[1] 1992 Macintosh Human Interface Guidelines
+    Heading: Human Interface Design Principles > Feedback and Dialog
+    "Keep users informed... Most people would not know what to do
+    if they saw 'The computer unexpectedly crashed. ID = 13.'"
+
+[2] 1980 Lisa UI Standards
+    "The LISA User Interface has two main goals, simplicity and
+    integration. We want LISA to be easy to learn and easy to use..."
+
+[3] 2001 Aqua Human Interface Guidelines
+    "Do not use sheets for dialogs that apply to several windows..."
+```
+
+The agent found relevant content spanning **4 decades** using **0.02%** of the total corpus tokens.
 
 ---
 
@@ -258,10 +338,17 @@ The build script automatically downloads and converts the model:
 ### Testing
 
 ```bash
-cargo test --package ingestor-core --lib --tests
+# Core library tests
+cargo test --package ingestor-core
+
+# CLI integration tests
+cargo test --features cli
+
+# MCP protocol tests
+cargo test --features mcp
 ```
 
-All 11 tests pass, including format validation and semantic context verification.
+180+ tests covering token savings, CLI commands, MCP protocol, edge cases, and all 30+ file types.
 
 ---
 
@@ -287,6 +374,9 @@ All 11 tests pass, including format validation and semantic context verification
 ⚠️ **WASM binaries are inspectable** - Any URLs or constants in the build are visible to users. This is by design for transparency, but means secrets must never be embedded. Our current architecture uses only public model repositories and is safe for production use.
 
 ---
+
+<details>
+<summary><strong>Export Format Details</strong></summary>
 
 ## ![download](.github/assets/icons/down-24x24.png) Export Details
 
@@ -329,6 +419,8 @@ export function parseDate(input) {
 }
 ```
 
+</details>
+
 ---
 
 ## License
@@ -357,6 +449,8 @@ Contributions welcome! Please:
 - [x] WASM build pipeline
 - [x] Model quantization (INT8)
 - [x] IndexedDB caching for models
+- [x] CLI for headless indexing (`llmx index`, `search`, `explore`, `export`)
+- [x] MCP server for external agent retrieval
 
 ### Phase 7 (Current - Security Hardening)
 - [ ] Implement SHA-256 model integrity verification
@@ -370,7 +464,6 @@ Contributions welcome! Please:
 - [ ] Model configuration flexibility (support multiple model sizes)
 - [ ] Add LSP/tree-sitter symbol extraction for more languages
 - [ ] Support image OCR for screenshot indexing
-- [ ] Add CLI for headless indexing
 - [ ] MCP server hardening and production deployment
 - [ ] Support for more file types (Python, Go, Rust, etc.)
 

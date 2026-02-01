@@ -1,0 +1,83 @@
+/**
+ * Sample SCSS stylesheet for testing.
+ */
+
+// Variables
+$primary-color: #3498db;
+$secondary-color: #2ecc71;
+$border-radius: 4px;
+
+// Mixins
+@mixin flex-center {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+@mixin responsive($breakpoint) {
+    @if $breakpoint == mobile {
+        @media (max-width: 480px) { @content; }
+    } @else if $breakpoint == tablet {
+        @media (max-width: 768px) { @content; }
+    }
+}
+
+// Base styles
+body {
+    font-family: sans-serif;
+    line-height: 1.6;
+}
+
+// Components
+.card {
+    border: 1px solid #ddd;
+    border-radius: $border-radius;
+    padding: 1rem;
+
+    &-header {
+        font-weight: bold;
+        margin-bottom: 0.5rem;
+    }
+
+    &-body {
+        color: #666;
+    }
+
+    &:hover {
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+}
+
+// Button variants
+.btn {
+    @include flex-center;
+    padding: 0.5rem 1rem;
+    border: none;
+    border-radius: $border-radius;
+    cursor: pointer;
+
+    &-primary {
+        background-color: $primary-color;
+        color: white;
+    }
+
+    &-secondary {
+        background-color: $secondary-color;
+        color: white;
+    }
+}
+
+// Responsive layout
+.grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+
+    @include responsive(tablet) {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    @include responsive(mobile) {
+        grid-template-columns: 1fr;
+    }
+}
