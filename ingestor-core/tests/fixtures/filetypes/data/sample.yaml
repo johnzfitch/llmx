@@ -1,0 +1,46 @@
+# Sample YAML configuration for testing
+
+name: sample-project
+version: "1.0.0"
+description: A sample YAML file for testing
+
+# Server configuration
+server:
+  host: localhost
+  port: 8080
+  ssl:
+    enabled: true
+    cert: /path/to/cert.pem
+    key: /path/to/key.pem
+
+# Database configuration
+database:
+  driver: postgres
+  host: localhost
+  port: 5432
+  name: sample_db
+  pool:
+    min: 5
+    max: 20
+
+# Logging configuration
+logging:
+  level: info
+  format: json
+  outputs:
+    - type: console
+    - type: file
+      path: /var/log/app.log
+
+# Feature flags
+features:
+  - name: dark_mode
+    enabled: true
+  - name: beta_features
+    enabled: false
+    rollout_percentage: 10
+
+# Environment variables
+env:
+  NODE_ENV: production
+  API_KEY: ${API_KEY}

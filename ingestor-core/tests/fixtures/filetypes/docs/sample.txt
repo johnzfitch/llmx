@@ -1,0 +1,50 @@
+Sample Plain Text File
+======================
+
+This is a sample plain text file for testing the llmx indexer.
+
+Section 1: Introduction
+-----------------------
+
+Plain text files are commonly used for documentation, configuration,
+and simple data storage. The indexer should handle them correctly.
+
+Section 2: Features
+-------------------
+
+The text file format has the following characteristics:
+
+  * No formatting markup
+  * Simple line-based structure
+  * Universal compatibility
+  * Human-readable
+
+Section 3: Content Examples
+---------------------------
+
+Here are some example patterns that might appear in text files:
+
+  1. Numbered lists like this one
+  2. Configuration-style key=value pairs
+  3. Log file entries with timestamps
+  4. README-style documentation
+
+Example configuration:
+  server.host = localhost
+  server.port = 8080
+  debug.enabled = true
+  log.level = info
+
+Example log entries:
+  2024-01-15 10:30:45 INFO Starting application
+  2024-01-15 10:30:46 INFO Connected to database
+  2024-01-15 10:30:47 WARN Configuration file not found
+
+Section 4: Conclusion
+---------------------
+
+This file serves as test content for verifying text file indexing.
+The indexer should properly chunk and index this content.
+
+---
+End of file

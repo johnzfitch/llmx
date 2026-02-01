@@ -1,0 +1,3 @@
+Line with Unix ending
+Line with Windows ending
+Another Unix line

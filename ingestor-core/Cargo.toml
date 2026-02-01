@@ -15,6 +15,10 @@ tree-sitter-javascript = { version = "0.20", optional = true }
 tree-sitter-typescript = { version = "0.20", optional = true }
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 
+# Dynamic search dependencies
+ignore = "0.4"  # .gitignore-aware file walking (same as ripgrep)
+lru = "0.12"    # LRU cache for dynamic index caching
+
 # Phase 5: ONNX-based semantic embeddings (MCP server only)
 # Note: Phase 6 uses Burn framework for WASM, not ort
 ort = { version = "2.0.0-rc.11", optional = true }
@@ -26,12 +30,18 @@ reqwest = { version = "0.12", features = ["blocking"], optional = true }
 default = ["treesitter"]
 treesitter = ["tree-sitter", "tree-sitter-javascript", "tree-sitter-typescript"]
 mcp = ["dep:rmcp", "dep:schemars", "dep:tokio", "dep:dirs", "dep:tracing", "dep:tracing-subscriber", "dep:anyhow", "embeddings"]
+cli = ["dep:clap", "dep:dirs", "dep:anyhow", "embeddings"]
 embeddings = ["dep:ort", "dep:tokenizers", "dep:ndarray", "dep:reqwest"]
 
 [[bin]]
 name = "llmx-mcp"
 path = "src/bin/mcp_server.rs"
 required-features = ["mcp"]
+
+[[bin]]
+name = "llmx"
+path = "src/bin/llmx.rs"
+required-features = ["cli"]
 
 [dependencies.rmcp]
 version = "0.3"
@@ -64,10 +74,18 @@ features = ["env-filter"]
 version = "1"
 optional = true
 
+[dependencies.clap]
+version = "4"
+features = ["derive"]
+optional = true
+
 [dev-dependencies]
 pretty_assertions = "1"
 tempfile = "3"
 criterion = "0.5"
+test-case = "3"
+assert_cmd = "2"
+predicates = "3"
 
 [[bench]]
 name = "baseline"
