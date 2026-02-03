@@ -17,7 +17,7 @@ zip = { version = "0.6", default-features = false, features = ["deflate"] }
 
 # Dynamic search dependencies
 ignore = "0.4"  # .gitignore-aware file walking (same as ripgrep)
-lru = "0.12"    # LRU cache for dynamic index caching
+lru = "0.16"    # LRU cache for dynamic index caching
 
 # Phase 5: ONNX-based semantic embeddings (MCP server only)
 # Note: Phase 6 uses Burn framework for WASM, not ort
