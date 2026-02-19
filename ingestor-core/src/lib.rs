@@ -1,5 +1,6 @@
 mod chunk;
 mod export;
+pub mod handlers;
 mod index;
 mod model;
 mod util;

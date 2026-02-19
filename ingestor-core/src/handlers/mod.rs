@@ -41,10 +41,14 @@ pub const ALLOWED_EXTENSIONS: &[&str] = &[
     "rb",
     // PHP
     "php",
+    // Swift
+    "swift",
     // Shell
     "sh", "bash", "zsh",
     // SQL
     "sql",
+    // Data/Logs
+    "log", "jsonl", "csv", "xml", "env", "ini", "cfg", "conf",
 ];
 
 /// Handler for `llmx_index` tool: Create or update codebase indexes.

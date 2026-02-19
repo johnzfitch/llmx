@@ -162,7 +162,7 @@ pub struct ManageOutput {
 /// # Behavior
 ///
 /// 1. Recursively walks directories and reads files
-/// 2. Filters by extension whitelist (.rs, .js, .ts, .tsx, .md, .json, .html, .css, .txt)
+/// 2. Filters by extension whitelist (see `handlers::ALLOWED_EXTENSIONS`)
 /// 3. Checks for existing index by root path
 /// 4. Creates new index or updates existing one
 /// 5. Saves to disk and returns metadata
@@ -371,6 +371,13 @@ fn walk_directory(path: &Path, files: &mut Vec<FileInput>) -> Result<()> {
         let entry = entry?;
         let path = entry.path();
 
+        // Skip hidden directories and common non-code directories
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            if name.starts_with('.') || name == "node_modules" || name == "target" || name == "dist" || name == "build" {
+                continue;
+            }
+        }
+
         if path.is_dir() {
             walk_directory(&path, files)?;
         } else if path.is_file() {
@@ -381,10 +388,9 @@ fn walk_directory(path: &Path, files: &mut Vec<FileInput>) -> Result<()> {
 }
 
 fn read_file(path: &Path, files: &mut Vec<FileInput>) -> Result<()> {
-    // Check extension whitelist
+    // Check extension whitelist (shared with handlers module)
     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-        let allowed = ["rs", "js", "ts", "tsx", "md", "json", "html", "css", "txt"];
-        if !allowed.contains(&ext) {
+        if !crate::handlers::ALLOWED_EXTENSIONS.contains(&ext) {
             return Ok(());
         }
     } else {
