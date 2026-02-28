@@ -182,10 +182,20 @@ pub fn llmx_index_handler(store: &mut IndexStore, input: IndexInput) -> Result<I
     // Collect files from paths
     let mut files = vec![];
     for path_str in &input.paths {
-        let path = PathBuf::from(path_str);
-        if path.is_dir() {
+        // Canonicalize to prevent path traversal attacks
+        let path = PathBuf::from(path_str)
+            .canonicalize()
+            .with_context(|| format!("Invalid path: {}", path_str))?;
+
+        // Skip symlinks to prevent traversal outside intended directories
+        let metadata = fs::symlink_metadata(&path)?;
+        if metadata.is_symlink() {
+            continue;
+        }
+
+        if metadata.is_dir() {
             walk_directory(&path, &mut files)?;
-        } else if path.is_file() {
+        } else if metadata.is_file() {
             read_file(&path, &mut files)?;
         }
     }
@@ -369,13 +379,22 @@ pub fn llmx_search_handler(store: &mut IndexStore, input: SearchInput) -> Result
 fn walk_directory(path: &Path, files: &mut Vec<FileInput>) -> Result<()> {
     for entry in fs::read_dir(path)? {
         let entry = entry?;
-        let path = entry.path();
+        let entry_path = entry.path();
 
-        let is_dir = path.is_dir();
+        // Skip symlinks to prevent directory traversal attacks
+        let metadata = match fs::symlink_metadata(&entry_path) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if metadata.is_symlink() {
+            continue;
+        }
+
+        let is_dir = metadata.is_dir();
 
         // Skip hidden directories (not files) and common non-code directories
         if is_dir {
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            if let Some(name) = entry_path.file_name().and_then(|n| n.to_str()) {
                 if name.starts_with('.') || name == "node_modules" || name == "target" || name == "dist" || name == "build" {
                     continue;
                 }
@@ -383,16 +402,17 @@ fn walk_directory(path: &Path, files: &mut Vec<FileInput>) -> Result<()> {
         }
 
         if is_dir {
-            walk_directory(&path, files)?;
-        } else if path.is_file() {
-            read_file(&path, files)?;
+            walk_directory(&entry_path, files)?;
+        } else if metadata.is_file() {
+            read_file(&entry_path, files)?;
         }
     }
     Ok(())
 }
 
 /// Dotfiles we allow indexing (have no extension per Path::extension())
-const ALLOWED_DOTFILES: &[&str] = &[".env", ".npmrc", ".nvmrc", ".editorconfig", ".gitignore"];
+/// Note: .env is deliberately excluded - it commonly contains secrets
+const ALLOWED_DOTFILES: &[&str] = &[".npmrc", ".nvmrc", ".editorconfig", ".gitignore"];
 
 fn read_file(path: &Path, files: &mut Vec<FileInput>) -> Result<()> {
     // Check extension whitelist (shared with handlers module)

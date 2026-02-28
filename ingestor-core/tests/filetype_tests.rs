@@ -119,6 +119,41 @@ fn test_filetype_toml() {
 }
 
 // ============================================================================
+// Data/Log formats (added in PR #6)
+// ============================================================================
+
+#[test_case("log", ChunkKind::Text)]
+#[test_case("jsonl", ChunkKind::Text)]
+#[test_case("csv", ChunkKind::Text)]
+#[test_case("xml", ChunkKind::Text)]
+#[test_case("ini", ChunkKind::Text)]
+#[test_case("cfg", ChunkKind::Text)]
+#[test_case("conf", ChunkKind::Text)]
+fn test_filetype_data_formats(ext: &str, expected: ChunkKind) {
+    let content = match ext {
+        "log" => "2024-01-01 INFO: Application started\n2024-01-01 DEBUG: Config loaded",
+        "jsonl" => r#"{"event":"start","ts":1234567890}
+{"event":"stop","ts":1234567999}"#,
+        "csv" => "name,value,count\nfoo,bar,42\nbaz,qux,99",
+        "xml" => r#"<?xml version="1.0"?><config><setting name="debug">true</setting></config>"#,
+        "ini" | "cfg" | "conf" => "[section]\nkey=value\nother=123",
+        _ => "test content",
+    };
+    test_extension_produces_kind(ext, content, expected);
+}
+
+// ============================================================================
+// Swift (added in PR #6)
+// ============================================================================
+
+#[test]
+fn test_filetype_swift() {
+    let input = create_file("swift", "import Foundation\nfunc hello() { print(\"Hello\") }");
+    let index = ingest_files(vec![input], IngestOptions::default());
+    assert!(!index.files.is_empty(), "Swift file should be indexed");
+}
+
+// ============================================================================
 // Documentation
 // ============================================================================
 

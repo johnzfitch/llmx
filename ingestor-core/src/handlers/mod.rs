@@ -47,8 +47,8 @@ pub const ALLOWED_EXTENSIONS: &[&str] = &[
     "sh", "bash", "zsh",
     // SQL
     "sql",
-    // Data/Logs
-    "log", "jsonl", "csv", "xml", "env", "ini", "cfg", "conf",
+    // Data/Logs (note: .env excluded - commonly contains secrets)
+    "log", "jsonl", "csv", "xml", "ini", "cfg", "conf",
 ];
 
 /// Handler for `llmx_index` tool: Create or update codebase indexes.

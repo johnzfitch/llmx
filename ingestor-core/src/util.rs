@@ -28,8 +28,8 @@ pub fn detect_kind(path: &str) -> ChunkKind {
     } else if lower.ends_with(".xml") {
         ChunkKind::Text  // XML needs tags preserved, not stripped like HTML
     } else if lower.ends_with(".txt") || lower.ends_with(".log") || lower.ends_with(".jsonl")
-        || lower.ends_with(".csv") || lower.ends_with(".env") || lower.ends_with(".ini")
-        || lower.ends_with(".cfg") || lower.ends_with(".conf")
+        || lower.ends_with(".csv") || lower.ends_with(".ini") || lower.ends_with(".cfg")
+        || lower.ends_with(".conf")
     {
         ChunkKind::Text
     } else if lower.ends_with(".png")
