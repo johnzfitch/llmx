@@ -1,0 +1,73 @@
+#!/bin/bash
+# Session-start hook: Environment validation + session logging
+# 
+# CRITICAL: Output must be JSON with additionalContext, or nothing.
+# Plain text stdout causes summarization feedback loops!
+
+set -euo pipefail
+
+LOG_FILE="$HOME/.claude/session-log.txt"
+
+# === SESSION LOGGING (to file, NOT stdout) ===
+{
+  echo "=== Session Started ==="
+  echo "Time: $(date)"
+  echo "PWD: $PWD"
+  echo "Git: $(git symbolic-ref --short HEAD 2>/dev/null || echo 'N/A')"
+  echo "User: $USER"
+  echo ""
+} >> "$LOG_FILE"
+
+# === COLLECT CONTEXT (don't echo directly!) ===
+CONTEXT_LINES=()
+
+# Check for mise Python in venv projects
+if [[ -f .python-version ]] && ! which python 2>/dev/null | grep -q mise; then
+  CONTEXT_LINES+=("⚠️ mise Python not active")
+fi
+
+# Git status
+if git rev-parse --git-dir &>/dev/null; then
+  BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "detached")
+  
+  # Uncommitted changes
+  if [[ -n $(git status -s 2>/dev/null) ]]; then
+    CONTEXT_LINES+=("📝 Uncommitted changes on $BRANCH")
+  fi
+
+  # Ahead/behind remote
+  if git rev-parse @{u} &>/dev/null; then
+    AHEAD=$(git rev-list --count @{u}..HEAD 2>/dev/null || echo 0)
+    BEHIND=$(git rev-list --count HEAD..@{u} 2>/dev/null || echo 0)
+
+    if (( AHEAD > 0 && BEHIND > 0 )); then
+      CONTEXT_LINES+=("↕️ Branch diverged: $AHEAD ahead, $BEHIND behind")
+    elif (( AHEAD > 0 )); then
+      CONTEXT_LINES+=("↑ $AHEAD unpushed commit(s)")
+    elif (( BEHIND > 0 )); then
+      CONTEXT_LINES+=("↓ $BEHIND commits behind remote")
+    fi
+  fi
+fi
+
+# === OUTPUT ===
+# If no context to add, exit silently
+if (( ${#CONTEXT_LINES[@]} == 0 )); then
+  exit 0
+fi
+
+# Join context lines with newlines
+CONTEXT=$(printf '%s\n' "${CONTEXT_LINES[@]}")
+
+# Output as proper JSON for SessionStart hook
+# This gets added to Claude's context without triggering summarization
+cat << EOF
+{
+  "hookSpecificOutput": {
+    "hookEventName": "SessionStart",
+    "additionalContext": $(echo "$CONTEXT" | jq -Rs .)
+  }
+}
+EOF
+
+exit 0

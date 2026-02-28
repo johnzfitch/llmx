@@ -16,27 +16,23 @@ pub fn estimate_tokens(text: &str) -> usize {
 }
 
 pub fn detect_kind(path: &str) -> ChunkKind {
-    let lower = path.to_ascii_lowercase();
-    if lower.ends_with(".md") || lower.ends_with(".markdown") {
-        ChunkKind::Markdown
-    } else if lower.ends_with(".json") {
-        ChunkKind::Json
-    } else if lower.ends_with(".js") || lower.ends_with(".ts") || lower.ends_with(".tsx") {
-        ChunkKind::JavaScript
-    } else if lower.ends_with(".html") || lower.ends_with(".htm") {
-        ChunkKind::Html
-    } else if lower.ends_with(".txt") || lower.ends_with(".log") {
-        ChunkKind::Text
-    } else if lower.ends_with(".png")
-        || lower.ends_with(".jpg")
-        || lower.ends_with(".jpeg")
-        || lower.ends_with(".webp")
-        || lower.ends_with(".gif")
-        || lower.ends_with(".bmp")
-    {
-        ChunkKind::Image
-    } else {
-        ChunkKind::Unknown
+    use std::path::Path;
+
+    // Use Path::extension() for robust detection (avoids false positives like "readme.md.txt")
+    let ext = Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase());
+
+    match ext.as_deref() {
+        Some("md" | "markdown") => ChunkKind::Markdown,
+        Some("json") => ChunkKind::Json,
+        Some("js" | "ts" | "tsx") => ChunkKind::JavaScript,
+        Some("html" | "htm") => ChunkKind::Html,
+        Some("xml") => ChunkKind::Text, // XML needs tags preserved, not stripped like HTML
+        Some("txt" | "log" | "jsonl" | "csv" | "ini" | "cfg" | "conf") => ChunkKind::Text,
+        Some("png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp") => ChunkKind::Image,
+        _ => ChunkKind::Unknown,
     }
 }
 

@@ -1,0 +1,144 @@
+---
+chunk_index: 1369
+ref: "a5f8805baaac"
+id: "a5f8805baaac88291d6e25da66697ac12b55289b88e54fe417a0552797368bae"
+slug: "ingestor-wasm-d"
+path: "/home/zack/dev/llmx/web/pkg/ingestor_wasm.d.ts"
+kind: "java_script"
+lines: [1, 128]
+token_estimate: 1477
+content_sha256: "dda37bf17b0270c7ea77e8e6783608afdaf29c73c2e4fdce633f51f90c35db84"
+compacted: false
+heading_path: []
+symbol: null
+address: null
+asset_path: null
+---
+
+/* tslint:disable */
+/* eslint-disable */
+
+/**
+ * WASM bindings for browser
+ */
+export class Embedder {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    backendKind(): string;
+    /**
+     * Create new embedder with automatic backend selection
+     *
+     * Use this factory method instead of `new()` to avoid TypeScript issues
+     * with async constructors.
+     *
+     * # Example
+     * ```javascript
+     * const embedder = await Embedder.create();
+     * ```
+     */
+    static create(): Promise<Embedder>;
+    static createWithPolicy(allow_webgpu: boolean, allow_cpu: boolean, allow_hash: boolean): Promise<Embedder>;
+    /**
+     * Get embedding dimension
+     */
+    dimension(): number;
+    /**
+     * Generate embedding for a single text
+     */
+    embed(text: string): Promise<any>;
+    /**
+     * Generate embeddings for multiple texts
+     */
+    embedBatch(texts: string[]): Promise<any>;
+    /**
+     * Get model identifier
+     */
+    modelId(): string;
+}
+
+export class Ingestor {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    exportCatalogLlmMd(): string;
+    exportIndexJson(): string;
+    exportLlm(): string;
+    exportLlmPointer(): string;
+    exportManifestLlmTsv(): string;
+    exportManifestMinJson(): string;
+    exportZip(): Uint8Array;
+    exportZipCompact(): Uint8Array;
+    files(): any;
+    static fromIndexJson(json: string): Ingestor;
+    getChunk(chunk_id: string): any;
+    indexId(): string;
+    static ingest(files: any, options: any): Ingestor;
+    listOutline(path: string): any;
+    listSymbols(path: string): any;
+    search(query: string, filters: any, limit: number): any;
+    /**
+     * Set embeddings for semantic search
+     * embeddings_js: Float32Array flattened as [chunk0_dim0, chunk0_dim1, ..., chunk1_dim0, ...]
+     * model_id: Embedding model identifier for cache validation
+     * dimension: Embedding dimension (e.g., 384 for arctic-embed-s)
+     */
+    setEmbeddings(embeddings_js: Float32Array, model_id: string, dimension: number): void;
+    stats(): any;
+    update(files: any, options: any): void;
+    updateSelective(files: any, keep_paths: any, options: any): void;
+    warnings(): any;
+}
+
+export function wasm_start(): void;
+
+export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
+
+export interface InitOutput {
+    readonly memory: WebAssembly.Memory;
+    readonly __wbg_embedder_free: (a: number, b: number) => void;
+    readonly __wbg_ingestor_free: (a: number, b: number) => void;
+    readonly embedder_backendKind: (a: number) => [number, number];
+    readonly embedder_create: () => any;
+    readonly embedder_createWithPolicy: (a: number, b: number, c: number) => any;
+    readonly embedder_dimension: (a: number) => number;
+    readonly embedder_embed: (a: number, b: number, c: number) => any;
+    readonly embedder_embedBatch: (a: number, b: number, c: number) => any;
+    readonly embedder_modelId: (a: number) => [number, number];
+    readonly ingestor_exportCatalogLlmMd: (a: number) => [number, number];
+    readonly ingestor_exportIndexJson: (a: number) => [number, number];
+    readonly ingestor_exportLlm: (a: number) => [number, number];
+    readonly ingestor_exportLlmPointer: (a: number) => [number, number];
+    readonly ingestor_exportManifestLlmTsv: (a: number) => [number, number];
+    readonly ingestor_exportManifestMinJson: (a: number) => [number, number];
+    readonly ingestor_exportZip: (a: number) => [number, number];
+    readonly ingestor_exportZipCompact: (a: number) => [number, number];
+    readonly ingestor_files: (a: number) => [number, number, number];
+    readonly ingestor_fromIndexJson: (a: number, b: number) => [number, number, number];
+    readonly ingestor_getChunk: (a: number, b: number, c: number) => [number, number, number];
+    readonly ingestor_indexId: (a: number) => [number, number];
+    readonly ingestor_ingest: (a: any, b: any) => [number, number, number];
+    readonly ingestor_listOutline: (a: number, b: number, c: number) => [number, number, number];
+    readonly ingestor_listSymbols: (a: number, b: number, c: number) => [number, number, number];
+    readonly ingestor_search: (a: number, b: number, c: number, d: any, e: number) => [number, number, number];
+    readonly ingestor_setEmbeddings: (a: number, b: any, c: number, d: number, e: number) => [number, number];
+    readonly ingestor_stats: (a: number) => [number, number, number];
+    readonly ingestor_update: (a: number, b: any, c: any) => [number, number];
+    readonly ingestor_updateSelective: (a: number, b: any, c: any, d: any) => [number, number];
+    readonly ingestor_warnings: (a: number) => [number, number, number];
+    readonly wasm_start: () => void;
+    readonly wasm_bindgen__closure__destroy__h450cf8c486a6707e: (a: number, b: number) => void;
+    readonly wasm_bindgen__closure__destroy__h8af372a8115fc5ae: (a: number, b: number) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h9c671d3ad2d9eb13: (a: number, b: number, c: any, d: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h16ac6a4e26c05031: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__h962d103488fc59cc: (a: number, b: number, c: any) => void;
+    readonly wasm_bindgen__convert__closures_____invoke__heeac315472b66a44: (a: number, b: number) => void;
+    readonly __wbindgen_malloc: (a: number, b: number) => number;
+    readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+    readonly __wbindgen_exn_store: (a: number) => void;
+    readonly __externref_table_alloc: () => number;
+    readonly __wbindgen_externrefs: WebAssembly.Table;
+    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
+    readonly __externref_table_dealloc: (a: number) => void;
+    readonly __wbindgen_start: () => void;
+}
