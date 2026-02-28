@@ -414,23 +414,25 @@ fn walk_directory(path: &Path, files: &mut Vec<FileInput>) -> Result<()> {
 /// Note: .env is deliberately excluded - it commonly contains secrets
 const ALLOWED_DOTFILES: &[&str] = &[".npmrc", ".nvmrc", ".editorconfig", ".gitignore"];
 
-fn read_file(path: &Path, files: &mut Vec<FileInput>) -> Result<()> {
-    // Check extension whitelist (shared with handlers module)
-    // Also handle dotfiles which have no extension per Path::extension()
-    let allowed = if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+/// Check if a file should be indexed based on extension or dotfile name.
+fn is_allowed_file(path: &Path) -> bool {
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
         crate::handlers::ALLOWED_EXTENSIONS.contains(&ext)
     } else if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
         ALLOWED_DOTFILES.contains(&name)
     } else {
         false
-    };
+    }
+}
 
-    if !allowed {
+fn read_file(path: &Path, files: &mut Vec<FileInput>) -> Result<()> {
+    if !is_allowed_file(path) {
         return Ok(());
     }
 
-    let data = fs::read(path)?;
+    // Get metadata first to access mtime without double syscall
     let metadata = fs::metadata(path)?;
+    let data = fs::read(path)?;
 
     files.push(FileInput {
         path: path.to_string_lossy().to_string(),
