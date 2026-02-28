@@ -371,14 +371,18 @@ fn walk_directory(path: &Path, files: &mut Vec<FileInput>) -> Result<()> {
         let entry = entry?;
         let path = entry.path();
 
-        // Skip hidden directories and common non-code directories
-        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            if name.starts_with('.') || name == "node_modules" || name == "target" || name == "dist" || name == "build" {
-                continue;
+        let is_dir = path.is_dir();
+
+        // Skip hidden directories (not files) and common non-code directories
+        if is_dir {
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if name.starts_with('.') || name == "node_modules" || name == "target" || name == "dist" || name == "build" {
+                    continue;
+                }
             }
         }
 
-        if path.is_dir() {
+        if is_dir {
             walk_directory(&path, files)?;
         } else if path.is_file() {
             read_file(&path, files)?;
@@ -387,13 +391,21 @@ fn walk_directory(path: &Path, files: &mut Vec<FileInput>) -> Result<()> {
     Ok(())
 }
 
+/// Dotfiles we allow indexing (have no extension per Path::extension())
+const ALLOWED_DOTFILES: &[&str] = &[".env", ".npmrc", ".nvmrc", ".editorconfig", ".gitignore"];
+
 fn read_file(path: &Path, files: &mut Vec<FileInput>) -> Result<()> {
     // Check extension whitelist (shared with handlers module)
-    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-        if !crate::handlers::ALLOWED_EXTENSIONS.contains(&ext) {
-            return Ok(());
-        }
+    // Also handle dotfiles which have no extension per Path::extension()
+    let allowed = if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        crate::handlers::ALLOWED_EXTENSIONS.contains(&ext)
+    } else if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+        ALLOWED_DOTFILES.contains(&name)
     } else {
+        false
+    };
+
+    if !allowed {
         return Ok(());
     }
 

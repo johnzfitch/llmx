@@ -1,0 +1,1551 @@
+# llm.md (pointer manifest)
+
+Index ID: a738c026bf7cb08169935110a7b224501f7aa88d96d4446160e7b0aef95be082
+Files: 134  Chunks: 1408
+
+Chunk files live under `chunks/` and are named `{ref}.md`.
+Prefer search to find refs, then open only the referenced chunk files.
+
+## Files
+
+### /home/zack/dev/llmx/AGENTS.md (md, 8 lines)
+- eeea829952ba (1-8) AGENTS
+### /home/zack/dev/llmx/Cargo.toml (?, 6 lines)
+- d1248aaa3b0d (1-6) cargo-l1-6
+### /home/zack/dev/llmx/README.md (md, 382 lines)
+- 64fb1f5d9b15 (1-10) ![search](.github/assets/icons/search-24x24.png) llmx
+- ee53c64e4d9a (11-21) ![search](.github/assets/icons/search-24x24.png) llmx > ![lightning](.github/assets/icons/lightning-24x24.png) Key Features
+- 918156948a33 (22-28) ![search](.github/assets/icons/search-24x24.png) llmx > The Problem
+- 3ef85246d092 (29-39) ![search](.github/assets/icons/search-24x24.png) llmx > The Solution
+- c285e397b40f (40-43) ![search](.github/assets/icons/search-24x24.png) llmx > ![hierarchy](.github/assets/icons/hierarchy-24x24.png) Semantic Outline Format
+- 9a6a6d87778f (44-51) ![search](.github/assets/icons/search-24x24.png) llmx > ![hierarchy](.github/assets/icons/hierarchy-24x24.png) Semantic Outline Format > Code Files
+- 00dfc932628d (52-63) ![search](.github/assets/icons/search-24x24.png) llmx > ![hierarchy](.github/assets/icons/hierarchy-24x24.png) Semantic Outline Format > Markdown Documentation
+- 13022c6669b2 (64-68) ![search](.github/assets/icons/search-24x24.png) llmx > ![lightning](.github/assets/icons/lightning-24x24.png) Quick Start
+- 848778beba01 (69-91) ![search](.github/assets/icons/search-24x24.png) llmx > ![lightning](.github/assets/icons/lightning-24x24.png) Quick Start > CLI Usage
+- bf4a38702421 (92-98) ![search](.github/assets/icons/search-24x24.png) llmx > ![lightning](.github/assets/icons/lightning-24x24.png) Quick Start > Build WASM
+- d8ca26d3fe80 (99-106) ![search](.github/assets/icons/search-24x24.png) llmx > ![lightning](.github/assets/icons/lightning-24x24.png) Quick Start > Run Web UI
+- 7299f59067e7 (107-117) ![search](.github/assets/icons/search-24x24.png) llmx > ![lightning](.github/assets/icons/lightning-24x24.png) Quick Start > Index a Codebase (Web UI)
+- 862e3f254dd7 (118-119) ![search](.github/assets/icons/search-24x24.png) llmx > ![folder](.github/assets/icons/closed-folder-24x24.png) Usage
+- 4310b8d5eb1e (120-140) ![search](.github/assets/icons/search-24x24.png) llmx > ![folder](.github/assets/icons/closed-folder-24x24.png) Usage > For Agents
+- fdc0fd1fc2c9 (141-148) ![search](.github/assets/icons/search-24x24.png) llmx > ![folder](.github/assets/icons/closed-folder-24x24.png) Usage > For Humans
+- cb6ef749bb06 (149-159) ![search](.github/assets/icons/search-24x24.png) llmx > ![gear](.github/assets/icons/gear-24x24.png) How It Works
+- a61d8d8bb765 (160-172) ![search](.github/assets/icons/search-24x24.png) llmx > ![gear](.github/assets/icons/gear-24x24.png) How It Works > Chunking Strategy
+- e316ff4e92a5 (173-182) ![search](.github/assets/icons/search-24x24.png) llmx > ![gear](.github/assets/icons/gear-24x24.png) How It Works > Search
+- 4fa0437464af (183-193) ![search](.github/assets/icons/search-24x24.png) llmx > ![gear](.github/assets/icons/gear-24x24.png) How It Works > Export Formats
+- c8c7ccd9695f (194-203) ![search](.github/assets/icons/search-24x24.png) llmx > ![document](.github/assets/icons/businessicons-png-24-file-1-business-office-ui-24x24.png) Real-World Example: Apple HIG Corpus
+- b3a44201a375 (204-211) ![search](.github/assets/icons/search-24x24.png) llmx > ![document](.github/assets/icons/businessicons-png-24-file-1-business-office-ui-24x24.png) Real-World Example: Apple HIG Corpus > Token Savings
+- 0ca0c229dbf1 (212-234) ![search](.github/assets/icons/search-24x24.png) llmx > ![document](.github/assets/icons/businessicons-png-24-file-1-business-office-ui-24x24.png) Real-World Example: Apple HIG Corpus > Agent Workflow Demo
+- 0b95824ab0c3 (235-243) ![search](.github/assets/icons/search-24x24.png) llmx > ![gear](.github/assets/icons/gear-24x24.png) Technical Details
+- 1db7f62bfce2 (244-253) ![search](.github/assets/icons/search-24x24.png) llmx > ![gear](.github/assets/icons/gear-24x24.png) Technical Details > Browser Compatibility
+- 4609b2b71f77 (254-255) ![search](.github/assets/icons/search-24x24.png) llmx > ![folder](.github/assets/icons/closed-folder-24x24.png) Development
+- ab29c71bab32 (256-268) ![search](.github/assets/icons/search-24x24.png) llmx > ![folder](.github/assets/icons/closed-folder-24x24.png) Development > Project Structure
+- 957def0598c9 (269-280) ![search](.github/assets/icons/search-24x24.png) llmx > ![folder](.github/assets/icons/closed-folder-24x24.png) Development > Build
+- 62ae767353c9 (281-297) ![search](.github/assets/icons/search-24x24.png) llmx > ![folder](.github/assets/icons/closed-folder-24x24.png) Development > Testing
+- 69f04c547c3f (298-309) ![search](.github/assets/icons/search-24x24.png) llmx > ![lock](.github/assets/icons/lock-24x24.png) Privacy & Security
+- 1410340dd13f (310-311) ![search](.github/assets/icons/search-24x24.png) llmx > ![download](.github/assets/icons/down-24x24.png) Export Details
+- 2e1b9bea6a06 (312-354) ![search](.github/assets/icons/search-24x24.png) llmx > ![download](.github/assets/icons/down-24x24.png) Export Details > llm.md Format (v1.0)
+- fe85e699a856 (355-360) ![search](.github/assets/icons/search-24x24.png) llmx > License
+- b15c6c533743 (361-371) ![search](.github/assets/icons/search-24x24.png) llmx > Contributing
+- 60b8453887b7 (372-382) ![search](.github/assets/icons/search-24x24.png) llmx > Roadmap
+### /home/zack/dev/llmx/chunks/0001.md (md, 18 lines)
+- 7893f0f6f2c4 (1-18) 0001
+### /home/zack/dev/llmx/claude_Model selection for current project_2026-01-17.md (md, 863 lines)
+- 420b29f8eb08 (1-2) Model selection for current project
+- c8af8204d2cd (3-8) Model selection for current project > User
+- 882d33eb4466 (9-63) Model selection for current project > Assistant
+- c3dd39f8a0f5 (64-67) Model selection for current project > User
+- 6de4cfba27b7 (68-120) Model selection for current project > Assistant
+- 1765225b3bcc (121-124) Model selection for current project > User
+- 2e7160f272ff (125-152) Model selection for current project > Assistant
+- 059a4a3b8c69 (153-156) Model selection for current project > User
+- ca6adc61d54b (157-172) Model selection for current project > Assistant
+- 7b51dc62a407 (173-176) Model selection for current project > User
+- cef87e219111 (177-225) Model selection for current project > Assistant
+- fe69fb8fcef8 (226-229) Model selection for current project > User
+- 61e7caf4cd4f (230-290) Model selection for current project > Assistant
+- 5823c853af6f (291-308) Model selection for current project > User
+- 03dcc32613a5 (309-387) Model selection for current project > Assistant
+- d6cbcc064d50 (388-391) Model selection for current project > User
+- d5382d605323 (392-405) Model selection for current project > Assistant
+- 532dcd71510e (406-417) Model selection for current project > User
+- ced145e1b8fa (418-486) Model selection for current project > Assistant
+- 8f05f779c41b (487-491) Model selection for current project > User
+- a0beaf757793 (492-504) Model selection for current project > Assistant
+- 21a575074b57 (505-508) Model selection for current project > User
+- 756b940ecc14 (509-554) Model selection for current project > Assistant
+- 1a592a4ef4c0 (555-558) Model selection for current project > User
+- 1acf6f7310a2 (559-590) Model selection for current project > Assistant
+- ed155afaa194 (591-602) Model selection for current project > User
+- eda60e22fd6a (603-635) Model selection for current project > Assistant
+- 408ad5cec9fd (636-647) Model selection for current project > User
+- 9402c76ca688 (648-678) Model selection for current project > Assistant
+- fac8933fa2db (679-682) Model selection for current project > User
+- e24ec1476ab4 (683-709) Model selection for current project > Assistant
+- 0a2aa8c2c77b (710-713) Model selection for current project > User
+- 3d57ae474ff0 (714-718) Model selection for current project > Assistant
+- ca5a335eac26 (719-727) Model selection for current project > Done ✅
+- fee91da9a113 (728-734) Model selection for current project > Pending ⚠️
+- 3a86ff2b1582 (735-739) Model selection for current project > Key Numbers
+- c3184f7455d5 (740-776) Model selection for current project > Concerns
+- 4a69a6452956 (777-837) Model selection for current project > User
+- a5781b9086b5 (838-863) Model selection for current project > Assistant
+### /home/zack/dev/llmx/docs/AGENT_HANDOFF.md (md, 587 lines)
+- ace01a9df8d9 (1-9) Agent Handoff Document
+- ece8a5bf5aae (10-11) Agent Handoff Document > Current State
+- 418b6e55d269 (12-21) Agent Handoff Document > Current State > ✅ Phase 4 Status: COMPLETE
+- 2ddeed71e1c4 (22-54) Agent Handoff Document > Current State > Project Structure
+- f951a268b3e9 (55-56) Agent Handoff Document > What Was Completed in Phase 4
+- 3913257c4b92 (57-69) Agent Handoff Document > What Was Completed in Phase 4 > 1. API Documentation
+- 85a6d9a2356a (70-86) Agent Handoff Document > What Was Completed in Phase 4 > 2. Performance Benchmarks
+- bf76eb1477af (87-94) Agent Handoff Document > What Was Completed in Phase 4 > 3. Documentation Files
+- 5afd2a174c53 (95-96) Agent Handoff Document > Architecture Overview
+- 295ced4f81ab (97-114) Agent Handoff Document > Architecture Overview > Data Flow
+- 9c7e7cd5ffa5 (115-116) Agent Handoff Document > Architecture Overview > Key Design Decisions
+- cb0221fe9656 (117-121) Architecture Overview > Key Design Decisions > 1. Arc<Mutex<IndexStore>>
+- 4594c2403b6a (122-126) Architecture Overview > Key Design Decisions > 2. 4-Tool Pattern
+- 11a6f56ba4f8 (127-131) Architecture Overview > Key Design Decisions > 3. Lazy Loading + Rebuild
+- e10da6f9c603 (132-138) Architecture Overview > Key Design Decisions > 4. Token Budgeting
+- b0cf5e7b62a9 (139-140) Agent Handoff Document > Phase 5: What's Next
+- 5b21fe4c5ac6 (141-143) Agent Handoff Document > Phase 5: What's Next > Objective
+- 1cb41558e10e (144-147) Agent Handoff Document > Phase 5: What's Next > Implementation Strategy
+- c953a887a539 (148-155) Phase 5: What's Next > Implementation Strategy > 1. New Dependencies
+- f26d43d7d2c5 (156-166) Phase 5: What's Next > Implementation Strategy > 2. Enhanced SearchInput
+- 81c52f91632c (167-172) Phase 5: What's Next > Implementation Strategy > 3. Hybrid Ranking
+- 267f04c370bb (173-176) Phase 5: What's Next > Implementation Strategy > 4. Keep 4-Tool Pattern
+- a744f15268ff (177-183) Agent Handoff Document > Phase 5: What's Next > Performance Budget
+- 727edf5d710f (184-190) Agent Handoff Document > Phase 5: What's Next > Expected Overhead
+- fc44e0b16045 (191-192) Agent Handoff Document > Critical Files to Understand
+- d17dc0c3c503 (193-219) Agent Handoff Document > Critical Files to Understand > Before Phase 5, Read These:
+- d6de4dfa1249 (220-221) Agent Handoff Document > Known Issues & Warnings
+- b38f79c5fbe9 (222-223) Agent Handoff Document > Known Issues & Warnings > ⚠️ Outstanding Items
+- f2b7c8021592 (224-234) Known Issues & Warnings > ⚠️ Outstanding Items > 1. Manual Testing (Recommended Before Phase 5)
+- e2a6f8e059c3 (235-239) Known Issues & Warnings > ⚠️ Outstanding Items > 2. Integration Tests
+- 922b56e1b928 (240-244) Known Issues & Warnings > ⚠️ Outstanding Items > 3. Large Codebases
+- 0d6a5f8fc153 (245-254) Agent Handoff Document > Known Issues & Warnings > ✅ What's Working Well
+- fe4809355163 (255-256) Agent Handoff Document > Development Workflow
+- 70ecbf3e474d (257-278) Agent Handoff Document > Development Workflow > Build Commands
+- 78b807c032d0 (279-283) Agent Handoff Document > Development Workflow > Binary Location
+- 52f2e0fc8155 (284-293) Agent Handoff Document > Development Workflow > Storage Location
+- 2719d17e2cab (294-295) Agent Handoff Document > Testing Strategy
+- 49e99e2ab267 (296-302) Agent Handoff Document > Testing Strategy > Unit Tests
+- 024d82979b97 (303-309) Agent Handoff Document > Testing Strategy > Benchmarks
+- 4b63292bad9b (310-334) Agent Handoff Document > Testing Strategy > Manual MCP Test
+- ac79d82175f7 (335-358) Agent Handoff Document > Phase 5 Implementation Checklist
+- c12ce6440bc7 (359-360) Agent Handoff Document > Common Pitfalls to Avoid
+- a072114f1a88 (361-366) Agent Handoff Document > Common Pitfalls to Avoid > 1. Don't Add a 5th Tool
+- 96fa230af488 (367-371) Agent Handoff Document > Common Pitfalls to Avoid > 2. Don't Store Inverted Index on Disk
+- 44aa4226126b (372-376) Agent Handoff Document > Common Pitfalls to Avoid > 3. Don't Break Token Budgeting
+- 4658da54e3ad (377-381) Agent Handoff Document > Common Pitfalls to Avoid > 4. Watch Performance Regressions
+- 09f8e11196cb (382-387) Agent Handoff Document > Common Pitfalls to Avoid > 5. Test with Real Agent Workflow
+- 80a8d11b1722 (388-389) Agent Handoff Document > Key Files Reference
+- 65a5adccf793 (390-402) Agent Handoff Document > Key Files Reference > MCP Server Entry Point
+- a27b1b8d6087 (403-427) Agent Handoff Document > Key Files Reference > Search Handler (Phase 5 modification point)
+- 204b73ef089e (428-458) Agent Handoff Document > Key Files Reference > Data Structures (Phase 5 additions)
+- aa2ee78ebf7c (459-460) Agent Handoff Document > Resources & References
+- 0ce5b9a954d2 (461-465) Agent Handoff Document > Resources & References > Documentation
+- 49f9aa72a712 (466-471) Agent Handoff Document > Resources & References > External
+- f74929867ab8 (472-479) Agent Handoff Document > Resources & References > Code References
+- f65c2bd89384 (480-481) Agent Handoff Document > Questions? Issues?
+- 81d8dffbe5f8 (482-502) Agent Handoff Document > Questions? Issues? > If Phase 5 Agent Encounters Problems:
+- db608c821507 (503-506) Agent Handoff Document > Success Criteria for Phase 5
+- b62f8a4c21f7 (507-513) Agent Handoff Document > Success Criteria for Phase 5 > Functional Requirements
+- 7e90a884e5c4 (514-518) Agent Handoff Document > Success Criteria for Phase 5 > Performance Requirements
+- 6ce6cfea9a11 (519-524) Agent Handoff Document > Success Criteria for Phase 5 > Quality Requirements
+- d3fe69db1acc (525-532) Agent Handoff Document > Success Criteria for Phase 5 > Agent Experience
+- 24a47a833a76 (533-534) Agent Handoff Document > Final Notes
+- 66391629cf5a (535-542) Agent Handoff Document > Final Notes > What Makes This Codebase Special
+- 53dedb0fd037 (543-563) Agent Handoff Document > Final Notes > Phase 5 Philosophy
+- 26b66ece6558 (564-587) Agent Handoff Document > Handoff Checklist
+### /home/zack/dev/llmx/docs/BROWSER_TESTING.md (md, 46 lines)
+- f8e03896950a (1-5) Browser Testing (UI)
+- cc9b6656d958 (6-19) Browser Testing (UI) > Option A (recommended): Playwright smoke testing (no LLM, no network)
+- 0afc46954a74 (20-23) Browser Testing (UI) > Option B: browser-use MCP (LLM-driven, requires API key)
+- 87a2550953e9 (24-46) Browser Testing (UI) > Option B: browser-use MCP (LLM-driven, requires API key) > Run the MCP server (SSE mode)
+### /home/zack/dev/llmx/docs/CLAUDE_CODE_INTEGRATION.md (md, 422 lines)
+- 7908006d40d1 (1-4) llmx + Claude Code Integration
+- 244cd3e6f464 (5-13) llmx + Claude Code Integration > Overview
+- 4869927ebc5b (14-52) llmx + Claude Code Integration > Architecture
+- 81e0a69e1c7c (53-108) llmx + Claude Code Integration > Scaffolded Directory Structure
+- f829f7188adc (109-110) llmx + Claude Code Integration > Integration Points
+- bef7d2191dca (111-126) llmx + Claude Code Integration > Integration Points > 1. CLI Commands
+- 5e2fa36c2983 (127-145) llmx + Claude Code Integration > Integration Points > 2. MCP Server Configuration
+- 056af2a51446 (146-154) llmx + Claude Code Integration > Integration Points > 3. MCP Tools (Already Implemented)
+- 09c2f2376e4b (155-175) Integration Points > 3. MCP Tools (Already Implemented) > Search Response Format
+- f33a8be77101 (176-191) llmx + Claude Code Integration > Integration Points > 4. Hook Integration
+- 4cb2885e59f6 (192-215) llmx + Claude Code Integration > Integration Points > 5. SessionStart Auto-Index
+- b7a3f892629f (216-248) llmx + Claude Code Integration > Chunk Format
+- 4a7e8845788d (249-250) llmx + Claude Code Integration > Agent Workflow
+- 946e5a00e70d (251-263) llmx + Claude Code Integration > Agent Workflow > Before llmx
+- d5ac3ccd54a6 (264-273) llmx + Claude Code Integration > Agent Workflow > With llmx
+- 02e43c072e00 (274-297) llmx + Claude Code Integration > Current State
+- ab76038d13d9 (298-299) llmx + Claude Code Integration > Implementation Roadmap
+- 0d9db45af7eb (300-308) llmx + Claude Code Integration > Implementation Roadmap > Phase 1: MCP Server ✅ COMPLETE
+- 67aeb7fac45f (309-315) llmx + Claude Code Integration > Implementation Roadmap > Phase 2: Claude Code Hooks ✅ COMPLETE
+- a320977c01e6 (316-321) llmx + Claude Code Integration > Implementation Roadmap > Phase 3: Integration (TODO)
+- 6d5633d28305 (322-327) llmx + Claude Code Integration > Implementation Roadmap > Phase 4: Optional Enhancements
+- bcfbeb56afb2 (328-329) llmx + Claude Code Integration > Configuration
+- a3114523e5f7 (330-337) llmx + Claude Code Integration > Configuration > Environment Variables
+- 3bfe991ff81d (338-354) llmx + Claude Code Integration > Configuration > Project-Specific Config
+- b04753bfa2df (355-372) llmx + Claude Code Integration > Metrics
+- 8f84c68e1f36 (373-407) llmx + Claude Code Integration > Quick Start
+- 00acd949f444 (408-422) llmx + Claude Code Integration > Quick Start > Usage Examples
+### /home/zack/dev/llmx/docs/CUTTING_EDGE_ENHANCEMENTS.md (md, 798 lines)
+- e72d2f05057c (1-2) Cutting-Edge Enhancements for Phases 1-4
+- 7c3ee7b30b25 (3-11) Cutting-Edge Enhancements for Phases 1-4 > Overview
+- e0ef649353bf (12-13) Cutting-Edge Enhancements for Phases 1-4 > 1. Learned Sparse Retrieval (SPLADE) 🚀
+- 4ccc5876d2aa (14-19) Cutting-Edge Enhancements for Phases 1-4 > 1. Learned Sparse Retrieval (SPLADE) 🚀 > The Problem with BM25
+- 2e7f009df6b8 (20-25) Cutting-Edge Enhancements for Phases 1-4 > 1. Learned Sparse Retrieval (SPLADE) 🚀 > The Problem with Dense Embeddings
+- bb12cc9921f5 (26-52) Cutting-Edge Enhancements for Phases 1-4 > 1. Learned Sparse Retrieval (SPLADE) 🚀 > The SPLADE Solution
+- 363e3fd0a947 (53-110) Cutting-Edge Enhancements for Phases 1-4 > 1. Learned Sparse Retrieval (SPLADE) 🚀 > Implementation Plan
+- 721da6f3984b (111-112) Cutting-Edge Enhancements for Phases 1-4 > 2. Memory-Mapped Indexes 🔥
+- 2cd79dde2d29 (113-124) Cutting-Edge Enhancements for Phases 1-4 > 2. Memory-Mapped Indexes 🔥 > Current Approach
+- 50f11795140b (125-137) Cutting-Edge Enhancements for Phases 1-4 > 2. Memory-Mapped Indexes 🔥 > Memory-Mapped Approach
+- 68ae51a0a886 (138-198) Cutting-Edge Enhancements for Phases 1-4 > 2. Memory-Mapped Indexes 🔥 > Implementation
+- bd825203c3d1 (199-200) Cutting-Edge Enhancements for Phases 1-4 > 3. Self-Tuning from Agent Behavior 🧠
+- 21ee75de77f8 (201-208) Cutting-Edge Enhancements for Phases 1-4 > 3. Self-Tuning from Agent Behavior 🧠 > The Insight
+- aa8522f5bf21 (209-303) Cutting-Edge Enhancements for Phases 1-4 > 3. Self-Tuning from Agent Behavior 🧠 > Implementation
+- aeffc8b0fe9c (304-305) Cutting-Edge Enhancements for Phases 1-4 > 4. Predictive Prefetching 🔮
+- 807965113575 (306-314) Cutting-Edge Enhancements for Phases 1-4 > 4. Predictive Prefetching 🔮 > The Pattern
+- 40cba19e43ce (315-317) Cutting-Edge Enhancements for Phases 1-4 > 4. Predictive Prefetching 🔮 > The Opportunity
+- f2e4381c49e1 (318-392) Cutting-Edge Enhancements for Phases 1-4 > 4. Predictive Prefetching 🔮 > Implementation
+- 38f044e50444 (393-394) Cutting-Edge Enhancements for Phases 1-4 > 5. Automatic Quality Scoring (specho-v2 Integration) 📊
+- 27afc6221a19 (395-404) Cutting-Edge Enhancements for Phases 1-4 > 5. Automatic Quality Scoring (specho-v2 Integration) 📊 > The Problem
+- 3175c1354324 (405-478) Cutting-Edge Enhancements for Phases 1-4 > 5. Automatic Quality Scoring (specho-v2 Integration) 📊 > Implementation
+- 6d5a99b9b148 (479-480) Cutting-Edge Enhancements for Phases 1-4 > 6. Incremental Indexing with Filesystem Watching 👁️
+- 77f8771850d9 (481-488) Cutting-Edge Enhancements for Phases 1-4 > 6. Incremental Indexing with Filesystem Watching 👁️ > Current Approach
+- bd73309e2113 (489-495) Cutting-Edge Enhancements for Phases 1-4 > 6. Incremental Indexing with Filesystem Watching 👁️ > Incremental Approach
+- 7376aa5f15ca (496-609) Cutting-Edge Enhancements for Phases 1-4 > 6. Incremental Indexing with Filesystem Watching 👁️ > Implementation
+- decaeb650704 (610-611) Cutting-Edge Enhancements for Phases 1-4 > 7. Zero-Copy Streaming for Large Results 🚰
+- 4a410f682b4f (612-625) Cutting-Edge Enhancements for Phases 1-4 > 7. Zero-Copy Streaming for Large Results 🚰 > Current Approach
+- 23b7226b0fd6 (626-669) Cutting-Edge Enhancements for Phases 1-4 > 7. Zero-Copy Streaming for Large Results 🚰 > Streaming Approach
+- 56ae2ccfa5f2 (670-671) Cutting-Edge Enhancements for Phases 1-4 > 8. SIMD-Accelerated BM25 Scoring ⚡
+- ab9604c6a300 (672-681) Cutting-Edge Enhancements for Phases 1-4 > 8. SIMD-Accelerated BM25 Scoring ⚡ > Current BM25
+- 24bbb5d8e802 (682-708) Cutting-Edge Enhancements for Phases 1-4 > 8. SIMD-Accelerated BM25 Scoring ⚡ > SIMD Version
+- 65d81e13b1fd (709-710) Cutting-Edge Enhancements for Phases 1-4 > Implementation Priority
+- 1a3672250832 (711-717) Cutting-Edge Enhancements for Phases 1-4 > Implementation Priority > Phase 5 (Semantic Search)
+- 15bb98524e23 (718-726) Cutting-Edge Enhancements for Phases 1-4 > Implementation Priority > Phase 6 (Production & Optimization)
+- 02e00c80cb93 (727-736) Cutting-Edge Enhancements for Phases 1-4 > Implementation Priority > Future (Phase 7+)
+- 058865d7163e (737-760) Cutting-Edge Enhancements for Phases 1-4 > Recommendation: Start with SPLADE + Quality Scoring
+- 48c06d140c96 (761-782) Cutting-Edge Enhancements for Phases 1-4 > Success Metrics
+- 0e06b0945b93 (783-798) Cutting-Edge Enhancements for Phases 1-4 > Cutting-Edge != Complex
+### /home/zack/dev/llmx/docs/INGESTION_SPEC.md (md, 245 lines)
+- 0d51d0f5053a (1-2) LLMX Ingestion Spec
+- bbd4e66534e7 (3-9) LLMX Ingestion Spec > Goals
+- b83ef25c1f05 (10-25) LLMX Ingestion Spec > Architecture (Client-only WASM)
+- e54e74c870a3 (26-36) LLMX Ingestion Spec > Index Backend Decision
+- a7291c9f78d0 (37-66) LLMX Ingestion Spec > Index Format (index.json)
+- 0db432ebc20c (67-68) LLMX Ingestion Spec > Chunking Rules (Deterministic)
+- 2491832b16b9 (69-75) LLMX Ingestion Spec > Chunking Rules (Deterministic) > Markdown
+- 408ec5ce3f8d (76-82) LLMX Ingestion Spec > Chunking Rules (Deterministic) > JSON
+- fac8acef6a16 (83-89) LLMX Ingestion Spec > Chunking Rules (Deterministic) > JavaScript / TypeScript
+- 88b4bc3cc557 (90-95) LLMX Ingestion Spec > Chunking Rules (Deterministic) > HTML
+- 1a5318255c6e (96-99) LLMX Ingestion Spec > Chunking Rules (Deterministic) > Text
+- 9c2b3b25a6f5 (100-107) LLMX Ingestion Spec > Chunking Rules (Deterministic) > Images
+- 835021e6fdd0 (108-116) LLMX Ingestion Spec > Stable Chunk IDs
+- 4e7449ff69bf (117-122) LLMX Ingestion Spec > Incremental Updates
+- 3449210ae695 (123-136) LLMX Ingestion Spec > Search API
+- 07d9368976a7 (137-142) LLMX Ingestion Spec > Storage Strategy
+- c23697e0e67f (143-144) LLMX Ingestion Spec > Export Formats
+- c9841867f447 (145-157) LLMX Ingestion Spec > Export Formats > llm.md
+- 4820e575b891 (158-164) LLMX Ingestion Spec > Export Formats > chunks/*.md
+- a0830ae0adae (165-173) LLMX Ingestion Spec > Export Formats > export.zip
+- d9f62c6398d3 (174-181) LLMX Ingestion Spec > Safety & Privacy
+- 459e44f139ee (182-191) LLMX Ingestion Spec > Performance Constraints
+- 2b8e87b084c9 (192-207) LLMX Ingestion Spec > Standards: AGENTS.md + llms.txt
+- 330b0e93f60a (208-225) LLMX Ingestion Spec > Standards: AGENTS.md + llms.txt > llms.txt (format standard)
+- 0a185cff1bdd (226-245) LLMX Ingestion Spec > Alternative Deployment Models
+### /home/zack/dev/llmx/docs/LLMCAT_INTEGRATION_PLAN.md (md, 507 lines)
+- 7cd45b08ef6f (1-2) specho-v2 Integration for llm.cat: Token Efficiency Implementation
+- 4800df71422e (3-9) specho-v2 Integration for llm.cat: Token Efficiency Implementation > Core Problem Statement
+- 38a44abf114f (10-19) specho-v2 Integration for llm.cat: Token Efficiency Implementation > Solution: Quality-Based Filtering & Ranking
+- 7274a8e00e21 (20-58) specho-v2 Integration for llm.cat: Token Efficiency Implementation > Implementation Architecture
+- a33233377668 (59-60) specho-v2 Integration for llm.cat: Token Efficiency Implementation > Phase 1: Core Analysis Engine
+- ae7a18cb2b7e (61-230) specho-v2 Integration for llm.cat: Token Efficiency Implementation > Phase 1: Core Analysis Engine > 1.1: Minimal Python Implementation
+- bb6525eda80c (231-232) specho-v2 Integration for llm.cat: Token Efficiency Implementation > Phase 2: Export Variants
+- 4ae4b3c663d1 (233-298) specho-v2 Integration for llm.cat: Token Efficiency Implementation > Phase 2: Export Variants > 2.1: Three Export Modes
+- be0deb5831ba (299-346) specho-v2 Integration for llm.cat: Token Efficiency Implementation > Phase 2: Export Variants > 2.2: User-Facing Export Options
+- bd41a9fcadfb (347-348) specho-v2 Integration for llm.cat: Token Efficiency Implementation > Phase 3: Enhanced Search Integration
+- a13a45b4a2f5 (349-377) specho-v2 Integration for llm.cat: Token Efficiency Implementation > Phase 3: Enhanced Search Integration > 3.1: Quality-Weighted Search Ranking
+- 8be193a36cfc (378-379) specho-v2 Integration for llm.cat: Token Efficiency Implementation > Phase 4: Token Budget Optimization
+- 293a1819b8f6 (380-418) specho-v2 Integration for llm.cat: Token Efficiency Implementation > Phase 4: Token Budget Optimization > 4.1: Smart Truncation
+- d51d20ae1817 (419-420) specho-v2 Integration for llm.cat: Token Efficiency Implementation > Measurable Benefits
+- 139d5c58640f (421-428) specho-v2 Integration for llm.cat: Token Efficiency Implementation > Measurable Benefits > Token Efficiency
+- 845f2ee13faf (429-436) specho-v2 Integration for llm.cat: Token Efficiency Implementation > Measurable Benefits > Search Effectiveness
+- 09b50275b99c (437-461) specho-v2 Integration for llm.cat: Token Efficiency Implementation > Measurable Benefits > Real-World Example
+- 3ee870435ad3 (462-463) specho-v2 Integration for llm.cat: Token Efficiency Implementation > Implementation Timeline
+- 88f9716d724a (464-468) specho-v2 Integration for llm.cat: Token Efficiency Implementation > Implementation Timeline > Week 1: Core Engine
+- b43d1f3b644f (469-473) specho-v2 Integration for llm.cat: Token Efficiency Implementation > Implementation Timeline > Week 2: Export Variants
+- 82a6d8b212aa (474-478) specho-v2 Integration for llm.cat: Token Efficiency Implementation > Implementation Timeline > Week 3: Search Integration
+- 02ecc1d3571b (479-485) specho-v2 Integration for llm.cat: Token Efficiency Implementation > Implementation Timeline > Week 4: Polish & Launch
+- 86ec00701c14 (486-497) specho-v2 Integration for llm.cat: Token Efficiency Implementation > Success Metrics
+- c58786342e90 (498-507) specho-v2 Integration for llm.cat: Token Efficiency Implementation > Key Insight
+### /home/zack/dev/llmx/docs/LLMX-EXPORT-FOR-OPUS-REVIEW.md (md, 346 lines)
+- f10df9a401b6 (1-1) LLMX Export Package for Opus Evaluation
+- 0411d55a5dba (2-7) LLMX Export Package for Opus Evaluation > Performance Optimizations P0-P4 Verification
+- 5a0056fe1301 (8-21) LLMX Export Package for Opus Evaluation > 1. Export Summary
+- 2426573b0830 (22-23) LLMX Export Package for Opus Evaluation > 2. Optimization Verification
+- 4505976acbc7 (24-55) LLMX Export Package for Opus Evaluation > 2. Optimization Verification > P0: HashMap for Hybrid Search (index.rs)
+- 86cae037bca7 (56-106) LLMX Export Package for Opus Evaluation > 2. Optimization Verification > P1: MinExportData Sharing (export.rs)
+- 97481f981086 (107-137) LLMX Export Package for Opus Evaluation > 2. Optimization Verification > P2: HashMap for MCP Search Handler (mcp/tools.rs)
+- ed097a8240d4 (138-182) LLMX Export Package for Opus Evaluation > 2. Optimization Verification > P3: heading_matches_prefix (index.rs)
+- 268af5431962 (183-204) LLMX Export Package for Opus Evaluation > 2. Optimization Verification > P4: truncate_slug O(n²) → O(n) (chunk.rs)
+- 0b555a6a7af7 (205-206) LLMX Export Package for Opus Evaluation > 3. Manifest Structure Validation
+- 962b61eaaefc (207-217) LLMX Export Package for Opus Evaluation > 3. Manifest Structure Validation > Row Count Analysis
+- 2cb39ced0e19 (218-223) LLMX Export Package for Opus Evaluation > 3. Manifest Structure Validation > Directory Index
+- 614796076c4d (224-229) LLMX Export Package for Opus Evaluation > 3. Manifest Structure Validation > Kind Index
+- 88026c513229 (230-248) LLMX Export Package for Opus Evaluation > 3. Manifest Structure Validation > File Summary (F rows) - Top 5 by Tokens
+- 018584d1c07e (249-270) LLMX Export Package for Opus Evaluation > 3. Manifest Structure Validation > Chunk Reference (C rows) Sample
+- 700e1ea76ae5 (271-284) LLMX Export Package for Opus Evaluation > 4. Quality Verification Checklist
+- 17fd57355699 (285-312) LLMX Export Package for Opus Evaluation > 5. Token Budget Recommendations
+- 46338cf0d41e (313-314) LLMX Export Package for Opus Evaluation > 6. Performance Benchmarks
+- 3dd0b2aa7831 (315-325) LLMX Export Package for Opus Evaluation > 6. Performance Benchmarks > Expected Improvements
+- 8cd02d279f4c (326-335) LLMX Export Package for Opus Evaluation > 7. Files Available for Opus Deep Dive
+- 53c5c8b89980 (336-346) LLMX Export Package for Opus Evaluation > Conclusion
+### /home/zack/dev/llmx/docs/P6_DIRECTIONS.md (md, 588 lines)
+- 0c107e8e24b0 (1-2) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search
+- e6111920a844 (3-9) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > Goal
+- b22bb1ea18e3 (10-30) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 1. Embedding Model Selection
+- 03c70b91fff0 (31-32) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 2. Burn Framework Integration
+- 744cd8c88f79 (33-38) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 2. Burn Framework Integration > Why Burn?
+- dfaaa9e455d0 (39-57) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 2. Burn Framework Integration > Dependencies
+- 45ea0848f339 (58-74) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 2. Burn Framework Integration > ONNX → Burn Conversion (Build Script)
+- 889699392cca (75-155) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 2. Burn Framework Integration > Model Loading (Runtime)
+- aae476a5fb3e (156-185) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 2. Burn Framework Integration > Browser Integration (wasm-bindgen)
+- 3cd2e431f6ff (186-197) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 2. Burn Framework Integration > Performance Targets (Browser/WebGPU)
+- f83da6c262c4 (198-201) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 3. Reciprocal Rank Fusion (RRF)
+- ece87ad591c2 (202-207) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 3. Reciprocal Rank Fusion (RRF) > Formula
+- 9b1d781717be (208-234) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 3. Reciprocal Rank Fusion (RRF) > Implementation
+- 750b5bbb7417 (235-252) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 3. Reciprocal Rank Fusion (RRF) > SearchInput Extension
+- b59ebf7ce417 (253-254) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 4. Browser-Specific Concerns
+- 06828d6b51af (255-282) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 4. Browser-Specific Concerns > Model Weight Distribution
+- c14e298ae1f4 (283-302) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 4. Browser-Specific Concerns > WebGPU Availability
+- 8d1eefc58c40 (303-315) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 4. Browser-Specific Concerns > Async Considerations
+- eb4a40349937 (316-345) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 5. Backward Compatibility
+- 334743ab1153 (346-347) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 6. Testing Checklist
+- 400f0497487e (348-354) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 6. Testing Checklist > Unit Tests
+- 07510ff599dd (355-361) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 6. Testing Checklist > Browser Integration Tests
+- 9e53fad8acbd (362-367) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 6. Testing Checklist > Integration Tests
+- 6661d4c0e2e6 (368-375) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 6. Testing Checklist > Performance Tests (Browser)
+- 6a822ecec9da (376-388) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 7. Gotchas
+- de9ef1320ece (389-390) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 8. Build & Deploy
+- 8827a8469427 (391-404) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 8. Build & Deploy > WASM Build
+- 779e518d99b9 (405-411) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 8. Build & Deploy > Bundle Size Targets
+- 8518b12cf342 (412-419) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 8. Build & Deploy > CDN Setup
+- 7fcfd0ab565e (420-421) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 9. Resources
+- 61fbbe5943f6 (422-427) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 9. Resources > Burn
+- 312e174489e5 (428-432) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 9. Resources > Models
+- 7ffd81da1494 (433-437) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 9. Resources > Papers
+- 1729bb071636 (438-439) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 10. llm.cat Integration
+- 5808db502239 (440-451) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 10. llm.cat Integration > How It Fits
+- 984411c607a2 (452-472) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 10. llm.cat Integration > Progressive Enhancement Strategy
+- 4ed1c9ad2d18 (473-498) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 10. llm.cat Integration > Combined Ranking
+- 3dba1ef57eb4 (499-523) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 10. llm.cat Integration > Export Variants with Embeddings
+- cfa3b64c73e0 (524-535) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > Success Criteria
+- 8af0228930b3 (536-539) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 10. Day 1 Checklist (Browser-Adjusted)
+- 487c6d187acf (540-544) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 10. Day 1 Checklist (Browser-Adjusted) > Pre-Flight
+- e8d6afde7757 (545-549) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 10. Day 1 Checklist (Browser-Adjusted) > Architecture Alignment
+- ecce325f1a78 (550-556) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 10. Day 1 Checklist (Browser-Adjusted) > ⚠️ Model Management (Browser-Specific)
+- b2b08a65c9ea (557-561) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 10. Day 1 Checklist (Browser-Adjusted) > ⚠️ Concurrency (Browser-Specific)
+- 714e4b4f4bc9 (562-566) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 10. Day 1 Checklist (Browser-Adjusted) > Error Handling
+- 53dcd523913d (567-573) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 10. Day 1 Checklist (Browser-Adjusted) > Integration Tests
+- 9cf454ec7718 (574-581) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 10. Day 1 Checklist (Browser-Adjusted) > Performance Validation
+- ff4d758f24dd (582-588) Phase 6: Burn + WebGPU Embeddings & Advanced Hybrid Search > 10. Day 1 Checklist (Browser-Adjusted) > What NOT To Do
+### /home/zack/dev/llmx/docs/PHASE6_BLOCKER_FIXES.md (md, 386 lines)
+- 89c90bf9f2a7 (1-6) Phase 6 Blocker Resolution Guide
+- 663b486bfb19 (7-10) Phase 6 Blocker Resolution Guide > Blocker 1: ONNX Opset Mismatch
+- 2097487c5cf3 (11-103) Phase 6 Blocker Resolution Guide > Blocker 1: ONNX Opset Mismatch > Solution: Convert to Opset 13
+- 30d2ecf1cc60 (104-107) Phase 6 Blocker Resolution Guide > Blocker 2: Tokenizer WASM Incompatibility
+- 73cd6605f371 (108-141) Phase 6 Blocker Resolution Guide > Blocker 2: Tokenizer WASM Incompatibility > Solution A: Use `tokenizers` with WASM feature (Recommended)
+- ce36368c2ed7 (142-233) Phase 6 Blocker Resolution Guide > Blocker 2: Tokenizer WASM Incompatibility > Solution B: Pure Rust WordPiece (Fallback)
+- f3abe8feff2f (234-268) Phase 6 Blocker Resolution Guide > Blocker 2: Tokenizer WASM Incompatibility > Solution C: JavaScript Tokenizer Bridge (Last Resort)
+- d4cd0aec2e97 (269-293) Phase 6 Blocker Resolution Guide > Verification Checklist
+- 040ead70a8e9 (294-323) Phase 6 Blocker Resolution Guide > Updated build.rs
+- d78ef108c243 (324-338) Phase 6 Blocker Resolution Guide > Timeline
+- 609c674f9c95 (339-369) Phase 6 Blocker Resolution Guide > Quick Start
+- 41c8ab0ba40e (370-386) Phase 6 Blocker Resolution Guide > If All Else Fails: Pivot to Transformers.js
+### /home/zack/dev/llmx/docs/PHASE6_FIXES_COMPLETED.md (md, 195 lines)
+- fce07758961a (1-2) Phase 6 Blocker Fixes - Completion Report
+- 1ffdda57948b (3-10) Phase 6 Blocker Fixes - Completion Report > Summary
+- 9ed0fc9f80cc (11-12) Phase 6 Blocker Fixes - Completion Report > Fixed Blockers
+- 3f118c5f4e2f (13-33) Phase 6 Blocker Fixes - Completion Report > Fixed Blockers > ✅ Blocker 1: ONNX Opset Mismatch
+- 73b2613471bb (34-55) Phase 6 Blocker Fixes - Completion Report > Fixed Blockers > ✅ Blocker 2: Tokenizer WASM Incompatibility
+- 9d51d76f4183 (56-57) Phase 6 Blocker Fixes - Completion Report > Build System Status
+- ef70df27c4fd (58-71) Phase 6 Blocker Fixes - Completion Report > Build System Status > ✅ Native Build (cargo build)
+- 1bf88c19deb4 (72-100) Phase 6 Blocker Fixes - Completion Report > Build System Status > ⚠️ WASM Build (wasm-pack)
+- 0c39c8df46ea (101-102) Phase 6 Blocker Fixes - Completion Report > Recommended Next Steps
+- b19f1b2879ad (103-107) Phase 6 Blocker Fixes - Completion Report > Recommended Next Steps > Option 1: Wait for Burn Ecosystem Update (Recommended)
+- 4b02a1a33a8b (108-130) Phase 6 Blocker Fixes - Completion Report > Recommended Next Steps > Option 2: Use Transformers.js for Browser (Pragmatic)
+- 384e7c8e84c0 (131-151) Phase 6 Blocker Fixes - Completion Report > Recommended Next Steps > Option 3: Use Pre-tokenized Input Pattern
+- ee87d1f3b289 (152-160) Phase 6 Blocker Fixes - Completion Report > Recommended Next Steps > Option 4: Target wasm32-wasi Instead
+- 117adb20ddfb (161-162) Phase 6 Blocker Fixes - Completion Report > Files Modified Summary
+- 4c0076470899 (163-166) Phase 6 Blocker Fixes - Completion Report > Files Modified Summary > Created:
+- f5f413c3071e (167-172) Phase 6 Blocker Fixes - Completion Report > Files Modified Summary > Modified:
+- b25df5fdf686 (173-177) Phase 6 Blocker Fixes - Completion Report > Files Modified Summary > No Changes Needed:
+- 7c9fcfbe2862 (178-187) Phase 6 Blocker Fixes - Completion Report > Current Capabilities
+- 2e41b9984daa (188-195) Phase 6 Blocker Fixes - Completion Report > Conclusion
+### /home/zack/dev/llmx/docs/PHASE6_IMPLEMENTATION.md (md, 480 lines)
+- 7cccd3c67be9 (1-2) Phase 6 Implementation: Burn + WebGPU Embeddings
+- 018808051426 (3-6) Phase 6 Implementation: Burn + WebGPU Embeddings > Overview
+- ce5d393e128e (7-8) Phase 6 Implementation: Burn + WebGPU Embeddings > Key Changes
+- 85bbbd6f5685 (9-17) Phase 6 Implementation: Burn + WebGPU Embeddings > Key Changes > 1. Burn Framework Integration
+- be546187b554 (18-30) Phase 6 Implementation: Burn + WebGPU Embeddings > Key Changes > 2. Model: bge-small-en-v1.5
+- 1e99d2b8f13f (31-47) Phase 6 Implementation: Burn + WebGPU Embeddings > Key Changes > 3. Reciprocal Rank Fusion (RRF)
+- fe1162d8d1c2 (48-61) Phase 6 Implementation: Burn + WebGPU Embeddings > Key Changes > 4. Hybrid Search Strategies
+- ef35ea0622e1 (62-71) Phase 6 Implementation: Burn + WebGPU Embeddings > Key Changes > 5. Graceful Fallback Chain
+- 0ac80d5ee4f0 (72-73) Phase 6 Implementation: Burn + WebGPU Embeddings > Architecture
+- 40c9f1af0b40 (74-84) Phase 6 Implementation: Burn + WebGPU Embeddings > Architecture > Build Time (build.rs)
+- b6ea88bb3c64 (85-98) Phase 6 Implementation: Burn + WebGPU Embeddings > Architecture > Runtime (Browser)
+- bf95c0203755 (99-119) Phase 6 Implementation: Burn + WebGPU Embeddings > Architecture > Search with Semantic Embeddings
+- c574a1cb0c85 (120-121) Phase 6 Implementation: Burn + WebGPU Embeddings > Backward Compatibility
+- 4cf5591e1ad5 (122-140) Phase 6 Implementation: Burn + WebGPU Embeddings > Backward Compatibility > Embedding Model Versioning
+- 495c8ea86d5f (141-161) Phase 6 Implementation: Burn + WebGPU Embeddings > Backward Compatibility > SearchInput Compatibility
+- 4731dfcd2bca (162-189) Phase 6 Implementation: Burn + WebGPU Embeddings > File Structure
+- 71adbb968b74 (190-191) Phase 6 Implementation: Burn + WebGPU Embeddings > Performance Targets
+- d6be91a4845f (192-202) Phase 6 Implementation: Burn + WebGPU Embeddings > Performance Targets > Browser/WebGPU
+- 4be2fe8bd125 (203-208) Phase 6 Implementation: Burn + WebGPU Embeddings > Performance Targets > Notes
+- 8f92bf2395f7 (209-210) Phase 6 Implementation: Burn + WebGPU Embeddings > Implementation Status
+- a6f8e0ba5b38 (211-222) Phase 6 Implementation: Burn + WebGPU Embeddings > Implementation Status > ✅ Completed
+- f7d0abfca280 (223-232) Phase 6 Implementation: Burn + WebGPU Embeddings > Implementation Status > ⏳ Pending
+- 49e08b2cc176 (233-253) Phase 6 Implementation: Burn + WebGPU Embeddings > Implementation Status > 🔧 To Implement
+- f2c2724db346 (254-255) Phase 6 Implementation: Burn + WebGPU Embeddings > Testing Checklist
+- 06dc90befda8 (256-264) Phase 6 Implementation: Burn + WebGPU Embeddings > Testing Checklist > Unit Tests
+- 7ec222dce571 (265-271) Phase 6 Implementation: Burn + WebGPU Embeddings > Testing Checklist > Integration Tests
+- 62e873af7589 (272-279) Phase 6 Implementation: Burn + WebGPU Embeddings > Testing Checklist > Browser Tests
+- 501d56acd617 (280-286) Phase 6 Implementation: Burn + WebGPU Embeddings > Testing Checklist > Performance Tests
+- 4366a288c9ff (287-288) Phase 6 Implementation: Burn + WebGPU Embeddings > Build Instructions
+- 17e2a32e41a5 (289-296) Phase 6 Implementation: Burn + WebGPU Embeddings > Build Instructions > Prerequisites
+- 91a242d017ed (297-309) Phase 6 Implementation: Burn + WebGPU Embeddings > Build Instructions > Building
+- 0aa5b779a82e (310-318) Phase 6 Implementation: Burn + WebGPU Embeddings > Build Instructions > First Build
+- b38ad7163afe (319-320) Phase 6 Implementation: Burn + WebGPU Embeddings > Usage Examples
+- 363dfd8ca49e (321-340) Phase 6 Implementation: Burn + WebGPU Embeddings > Usage Examples > Basic Embedding Generation
+- c8923cddaef1 (341-355) Phase 6 Implementation: Burn + WebGPU Embeddings > Usage Examples > Creating Index with Embeddings
+- 6745f32e6803 (356-363) Phase 6 Implementation: Burn + WebGPU Embeddings > Usage Examples > Hybrid Search
+- 0af1145eb872 (364-365) Phase 6 Implementation: Burn + WebGPU Embeddings > Migration Guide
+- 09286dad8e44 (366-378) Phase 6 Implementation: Burn + WebGPU Embeddings > Migration Guide > From Phase 5 (Hash-based)
+- 1be17f7b263d (379-385) Phase 6 Implementation: Burn + WebGPU Embeddings > Migration Guide > From Pre-Phase 5 (BM25-only)
+- 5f8f45a123eb (386-387) Phase 6 Implementation: Burn + WebGPU Embeddings > Troubleshooting
+- 42fb3eb83ace (388-399) Phase 6 Implementation: Burn + WebGPU Embeddings > Troubleshooting > Build Errors
+- 35b2cad91fb6 (400-412) Phase 6 Implementation: Burn + WebGPU Embeddings > Troubleshooting > Runtime Errors
+- 093a11557922 (413-424) Phase 6 Implementation: Burn + WebGPU Embeddings > Troubleshooting > Performance Issues
+- b9118a10e385 (425-426) Phase 6 Implementation: Burn + WebGPU Embeddings > References
+- 19694320f359 (427-430) Phase 6 Implementation: Burn + WebGPU Embeddings > References > Papers
+- d1d185e103b0 (431-435) Phase 6 Implementation: Burn + WebGPU Embeddings > References > Documentation
+- 5f57b2e15d06 (436-439) Phase 6 Implementation: Burn + WebGPU Embeddings > References > Models
+- 74f5b3a4243c (440-441) Phase 6 Implementation: Burn + WebGPU Embeddings > Future Enhancements
+- d5b9092f8f35 (442-447) Phase 6 Implementation: Burn + WebGPU Embeddings > Future Enhancements > Short Term
+- 810afd4e5ff8 (448-453) Phase 6 Implementation: Burn + WebGPU Embeddings > Future Enhancements > Medium Term
+- ba5827081d7a (454-459) Phase 6 Implementation: Burn + WebGPU Embeddings > Future Enhancements > Long Term
+- 7201920c053e (460-480) Phase 6 Implementation: Burn + WebGPU Embeddings > Contributors
+### /home/zack/dev/llmx/docs/PHASE6_STATUS.md (md, 507 lines)
+- c4e80bd46a44 (1-2) Phase 6 Implementation Status
+- e8fd8832468d (3-6) Phase 6 Implementation Status > Summary
+- 114ebe374772 (7-8) Phase 6 Implementation Status > ✅ Completed Components
+- b07a560c13a0 (9-26) Phase 6 Implementation Status > ✅ Completed Components > 1. Core Architecture
+- 13b0b2e7c794 (27-49) Phase 6 Implementation Status > ✅ Completed Components > 2. RRF Algorithm
+- 0d4ce6290154 (50-74) Phase 6 Implementation Status > ✅ Completed Components > 3. Hybrid Search Strategy
+- 7e1824fb0261 (75-93) Phase 6 Implementation Status > ✅ Completed Components > 4. Backward Compatibility
+- 4676168e31d6 (94-101) Phase 6 Implementation Status > ✅ Completed Components > 5. Build System
+- e9f480483fad (102-108) Phase 6 Implementation Status > ✅ Completed Components > 6. Documentation
+- 96fad98d0396 (109-110) Phase 6 Implementation Status > 🚧 Blocked Components
+- 9a5844f026d6 (111-147) Phase 6 Implementation Status > 🚧 Blocked Components > 1. Burn Model Inference
+- 27e9422ba52f (148-176) Phase 6 Implementation Status > 🚧 Blocked Components > 2. Tokenizer in WASM
+- f558ca8cd064 (177-199) Phase 6 Implementation Status > 🚧 Blocked Components > 3. Model Weight Loading
+- 9afff9055b53 (200-201) Phase 6 Implementation Status > 📊 Test Status
+- f54b4184b724 (202-210) Phase 6 Implementation Status > 📊 Test Status > Unit Tests
+- 27cb22c0a8dc (211-219) Phase 6 Implementation Status > 📊 Test Status > Integration Tests
+- 185464f37bed (220-228) Phase 6 Implementation Status > 📊 Test Status > Browser Tests
+- 2648d71074bb (229-230) Phase 6 Implementation Status > 🎯 Next Steps
+- 6e3e712a5623 (231-247) Phase 6 Implementation Status > 🎯 Next Steps > Immediate (Unblock Development)
+- f71b01c13147 (248-265) Phase 6 Implementation Status > 🎯 Next Steps > Short Term (Enable Testing)
+- 0d72ef081839 (266-282) Phase 6 Implementation Status > 🎯 Next Steps > Medium Term (Production Ready)
+- fd15ed182690 (283-284) Phase 6 Implementation Status > 📝 Code Quality
+- 7f111166fcb4 (285-304) Phase 6 Implementation Status > 📝 Code Quality > What Works
+- cb44b91be482 (305-321) Phase 6 Implementation Status > 📝 Code Quality > What Needs Work
+- 4066f1a21989 (322-323) Phase 6 Implementation Status > 🔍 Technical Decisions
+- 069b0379430d (324-335) Phase 6 Implementation Status > 🔍 Technical Decisions > Why Burn?
+- 9fe9b70aa781 (336-348) Phase 6 Implementation Status > 🔍 Technical Decisions > Why RRF?
+- 35178a10de95 (349-359) Phase 6 Implementation Status > 🔍 Technical Decisions > Why bge-small-en-v1.5?
+- 5dbc879ee150 (360-361) Phase 6 Implementation Status > 🎓 Lessons Learned
+- c385a0995c06 (362-378) Phase 6 Implementation Status > 🎓 Lessons Learned > What Went Well
+- 54b330262eb1 (379-395) Phase 6 Implementation Status > 🎓 Lessons Learned > What Was Challenging
+- 4258b023d45d (396-397) Phase 6 Implementation Status > 🚀 Deployment Readiness
+- f063230634f0 (398-404) Phase 6 Implementation Status > 🚀 Deployment Readiness > Can Deploy Now
+- 6a39e884338d (405-411) Phase 6 Implementation Status > 🚀 Deployment Readiness > Cannot Deploy Yet
+- ea0ab081454c (412-430) Phase 6 Implementation Status > 🚀 Deployment Readiness > Fallback Plan
+- 83fb632da8fd (431-432) Phase 6 Implementation Status > 💡 Recommendations
+- c366836fa8bb (433-450) Phase 6 Implementation Status > 💡 Recommendations > For Immediate Use
+- 7b9a4d5cfc3f (451-479) Phase 6 Implementation Status > 💡 Recommendations > For Full Phase 6
+- 6266c26c48c5 (480-507) Phase 6 Implementation Status > 📌 Conclusion
+### /home/zack/dev/llmx/docs/PHASE6_SUCCESS.md (md, 306 lines)
+- 6309e3b88590 (1-2) Phase 6 Blockers - FULLY RESOLVED ✅
+- ff936035e37f (3-6) Phase 6 Blockers - FULLY RESOLVED ✅ > Summary
+- 9c5ccab1e782 (7-22) Phase 6 Blockers - FULLY RESOLVED ✅ > Final Solution
+- cecf63699b6a (23-24) Phase 6 Blockers - FULLY RESOLVED ✅ > Build Results
+- 00554aeceef3 (25-30) Phase 6 Blockers - FULLY RESOLVED ✅ > Build Results > ✅ Native Build
+- cff0d284e2e5 (31-46) Phase 6 Blockers - FULLY RESOLVED ✅ > Build Results > ✅ WASM Build
+- 39f28681c4a8 (47-48) Phase 6 Blockers - FULLY RESOLVED ✅ > Resolved Blockers
+- 44daab95287c (49-63) Phase 6 Blockers - FULLY RESOLVED ✅ > Resolved Blockers > ✅ Blocker 1: ONNX Opset Mismatch
+- cd206b5a238a (64-76) Phase 6 Blockers - FULLY RESOLVED ✅ > Resolved Blockers > ✅ Blocker 2: Tokenizer WASM Incompatibility
+- 53905098a14c (77-89) Phase 6 Blockers - FULLY RESOLVED ✅ > Resolved Blockers > ✅ Blocker 3: getrandom WASM Configuration
+- ec92725aa262 (90-91) Phase 6 Blockers - FULLY RESOLVED ✅ > Implementation Status
+- 0a3274c73db1 (92-110) Phase 6 Blockers - FULLY RESOLVED ✅ > Implementation Status > Phase 6 Architecture
+- 06f43e7d9b6a (111-127) Phase 6 Blockers - FULLY RESOLVED ✅ > Implementation Status > Current Capabilities
+- 9d3db35ba7d3 (128-129) Phase 6 Blockers - FULLY RESOLVED ✅ > Build Configuration
+- 7687986a3e09 (130-152) Phase 6 Blockers - FULLY RESOLVED ✅ > Build Configuration > Files Modified
+- 50a33e60fb72 (153-169) Phase 6 Blockers - FULLY RESOLVED ✅ > Build Configuration > Build Commands
+- 4dc40cc3efa7 (170-171) Phase 6 Blockers - FULLY RESOLVED ✅ > Verification
+- cd4877d6ea6a (172-178) Phase 6 Blockers - FULLY RESOLVED ✅ > Verification > Opset Version
+- ddf97e0f67ca (179-195) Phase 6 Blockers - FULLY RESOLVED ✅ > Verification > Model Structure
+- d154c8d3d46a (196-205) Phase 6 Blockers - FULLY RESOLVED ✅ > Verification > WASM Package
+- 4b5ccc5f3c60 (206-207) Phase 6 Blockers - FULLY RESOLVED ✅ > Next Steps
+- 499b2a23ef91 (208-216) Phase 6 Blockers - FULLY RESOLVED ✅ > Next Steps > 1. Model Weight Loading (Priority: High)
+- 940400eda51f (217-228) Phase 6 Blockers - FULLY RESOLVED ✅ > Next Steps > 2. Complete Forward Pass (Priority: High)
+- 89b714146d44 (229-248) Phase 6 Blockers - FULLY RESOLVED ✅ > Next Steps > 3. Browser Testing (Priority: Medium)
+- ca0d059eb606 (249-256) Phase 6 Blockers - FULLY RESOLVED ✅ > Next Steps > 4. IndexedDB Caching (Priority: Low)
+- b44a3c07b93a (257-262) Phase 6 Blockers - FULLY RESOLVED ✅ > Next Steps > 5. Performance Optimization (Priority: Low)
+- d457999cc47d (263-289) Phase 6 Blockers - FULLY RESOLVED ✅ > Browser Usage Example
+- a7b7e24fb1a4 (290-306) Phase 6 Blockers - FULLY RESOLVED ✅ > Conclusion
+### /home/zack/dev/llmx/docs/PHASE_4_BASELINE_BENCHMARKS.md (md, 123 lines)
+- 3ff7ea2670b6 (1-4) Phase 4 Baseline Performance Benchmarks
+- acce5b44bd71 (5-10) Phase 4 Baseline Performance Benchmarks > Test Environment
+- d6877767c146 (11-12) Phase 4 Baseline Performance Benchmarks > Results Summary
+- 4030f4ec3dcb (13-25) Phase 4 Baseline Performance Benchmarks > Results Summary > Index Creation
+- 481a3096f657 (26-38) Phase 4 Baseline Performance Benchmarks > Results Summary > Search Performance (BM25)
+- a0838083ad3f (39-51) Phase 4 Baseline Performance Benchmarks > Results Summary > Inverted Index Build
+- 2c8be1b4e5ef (52-63) Phase 4 Baseline Performance Benchmarks > Results Summary > Stats Computation
+- 90e46c840917 (64-75) Phase 4 Baseline Performance Benchmarks > Results Summary > Serialization
+- b28a701b8865 (76-77) Phase 4 Baseline Performance Benchmarks > Performance Goals for Phase 5
+- 4b0223b9eac0 (78-83) Phase 4 Baseline Performance Benchmarks > Performance Goals for Phase 5 > Baseline to Maintain
+- 366ece349f16 (84-99) Phase 4 Baseline Performance Benchmarks > Performance Goals for Phase 5 > New Metrics to Track in Phase 5
+- 04225b23abc9 (100-107) Phase 4 Baseline Performance Benchmarks > Methodology
+- e0e6c74c03a1 (108-116) Phase 4 Baseline Performance Benchmarks > Reproduction
+- 6192a38efc11 (117-123) Phase 4 Baseline Performance Benchmarks > Next Steps for Phase 5
+### /home/zack/dev/llmx/docs/PHASE_4_COMPLETION_ANALYSIS.md (md, 458 lines)
+- 4df8158b0ab5 (1-2) Phase 4 Completion Analysis
+- 97c887a881c9 (3-12) Phase 4 Completion Analysis > Executive Summary
+- 384b21130276 (13-14) Phase 4 Completion Analysis > What Was Accomplished
+- 919561590b79 (15-23) Phase 4 Completion Analysis > What Was Accomplished > Core Deliverables (from Phase 4 Directions)
+- 762a81077790 (24-41) Phase 4 Completion Analysis > What Was Accomplished > Code Quality Improvements
+- ce487f41ea5b (42-43) Phase 4 Completion Analysis > Deep Dive: Architecture Decisions
+- 18a682634aaa (44-86) Phase 4 Completion Analysis > Deep Dive: Architecture Decisions > 1. Arc<Mutex<>> vs Plain HashMap
+- aafb1d0e2582 (87-116) Phase 4 Completion Analysis > Deep Dive: Architecture Decisions > 2. Error Handling Pattern
+- e5c40e1fa540 (117-141) Phase 4 Completion Analysis > Deep Dive: Architecture Decisions > 3. Tool Consolidation Success
+- a0d6af3be23c (142-143) Phase 4 Completion Analysis > What's Missing (Expected from Phase 4)
+- cd5f9e3bb5a9 (144-163) Phase 4 Completion Analysis > What's Missing (Expected from Phase 4) > 1. Documentation
+- f8f76a16d0eb (164-178) Phase 4 Completion Analysis > What's Missing (Expected from Phase 4) > 2. Integration Tests
+- 69dd549fb2ea (179-199) Phase 4 Completion Analysis > What's Missing (Expected from Phase 4) > 3. Performance Baselines
+- 50f88de34dfe (200-201) Phase 4 Completion Analysis > Comparison to Phase 4 Plan
+- 211bdc259fb2 (202-211) Phase 4 Completion Analysis > Comparison to Phase 4 Plan > ✅ Completed Goals
+- da28d8701812 (212-218) Phase 4 Completion Analysis > Comparison to Phase 4 Plan > ⚠️ Partial Completion
+- 6916ecbc3166 (219-229) Phase 4 Completion Analysis > Comparison to Phase 4 Plan > ❓ Need Verification
+- 1e16ad5ccb61 (230-231) Phase 4 Completion Analysis > Code Quality Score
+- 16bc9c45400b (232-239) Phase 4 Completion Analysis > Code Quality Score > Strengths (5/5)
+- 740514a7f4f5 (240-250) Phase 4 Completion Analysis > Code Quality Score > Areas for Improvement (Not Urgent)
+- 34104c7f4d18 (251-252) Phase 4 Completion Analysis > Recommendations for Phase 5
+- e46277620115 (253-269) Phase 4 Completion Analysis > Recommendations for Phase 5 > 1. Document Current API
+- fa8fdb0707de (270-298) Phase 4 Completion Analysis > Recommendations for Phase 5 > 2. Add Baseline Benchmarks
+- cfed52befc7b (299-331) Phase 4 Completion Analysis > Recommendations for Phase 5 > 3. Test with Real Agent
+- 9e7dcad7097b (332-351) Phase 4 Completion Analysis > Recommendations for Phase 5 > 4. Optional: Optimize Arc<Mutex<>>
+- 246f8bcf26f4 (352-353) Phase 4 Completion Analysis > Bridge to Phase 5: Semantic Search
+- 47632f5f40ae (354-360) Phase 4 Completion Analysis > Bridge to Phase 5: Semantic Search > What Phase 5 Needs from Phase 4
+- d84550873188 (361-401) Phase 4 Completion Analysis > Bridge to Phase 5: Semantic Search > What Phase 5 Adds
+- b17e614e7518 (402-403) Phase 4 Completion Analysis > Phase 4 Completion Checklist
+- 041aecc8965d (404-409) Phase 4 Completion Analysis > Phase 4 Completion Checklist > Must-Do Before Phase 5
+- b24cb671db41 (410-415) Phase 4 Completion Analysis > Phase 4 Completion Checklist > Should-Do (Nice to Have)
+- 6e98fa47a457 (416-423) Phase 4 Completion Analysis > Phase 4 Completion Checklist > Can-Wait (Phase 6)
+- 5aed5bf9a238 (424-447) Phase 4 Completion Analysis > Final Verdict
+- a1975afa9c84 (448-458) Phase 4 Completion Analysis > What to Tell the Team
+### /home/zack/dev/llmx/docs/PHASE_4_COMPLETION_REPORT.md (md, 395 lines)
+- 4f5bdb4de82a (1-8) Phase 4 Completion Report
+- 16d932158de5 (9-12) Phase 4 Completion Report > Executive Summary
+- 8a6fa81f4841 (13-19) Phase 4 Completion Report > Executive Summary > Completed Tasks
+- 04bf0442f4b7 (20-28) Phase 4 Completion Report > Executive Summary > Key Metrics
+- d9450ba19d11 (29-30) Phase 4 Completion Report > Task 1: API Documentation ✅
+- a0077b6ce42e (31-51) Phase 4 Completion Report > Task 1: API Documentation ✅ > What Was Done
+- be834d699066 (52-69) Phase 4 Completion Report > Task 1: API Documentation ✅ > Documentation Quality
+- 5a56b5683e8a (70-78) Phase 4 Completion Report > Task 1: API Documentation ✅ > Generate HTML Docs
+- 56c0fbdd2278 (79-80) Phase 4 Completion Report > Task 2: Baseline Benchmarks ✅
+- 7d51910a6744 (81-90) Phase 4 Completion Report > Task 2: Baseline Benchmarks ✅ > Implementation
+- cc0da5ce7430 (91-105) Phase 4 Completion Report > Task 2: Baseline Benchmarks ✅ > Results Summary
+- 776776c77793 (106-112) Phase 4 Completion Report > Task 2: Baseline Benchmarks ✅ > Key Insights
+- ed9a096f4717 (113-118) Phase 4 Completion Report > Task 2: Baseline Benchmarks ✅ > Baseline Document
+- 1a302dfeeccc (119-120) Phase 4 Completion Report > Task 3: Build Verification ✅
+- ed375c0a950d (121-133) Phase 4 Completion Report > Task 3: Build Verification ✅ > Binary Build
+- 4f1737daafc3 (134-147) Phase 4 Completion Report > Task 3: Build Verification ✅ > Server Initialization
+- 662d376e66bd (148-149) Phase 4 Completion Report > Task 4: Manual Testing ⚠️
+- 4a8980ab92fd (150-153) Phase 4 Completion Report > Task 4: Manual Testing ⚠️ > Status
+- f14c151e80c6 (154-162) Phase 4 Completion Report > Task 4: Manual Testing ⚠️ > Reason
+- 8157172231aa (163-175) Phase 4 Completion Report > Task 4: Manual Testing ⚠️ > Manual Test Instructions
+- d8cd5017bef1 (176-185) Phase 4 Completion Report > Task 4: Manual Testing ⚠️ > Recommendation
+- 2798d9f613d4 (186-187) Phase 4 Completion Report > Phase 4 Completion Checklist
+- 58a2c322d99a (188-196) Phase 4 Completion Report > Phase 4 Completion Checklist > Pre-Phase 5 Requirements
+- e6cb2aa65484 (197-205) Phase 4 Completion Report > Phase 4 Completion Checklist > Architecture Decisions Documented
+- ca1428722ccd (206-207) Phase 4 Completion Report > Phase 4 Deliverables
+- f06f0500edd1 (208-216) Phase 4 Completion Report > Phase 4 Deliverables > Documentation
+- 4bef3ab0df6b (217-222) Phase 4 Completion Report > Phase 4 Deliverables > Code
+- cd226157de21 (223-231) Phase 4 Completion Report > Phase 4 Deliverables > Metrics
+- 97d733cda2e8 (232-233) Phase 4 Completion Report > Outstanding Items
+- d6b408fa2f0d (234-245) Phase 4 Completion Report > Outstanding Items > Before Phase 5 Start
+- 234a26e8e034 (246-254) Phase 4 Completion Report > Outstanding Items > Deferred to Phase 6
+- 477f966f0804 (255-256) Phase 4 Completion Report > Phase 5 Readiness
+- 9ac7ae506b6c (257-264) Phase 4 Completion Report > Phase 5 Readiness > Foundation Solid ✅
+- 4c5169b55c08 (265-271) Phase 4 Completion Report > Phase 5 Readiness > Known Baselines ✅
+- 7f86a8d5f7ec (272-293) Phase 4 Completion Report > Phase 5 Readiness > What Phase 5 Will Add
+- 6d7a71bd7576 (294-302) Phase 4 Completion Report > Phase 5 Readiness > Expected Overhead
+- abf2b2fbb9d3 (303-304) Phase 4 Completion Report > Risk Assessment
+- 030fa88433ce (305-312) Phase 4 Completion Report > Risk Assessment > Low Risk ✅
+- fb90befaf675 (313-318) Phase 4 Completion Report > Risk Assessment > Medium Risk ⚠️
+- deaa8348bd35 (319-326) Phase 4 Completion Report > Risk Assessment > Mitigation Plan
+- 0d96ac32c077 (327-328) Phase 4 Completion Report > Recommendations
+- 1db5ec7e04d4 (329-335) Phase 4 Completion Report > Recommendations > Immediate (Before Phase 5)
+- 1599058ada70 (336-342) Phase 4 Completion Report > Recommendations > Phase 5 Strategy
+- 5ff1ad8bfff6 (343-351) Phase 4 Completion Report > Recommendations > Phase 6 Improvements
+- 997f5cf3b208 (352-365) Phase 4 Completion Report > Conclusion
+- c3af775b446f (366-376) Phase 4 Completion Report > Team Sign-Off
+- 51fc1eebc18b (377-395) Phase 4 Completion Report > Next Steps
+### /home/zack/dev/llmx/docs/PHASE_4_DIRECTIONS.md (md, 140 lines)
+- 22c72f33c6aa (1-2) Phase 4: MCP Server Implementation & Tool Consolidation
+- 3e74182d05d8 (3-5) Phase 4: MCP Server Implementation & Tool Consolidation > Overview
+- 3583ed16a51b (6-8) Phase 4: MCP Server Implementation & Tool Consolidation > Background
+- 6372570973c5 (9-10) Phase 4: MCP Server Implementation & Tool Consolidation > Primary Objectives
+- 3bbfd3e4ffc9 (11-34) Phase 4: MCP Server Implementation & Tool Consolidation > Primary Objectives > 1. Fix MCP Server Foundation
+- 945e408bf52f (35-59) Phase 4: MCP Server Implementation & Tool Consolidation > Primary Objectives > 2. Tool Consolidation
+- a71860c2f842 (60-70) Phase 4: MCP Server Implementation & Tool Consolidation > Primary Objectives > 3. Simplify State Management
+- b268b4024001 (71-93) Phase 4: MCP Server Implementation & Tool Consolidation > Primary Objectives > 4. Enhanced Search Response
+- 808c60951abd (94-100) Phase 4: MCP Server Implementation & Tool Consolidation > Success Criteria
+- 2c7604046223 (101-106) Phase 4: MCP Server Implementation & Tool Consolidation > Testing Plan
+- 415f6c496d6e (107-112) Phase 4: MCP Server Implementation & Tool Consolidation > Implementation Order
+- 3fe7ddc795ac (113-118) Phase 4: MCP Server Implementation & Tool Consolidation > Known Issues to Address
+- 1a474395af47 (119-124) Phase 4: MCP Server Implementation & Tool Consolidation > Future Considerations (Post-Phase 4)
+- 5d07a41fe10d (125-130) Phase 4: MCP Server Implementation & Tool Consolidation > Dependencies
+- df23072ea70d (131-135) Phase 4: MCP Server Implementation & Tool Consolidation > Resources
+- a4c63ea4103b (136-140) Phase 4: MCP Server Implementation & Tool Consolidation > Notes
+### /home/zack/dev/llmx/docs/PHASE_4_MCP_VERIFICATION.md (md, 171 lines)
+- 810ee5fbf0c3 (1-2) Phase 4 MCP Server Verification
+- ebb782785390 (3-11) Phase 4 MCP Server Verification > Build Status
+- fcb4feddab8c (12-13) Phase 4 MCP Server Verification > Manual Testing with Claude Code
+- 3414e92179f4 (14-32) Phase 4 MCP Server Verification > Manual Testing with Claude Code > Setup
+- b126e2aadf52 (33-34) Phase 4 MCP Server Verification > Manual Testing with Claude Code > Test Scenarios
+- 70f417b449d9 (35-51) Manual Testing with Claude Code > Test Scenarios > Test 1: Index Creation
+- 8b4c9667105e (52-68) Manual Testing with Claude Code > Test Scenarios > Test 2: Search with Inline Content
+- 681d01fd456c (69-86) Manual Testing with Claude Code > Test Scenarios > Test 3: Explore Index
+- 89736d8a6ecd (87-100) Manual Testing with Claude Code > Test Scenarios > Test 4: Manage Indexes
+- dbaac9f79a5e (101-102) Phase 4 MCP Server Verification > Verification Checklist
+- f7d3c6fa0f84 (103-110) Phase 4 MCP Server Verification > Verification Checklist > Core Functionality
+- 4e150e339d97 (111-116) Phase 4 MCP Server Verification > Verification Checklist > Phase 4 Key Features
+- 0440ddd12002 (117-121) Phase 4 MCP Server Verification > Verification Checklist > Performance (from benchmarks)
+- 0d2e0769e168 (122-127) Phase 4 MCP Server Verification > Verification Checklist > Architecture
+- 0e674d496b25 (128-129) Phase 4 MCP Server Verification > Issues Found
+- 41eaaa5c31c5 (130-137) Phase 4 MCP Server Verification > Issues Found > Issue 1: MCP Protocol Testing
+- 971d1b41f1e3 (138-139) Phase 4 MCP Server Verification > Next Steps
+- 1235080f938f (140-155) Phase 4 MCP Server Verification > Next Steps > Before Phase 5
+- ff2c8a205b9d (156-161) Phase 4 MCP Server Verification > Next Steps > Ready for Phase 5 When:
+- 4bfd8044491d (162-171) Phase 4 MCP Server Verification > Phase 5 Preview
+### /home/zack/dev/llmx/docs/PHASE_4_POLISH_CHECKLIST.md (md, 381 lines)
+- 5cd7f24c3385 (1-2) Phase 4 → Phase 5 Transition Checklist
+- a078faa93762 (3-19) Phase 4 → Phase 5 Transition Checklist > Phase 4: Status Summary
+- f4f7a37d13f6 (20-21) Phase 4 → Phase 5 Transition Checklist > Pre-Phase 5 Tasks
+- 3b3a4228c331 (22-53) Phase 4 → Phase 5 Transition Checklist > Pre-Phase 5 Tasks > Task 1: Document the API (1-2 hours)
+- eb7a9b7ce963 (54-134) Phase 4 → Phase 5 Transition Checklist > Pre-Phase 5 Tasks > Task 2: Baseline Benchmarks (2-3 hours)
+- 2ce666bd9f82 (135-194) Phase 4 → Phase 5 Transition Checklist > Pre-Phase 5 Tasks > Task 3: Real Agent Test (30 minutes)
+- 46b039c25f9d (195-215) Phase 4 → Phase 5 Transition Checklist > Pre-Phase 5 Tasks > Task 4: Minor Code Polish (30 minutes)
+- f014dcc49b68 (216-230) Phase 4 → Phase 5 Transition Checklist > Phase 5 Readiness Checklist
+- f872141d5e88 (231-234) Phase 4 → Phase 5 Transition Checklist > Phase 5: Semantic Search Preview
+- 72a5d6008f7e (235-243) Phase 4 → Phase 5 Transition Checklist > Phase 5: Semantic Search Preview > New Dependencies
+- 762c93fc51b4 (244-254) Phase 4 → Phase 5 Transition Checklist > Phase 5: Semantic Search Preview > Enhanced Search
+- e115bd3a6b7e (255-265) Phase 4 → Phase 5 Transition Checklist > Phase 5: Semantic Search Preview > Implementation Strategy
+- e22ceb8d01d3 (266-267) Phase 4 → Phase 5 Transition Checklist > Decision Log
+- fb61505a659c (268-278) Phase 4 → Phase 5 Transition Checklist > Decision Log > Arc<Mutex<>> vs Plain HashMap
+- 16a0edf0066a (279-287) Phase 4 → Phase 5 Transition Checklist > Decision Log > Tool Count
+- 6a1312c93412 (288-298) Phase 4 → Phase 5 Transition Checklist > Decision Log > Baseline Metrics
+- fcac0f643405 (299-317) Phase 4 → Phase 5 Transition Checklist > Risk Assessment
+- 9b3126b7de52 (318-334) Phase 4 → Phase 5 Transition Checklist > Timeline
+- 58afc76d9d80 (335-348) Phase 4 → Phase 5 Transition Checklist > Success Criteria
+- cb21dadd4df9 (349-369) Phase 4 → Phase 5 Transition Checklist > Questions for Team
+- 8ff402ed53e6 (370-381) Phase 4 → Phase 5 Transition Checklist > Contact Points
+### /home/zack/dev/llmx/docs/PHASE_5_COMPLETION_REPORT.md (md, 532 lines)
+- c6ca45e34622 (1-8) Phase 5 Completion Report: Semantic Search Integration
+- 281f5c9f996b (9-12) Phase 5 Completion Report: Semantic Search Integration > Executive Summary
+- 12b9a06d74bf (13-23) Phase 5 Completion Report: Semantic Search Integration > Executive Summary > Key Achievements
+- 6ef775eee3f4 (24-25) Phase 5 Completion Report: Semantic Search Integration > Implementation Summary
+- c522d59dd7c2 (26-27) Phase 5 Completion Report: Semantic Search Integration > Implementation Summary > 1. Data Model Changes
+- fe05b057c58a (28-42) Implementation Summary > 1. Data Model Changes > IndexFile Structure (src/model.rs:110-126)
+- e964e1428188 (43-53) Implementation Summary > 1. Data Model Changes > SearchInput Extension (src/mcp/tools.rs:58-76)
+- 542d109a1eef (54-55) Phase 5 Completion Report: Semantic Search Integration > Implementation Summary > 2. Embedding System
+- c790a18f28bb (56-74) Implementation Summary > 2. Embedding System > Simple Hash-Based Embeddings (src/embeddings.rs)
+- 84fe314fb0d0 (75-76) Phase 5 Completion Report: Semantic Search Integration > Implementation Summary > 3. Search Algorithms
+- 347892e9cd9b (77-92) Implementation Summary > 3. Search Algorithms > Vector Search (src/index.rs:203-253)
+- cda7b43b9bf2 (93-113) Implementation Summary > 3. Search Algorithms > Hybrid Search (src/index.rs:255-327)
+- e46e74b4879c (114-115) Phase 5 Completion Report: Semantic Search Integration > Implementation Summary > 4. Integration Points
+- f3a7273b7f5a (116-134) Implementation Summary > 4. Integration Points > Index Handler (src/mcp/tools.rs:208-218)
+- 41b4ce896766 (135-162) Implementation Summary > 4. Integration Points > Search Handler (src/mcp/tools.rs:284-317)
+- f85575e65540 (163-164) Phase 5 Completion Report: Semantic Search Integration > Implementation Summary > 5. Storage Format
+- d399917c0ac3 (165-184) Implementation Summary > 5. Storage Format > Updated StoredIndex (src/mcp/storage.rs:8-21)
+- 420ffbe4be75 (185-200) Phase 5 Completion Report: Semantic Search Integration > Feature Flag Architecture
+- f17d6d901561 (201-202) Phase 5 Completion Report: Semantic Search Integration > Performance Results
+- 1f4d92d1036e (203-211) Phase 5 Completion Report: Semantic Search Integration > Performance Results > Phase 4 Baseline (Maintained)
+- 5616854f558a (212-224) Phase 5 Completion Report: Semantic Search Integration > Performance Results > Phase 5 New Benchmarks
+- e4bcec8e0903 (225-230) Phase 5 Completion Report: Semantic Search Integration > Performance Results > Binary Size
+- 6c814de13dd5 (231-239) Phase 5 Completion Report: Semantic Search Integration > Performance Results > Memory Usage
+- be875347e6ee (240-241) Phase 5 Completion Report: Semantic Search Integration > Testing
+- 2f28d20fed6c (242-262) Phase 5 Completion Report: Semantic Search Integration > Testing > Unit Tests
+- 89fbed2439a8 (263-274) Phase 5 Completion Report: Semantic Search Integration > Testing > Build Verification
+- d3f88ba9bef3 (275-276) Phase 5 Completion Report: Semantic Search Integration > API Changes
+- 291bc34b88f0 (277-290) Phase 5 Completion Report: Semantic Search Integration > API Changes > Indexing (No change to interface)
+- 5e18446a5276 (291-315) Phase 5 Completion Report: Semantic Search Integration > API Changes > Search (New optional parameter)
+- 54dfe12ee074 (316-327) Phase 5 Completion Report: Semantic Search Integration > Backward Compatibility
+- dc7cc1a6255d (328-329) Phase 5 Completion Report: Semantic Search Integration > Code Quality
+- 0eaa99042b0e (330-337) Phase 5 Completion Report: Semantic Search Integration > Code Quality > Metrics
+- b7a54fa897aa (338-348) Phase 5 Completion Report: Semantic Search Integration > Code Quality > Standards Met
+- 2ff8b326a5e1 (349-350) Phase 5 Completion Report: Semantic Search Integration > Known Limitations & Future Work
+- 82ea02d5d9e0 (351-368) Phase 5 Completion Report: Semantic Search Integration > Known Limitations & Future Work > Current Limitations
+- 38ee044a8b27 (369-388) Phase 5 Completion Report: Semantic Search Integration > Known Limitations & Future Work > Upgrade Path to Real ONNX Models
+- 4a95aa7f419e (389-401) Phase 5 Completion Report: Semantic Search Integration > Known Limitations & Future Work > Future Enhancements (Phase 6+)
+- 391b9c63040f (402-403) Phase 5 Completion Report: Semantic Search Integration > Success Criteria
+- f033689387bd (404-411) Phase 5 Completion Report: Semantic Search Integration > Success Criteria > Functional Requirements ✅
+- 3a8877518d4f (412-417) Phase 5 Completion Report: Semantic Search Integration > Success Criteria > Performance Requirements ✅
+- 333f453c5479 (418-424) Phase 5 Completion Report: Semantic Search Integration > Success Criteria > Quality Requirements ✅
+- 047cd1ff3489 (425-433) Phase 5 Completion Report: Semantic Search Integration > Success Criteria > Agent Experience ✅
+- ea784efa0b2a (434-435) Phase 5 Completion Report: Semantic Search Integration > File Manifest
+- 92b04efadadc (436-447) Phase 5 Completion Report: Semantic Search Integration > File Manifest > Modified Files
+- 0c2d247b069f (448-456) Phase 5 Completion Report: Semantic Search Integration > File Manifest > Created Files
+- 133963fbd8e4 (457-458) Phase 5 Completion Report: Semantic Search Integration > Manual Testing Checklist
+- e27c0b614100 (459-467) Phase 5 Completion Report: Semantic Search Integration > Manual Testing Checklist > Pre-Deployment Testing (Recommended)
+- 9f951b0e845a (468-496) Phase 5 Completion Report: Semantic Search Integration > Manual Testing Checklist > Example Test Workflow
+- d43590bb38ea (497-498) Phase 5 Completion Report: Semantic Search Integration > Recommendations
+- 5f882e5a79f7 (499-504) Phase 5 Completion Report: Semantic Search Integration > Recommendations > Before Phase 6
+- 9354ca3f4018 (505-515) Phase 5 Completion Report: Semantic Search Integration > Recommendations > Phase 6 Focus Areas
+- aadb7ccde988 (516-532) Phase 5 Completion Report: Semantic Search Integration > Conclusion
+### /home/zack/dev/llmx/docs/PHASE_5_DIRECTIONS.md (md, 241 lines)
+- f025dd45488b (1-2) Phase 5: Semantic Search & Embeddings Integration
+- 5dd43de30bc6 (3-5) Phase 5: Semantic Search & Embeddings Integration > Overview
+- 8fb083b36cbc (6-13) Phase 5: Semantic Search & Embeddings Integration > Background
+- fa6648470a79 (14-15) Phase 5: Semantic Search & Embeddings Integration > Primary Objectives
+- f18f9659ed6a (16-44) Phase 5: Semantic Search & Embeddings Integration > Primary Objectives > 1. Embedding Generation Pipeline
+- 9acba8be49bd (45-74) Phase 5: Semantic Search & Embeddings Integration > Primary Objectives > 2. Vector Search Implementation
+- 2847d5c5af1c (75-106) Phase 5: Semantic Search & Embeddings Integration > Primary Objectives > 3. Hybrid Search Strategy
+- d3b8e142b1f6 (107-117) Phase 5: Semantic Search & Embeddings Integration > Primary Objectives > 4. Tool Updates for Semantic Search
+- a11340f79f09 (118-144) Phase 5: Semantic Search & Embeddings Integration > Primary Objectives > 5. Embedding Cache & Updates
+- 1e3d6720e180 (145-150) Phase 5: Semantic Search & Embeddings Integration > Performance Targets
+- b167893c50a2 (151-171) Phase 5: Semantic Search & Embeddings Integration > Testing Plan
+- 97452b8cf2fd (172-177) Phase 5: Semantic Search & Embeddings Integration > Implementation Order
+- 2d939d7e3022 (178-192) Phase 5: Semantic Search & Embeddings Integration > Dependencies
+- 60117e7ce6a7 (193-208) Phase 5: Semantic Search & Embeddings Integration > Configuration
+- f58b9f2eeee7 (209-215) Phase 5: Semantic Search & Embeddings Integration > Success Criteria
+- 5badac1ae5b3 (216-222) Phase 5: Semantic Search & Embeddings Integration > Known Challenges
+- 5aff4ba89a7a (223-229) Phase 5: Semantic Search & Embeddings Integration > Future Optimizations (Post-Phase 5)
+- 7cc12493f208 (230-235) Phase 5: Semantic Search & Embeddings Integration > Resources
+- 20fc1755c85f (236-241) Phase 5: Semantic Search & Embeddings Integration > Notes
+### /home/zack/dev/llmx/docs/POST_P6_ENHANCEMENTS.md (md, 324 lines)
+- 10ad34cac9dd (1-2) Post-Phase 6 Enhancements
+- dd6dea429220 (3-4) Post-Phase 6 Enhancements > Priority Tiers
+- 04de191fb6e8 (5-8) Post-Phase 6 Enhancements > Priority Tiers > Tier 1: High Impact, Low Effort
+- 2c02f71cbc29 (9-12) Post-Phase 6 Enhancements > Priority Tiers > Tier 2: High Impact, Medium Effort
+- d0837e3ba28d (13-16) Post-Phase 6 Enhancements > Priority Tiers > Tier 3: Medium Impact, Medium Effort
+- 49487852eeef (17-22) Post-Phase 6 Enhancements > Priority Tiers > Tier 4: Low Priority / Research
+- bae69c133fb1 (23-61) Post-Phase 6 Enhancements > 1. Quality Scoring (Layer E from specho-v2)
+- 43eab75af3ed (62-90) Post-Phase 6 Enhancements > 2. Memory-Mapped Indexes
+- 4f14d7c139dd (91-138) Post-Phase 6 Enhancements > 3. SPLADE (Learned Sparse Retrieval)
+- c3eac7ccbb25 (139-191) Post-Phase 6 Enhancements > 4. Incremental Indexing (Filesystem Watching)
+- dcab0f5c9564 (192-233) Post-Phase 6 Enhancements > 5. Self-Tuning from Agent Behavior
+- 07d6ee6577dd (234-278) Post-Phase 6 Enhancements > 6. Predictive Prefetching
+- 498ac94a941e (279-302) Post-Phase 6 Enhancements > 7. SIMD BM25 (Micro-optimization)
+- 4d5a1dbc3567 (303-315) Post-Phase 6 Enhancements > Success Metrics
+- 352dddeeb5a7 (316-324) Post-Phase 6 Enhancements > Implementation Order
+### /home/zack/dev/llmx/docs/QUICK_START_PHASE_5.md (md, 358 lines)
+- c0109d7e85a1 (1-6) Phase 5 Quick Start Guide
+- 8fce6212b2dd (7-25) Phase 5 Quick Start Guide > 🚀 30-Second Start
+- ecbc971937cd (26-27) Phase 5 Quick Start Guide > 📋 Implementation Steps
+- 4e343dd75599 (28-36) Phase 5 Quick Start Guide > 📋 Implementation Steps > Step 1: Add Dependencies (5 min)
+- 003c4b5b0459 (37-51) Phase 5 Quick Start Guide > 📋 Implementation Steps > Step 2: Modify Data Structures (10 min)
+- a38cb86eda09 (52-72) Phase 5 Quick Start Guide > 📋 Implementation Steps > Step 3: Add Embedding Generation (2-3 hours)
+- 8ddb43a80ee4 (73-91) Phase 5 Quick Start Guide > 📋 Implementation Steps > Step 4: Update Indexing Pipeline (1-2 hours)
+- fc197c40f811 (92-107) Phase 5 Quick Start Guide > 📋 Implementation Steps > Step 5: Add Vector Search (2-3 hours)
+- ce3c0bde5b99 (108-131) Phase 5 Quick Start Guide > 📋 Implementation Steps > Step 6: Implement Hybrid Ranking (2-3 hours)
+- a83b0f5af919 (132-160) Phase 5 Quick Start Guide > 📋 Implementation Steps > Step 7: Update Search Handler (1 hour)
+- 9a43f35094c0 (161-180) Phase 5 Quick Start Guide > 📋 Implementation Steps > Step 8: Test & Benchmark (2 hours)
+- 1d13b8a992b3 (181-182) Phase 5 Quick Start Guide > 🎯 Success Criteria
+- 8307cba79440 (183-189) Phase 5 Quick Start Guide > 🎯 Success Criteria > Must Have
+- 7a544c2338ee (190-194) Phase 5 Quick Start Guide > 🎯 Success Criteria > Performance
+- d0e332af6ee7 (195-201) Phase 5 Quick Start Guide > 🎯 Success Criteria > Quality
+- 7f251eb2ea02 (202-210) Phase 5 Quick Start Guide > ⚠️ Common Pitfalls
+- 4400344ad803 (211-212) Phase 5 Quick Start Guide > 📊 Key Metrics to Track
+- 5c39af60ee40 (213-217) Phase 5 Quick Start Guide > 📊 Key Metrics to Track > Phase 4 Baseline (maintain these)
+- a3b59e546e57 (218-224) Phase 5 Quick Start Guide > 📊 Key Metrics to Track > Phase 5 Targets (new)
+- 1e8a12f24aec (225-226) Phase 5 Quick Start Guide > 📚 Read These Files
+- f0cf75f07d65 (227-231) Phase 5 Quick Start Guide > 📚 Read These Files > Must Read (30 min)
+- c57399aa0f93 (232-235) Phase 5 Quick Start Guide > 📚 Read These Files > Should Read (15 min)
+- 17d20dae40a4 (236-241) Phase 5 Quick Start Guide > 📚 Read These Files > Reference (as needed)
+- 970becad19b7 (242-263) Phase 5 Quick Start Guide > 🔧 Quick Commands
+- b34e038cba36 (264-265) Phase 5 Quick Start Guide > 💡 Design Decisions
+- 1c5afda214fa (266-278) Phase 5 Quick Start Guide > 💡 Design Decisions > Embedding Model
+- e67bc18cadce (279-289) Phase 5 Quick Start Guide > 💡 Design Decisions > Hybrid Scoring
+- 7b8f8f750747 (290-302) Phase 5 Quick Start Guide > 💡 Design Decisions > Storage Strategy
+- 9f277e516cf2 (303-336) Phase 5 Quick Start Guide > 🚦 Phase 5 Workflow
+- 7489f1592529 (337-358) Phase 5 Quick Start Guide > ✅ Final Checklist
+### /home/zack/dev/llmx/docs/QUICK_STATUS.md (md, 27 lines)
+- 83dce41c188c (1-2) Phase 6 Status: ALL BLOCKERS RESOLVED ✅
+- 1691e5125cfa (3-5) Phase 6 Status: ALL BLOCKERS RESOLVED ✅ > TL;DR
+- 8ae9fcc875df (6-10) Phase 6 Status: ALL BLOCKERS RESOLVED ✅ > What Was Fixed
+- 8d6482b82ef6 (11-15) Phase 6 Status: ALL BLOCKERS RESOLVED ✅ > The Magic Fix
+- 18f00a0622eb (16-21) Phase 6 Status: ALL BLOCKERS RESOLVED ✅ > Build Status
+- 26693bad9377 (22-27) Phase 6 Status: ALL BLOCKERS RESOLVED ✅ > Next Steps
+### /home/zack/dev/llmx/docs/REVIEW_REPORT.md (md, 21 lines)
+- 67e8c27447ce (1-21) Review Report
+### /home/zack/dev/llmx/docs/SEMANTIC_SEARCH_GUIDE.md (md, 481 lines)
+- 01e4069b6b65 (1-6) Semantic Search User Guide
+- 5c1f4ab638a7 (7-8) Semantic Search User Guide > Quick Start
+- b2a2fdc2a806 (9-23) Semantic Search User Guide > Quick Start > Enable Semantic Search
+- e1d3111484ea (24-39) Semantic Search User Guide > Quick Start > When to Use Semantic Search
+- fa46cac07df3 (40-41) Semantic Search User Guide > Examples
+- 6bca55b30697 (42-63) Semantic Search User Guide > Examples > Example 1: Conceptual Search
+- 31c434ba22c1 (64-75) Semantic Search User Guide > Examples > Example 2: Synonym Handling
+- 87dc60539a4f (76-90) Semantic Search User Guide > Examples > Example 3: Natural Language
+- 15d53e368901 (91-92) Semantic Search User Guide > How It Works
+- 4601e6a62076 (93-102) Semantic Search User Guide > How It Works > Hybrid Scoring
+- 104e0f5d24bf (103-116) Semantic Search User Guide > How It Works > Embedding Model
+- 8c2a757f89a1 (117-118) Semantic Search User Guide > Performance
+- bb4dfae182ef (119-125) Semantic Search User Guide > Performance > Latency
+- c2ae657c64e9 (126-141) Semantic Search User Guide > Performance > When to Expect Better Results
+- 9c8fe3bcc324 (142-143) Semantic Search User Guide > API Reference
+- 2186aeac41f0 (144-161) Semantic Search User Guide > API Reference > SearchInput
+- d389ea6b901a (162-182) Semantic Search User Guide > API Reference > SearchOutput
+- f25cf4a9fa6a (183-184) Semantic Search User Guide > Best Practices
+- 16cf802ba8d8 (185-195) Semantic Search User Guide > Best Practices > 1. Start with BM25 (Default)
+- 21548f8b43bb (196-206) Semantic Search User Guide > Best Practices > 2. Use Semantic for Exploration
+- 79e02dc35ebb (207-220) Semantic Search User Guide > Best Practices > 3. Combine with Filters
+- a386597b56f4 (221-229) Semantic Search User Guide > Best Practices > 4. Iterate Your Queries
+- 0a9582d20d60 (230-231) Semantic Search User Guide > Troubleshooting
+- 61ead75782fe (232-237) Semantic Search User Guide > Troubleshooting > Problem: Semantic search returns same results as BM25
+- e2b9ee276c4b (238-245) Semantic Search User Guide > Troubleshooting > Problem: Semantic search is slower
+- 97aa9f07a169 (246-261) Semantic Search User Guide > Troubleshooting > Problem: Old indexes don't have embeddings
+- 9d91ada2b9df (262-272) Semantic Search User Guide > Troubleshooting > Problem: Semantic search not available
+- 29f7184fd34b (273-274) Semantic Search User Guide > Examples in Claude Code
+- c2fc800353fe (275-304) Semantic Search User Guide > Examples in Claude Code > Example Session
+- 7e5a43d4e6e6 (305-306) Semantic Search User Guide > Migration from Phase 4
+- 7c095ca016e4 (307-325) Semantic Search User Guide > Migration from Phase 4 > No Breaking Changes
+- b8b6f70adb1b (326-341) Semantic Search User Guide > Migration from Phase 4 > Automatic Embedding Generation
+- c4114db3e736 (342-343) Semantic Search User Guide > Advanced Usage
+- 2dfe8f166cf9 (344-366) Semantic Search User Guide > Advanced Usage > Combining Multiple Searches
+- 50fe7cbf3889 (367-390) Semantic Search User Guide > Advanced Usage > Exploring Unfamiliar Codebases
+- 0ca72054365e (391-392) Semantic Search User Guide > Limitations
+- 68e6d432e486 (393-409) Semantic Search User Guide > Limitations > Current Phase 5 Limitations
+- 5929c1f3d738 (410-420) Semantic Search User Guide > Limitations > Future Enhancements (Phase 6+)
+- b18e2724e9c3 (421-422) Semantic Search User Guide > Performance Tips
+- 0321bcb3ee43 (423-434) Semantic Search User Guide > Performance Tips > 1. Use Token Budgeting
+- 571e8e194b2b (435-449) Semantic Search User Guide > Performance Tips > 2. Narrow with Filters
+- d220136119cb (450-463) Semantic Search User Guide > Performance Tips > 3. Adjust Limit
+- cd36c8423846 (464-465) Semantic Search User Guide > Feedback & Support
+- bc1647634478 (466-470) Semantic Search User Guide > Feedback & Support > Report Issues
+- f5626535bb9e (471-481) Semantic Search User Guide > Feedback & Support > Performance Concerns
+### /home/zack/dev/llmx/docs/SPECHO_V2_ANALYSIS.md (md, 427 lines)
+- 65593e5760b0 (1-1) specho-v2 Analysis Report
+- 8881b6c27aeb (2-11) specho-v2 Analysis Report > For llmx Future Directions Context
+- d58be40760b3 (12-13) specho-v2 Analysis Report > Architecture Overview
+- c77f33dbbbea (14-31) specho-v2 Analysis Report > Architecture Overview > Core System: 45-Dimensional Feature Extraction
+- 3fa124ac1fa2 (32-45) specho-v2 Analysis Report > Architecture Overview > Key Innovation: Tiered Detection
+- 76746a1feb93 (46-47) specho-v2 Analysis Report > Feature Breakdown
+- 754b2876f9ba (48-61) specho-v2 Analysis Report > Feature Breakdown > Layer A: Trajectory Analysis (5D)
+- 556a2aa4135e (62-84) specho-v2 Analysis Report > Feature Breakdown > Layer B: Echo Patterns (15D) - The Core
+- ec7737d40e60 (85-110) specho-v2 Analysis Report > Feature Breakdown > Layer C: Epistemic Markers (12D)
+- 342c08a8c5e9 (111-127) specho-v2 Analysis Report > Feature Breakdown > Layer D: Syntactic Structure (7D)
+- 97e140deb747 (128-144) specho-v2 Analysis Report > Feature Breakdown > Layer E: Lightweight Classifier (6D)
+- 579d744e8f2a (145-158) specho-v2 Analysis Report > Validation Results
+- ba0420feb377 (159-160) specho-v2 Analysis Report > System Components
+- 9e3a8c9a5cd1 (161-169) specho-v2 Analysis Report > System Components > Corpus System
+- 7f215aa1f95c (170-175) specho-v2 Analysis Report > System Components > Classifier Architecture
+- c8e741e6206c (176-182) specho-v2 Analysis Report > System Components > Verification System
+- 45628f1a0853 (183-184) specho-v2 Analysis Report > Technical Stack
+- b267016d8ff0 (185-200) specho-v2 Analysis Report > Technical Stack > Dependencies by Tier
+- 3c09dfecb318 (201-205) specho-v2 Analysis Report > Technical Stack > Storage
+- 8f2ac2f822d0 (206-212) specho-v2 Analysis Report > Technical Stack > Web Interface
+- 51b855b45533 (213-214) specho-v2 Analysis Report > Relevance to llmx
+- 091490325058 (215-231) specho-v2 Analysis Report > Relevance to llmx > Direct Applications
+- c763ca85419c (232-251) specho-v2 Analysis Report > Relevance to llmx > Architectural Patterns
+- d00e0a8049c5 (252-270) specho-v2 Analysis Report > Relevance to llmx > Research Questions
+- c2fb019139cb (271-272) specho-v2 Analysis Report > Integration Strategy for llmx
+- 6a6b935190f2 (273-294) specho-v2 Analysis Report > Integration Strategy for llmx > Phase 1: Experiment (Post Phase 6)
+- 335162889799 (295-307) specho-v2 Analysis Report > Integration Strategy for llmx > Phase 2: Validate (if Phase 1 succeeds)
+- 24c993d57a6a (308-317) specho-v2 Analysis Report > Integration Strategy for llmx > Phase 3: Expand (if Phase 2 validates)
+- 25e933ff0fee (318-337) specho-v2 Analysis Report > Comparison: LLM Annotations vs Linguistic Features
+- 7c46757af2a0 (338-366) specho-v2 Analysis Report > Key Takeaways
+- f242edb83bf3 (367-368) specho-v2 Analysis Report > Action Items for llmx
+- b90ade453258 (369-374) specho-v2 Analysis Report > Action Items for llmx > Immediate (Phase 4-5 timeline)
+- 884465eb0a9b (375-380) specho-v2 Analysis Report > Action Items for llmx > Near-term (Phase 6)
+- 7d66e1ed3b76 (381-388) specho-v2 Analysis Report > Action Items for llmx > Long-term (Future Directions)
+- 63376607d787 (389-418) specho-v2 Analysis Report > Appendix: Code Structure
+- 2ad33cbf881c (419-427) specho-v2 Analysis Report > Conclusion
+### /home/zack/dev/llmx/docs/STABLE_BACKPORT_PATCHES.md (md, 487 lines)
+- cc471643b398 (1-7) LLMX Stable - Exact Code Patches to Apply
+- 43ebc20708d3 (8-9) LLMX Stable - Exact Code Patches to Apply > PATCH 1: Critical Bug Fixes (Priority: CRITICAL)
+- d8bc6867f6c9 (10-28) LLMX Stable - Exact Code Patches to Apply > PATCH 1: Critical Bug Fixes (Priority: CRITICAL) > web/worker.js - Clear stale embeddings after selective update
+- 34c1a8743e02 (29-55) LLMX Stable - Exact Code Patches to Apply > PATCH 1: Critical Bug Fixes (Priority: CRITICAL) > web/app.js - Make status messages visible
+- effde70c633c (56-73) LLMX Stable - Exact Code Patches to Apply > PATCH 1: Critical Bug Fixes (Priority: CRITICAL) > web/index.html - Remove display:none from status element
+- 494e8ff522ab (74-75) LLMX Stable - Exact Code Patches to Apply > PATCH 2: Token Efficiency (Priority: HIGH)
+- 42dd2fed33b3 (76-102) LLMX Stable - Exact Code Patches to Apply > PATCH 2: Token Efficiency (Priority: HIGH) > web/app.js - Reduce file size limits
+- 2c96fa46ae9a (103-104) LLMX Stable - Exact Code Patches to Apply > PATCH 3: Settings Optimization (Priority: MEDIUM)
+- dbfac67ead19 (105-139) LLMX Stable - Exact Code Patches to Apply > PATCH 3: Settings Optimization (Priority: MEDIUM) > web/app.js - Prevent unnecessary page reloads
+- 42d1dc94bd4d (140-141) LLMX Stable - Exact Code Patches to Apply > PATCH 4: Firefox Stability (Priority: HIGH if CPU embeddings used)
+- 66fa2cf353aa (142-159) LLMX Stable - Exact Code Patches to Apply > PATCH 4: Firefox Stability (Priority: HIGH if CPU embeddings used) > web/worker.js - Firefox browser detection
+- dca9111a8fea (160-175) LLMX Stable - Exact Code Patches to Apply > PATCH 4: Firefox Stability (Priority: HIGH if CPU embeddings used) > web/worker.js - Reduce batch size for Firefox
+- 369bf141bc17 (176-189) LLMX Stable - Exact Code Patches to Apply > PATCH 4: Firefox Stability (Priority: HIGH if CPU embeddings used) > web/worker.js - Add yield points for GC
+- eba05486ac2b (190-203) LLMX Stable - Exact Code Patches to Apply > PATCH 4: Firefox Stability (Priority: HIGH if CPU embeddings used) > web/app.js - Firefox browser detection
+- 12b7afe645a2 (204-224) LLMX Stable - Exact Code Patches to Apply > PATCH 4: Firefox Stability (Priority: HIGH if CPU embeddings used) > web/app.js - Firefox warning for large CPU embeddings
+- ffcb9c67bba3 (225-226) LLMX Stable - Exact Code Patches to Apply > PATCH 5: File Type Support (Priority: LOW)
+- 43f3d3f2c06d (227-256) LLMX Stable - Exact Code Patches to Apply > PATCH 5: File Type Support (Priority: LOW) > web/app.js - Add .log and .har support
+- c7c253c06dcd (257-272) LLMX Stable - Exact Code Patches to Apply > PATCH 5: File Type Support (Priority: LOW) > web/index.html - Update file input accept attribute
+- ec898e1d1c61 (273-290) LLMX Stable - Exact Code Patches to Apply > PATCH 5: File Type Support (Priority: LOW) > web/index.html - Update drop zone description
+- af8f01bdeab9 (291-292) LLMX Stable - Exact Code Patches to Apply > PATCH 6: Enhanced Error Logging (Priority: MEDIUM)
+- 636619129fe0 (293-323) LLMX Stable - Exact Code Patches to Apply > PATCH 6: Enhanced Error Logging (Priority: MEDIUM) > web/app.js - Better worker error messages
+- 2e7f11370323 (324-325) LLMX Stable - Exact Code Patches to Apply > PATCH 7: Button Selection Fix (Priority: MEDIUM)
+- 59ffc6f2aa0c (326-351) LLMX Stable - Exact Code Patches to Apply > PATCH 7: Button Selection Fix (Priority: MEDIUM) > web/app.js - Ensure button triggers file selection
+- 77edfb98bf62 (352-397) LLMX Stable - Exact Code Patches to Apply > TESTING SCRIPT
+- e91022a399a1 (398-413) LLMX Stable - Exact Code Patches to Apply > APPLICATION ORDER
+- 636fafa66ca7 (414-463) LLMX Stable - Exact Code Patches to Apply > GIT WORKFLOW
+- 33218a40bf39 (464-487) LLMX Stable - Exact Code Patches to Apply > VERIFICATION CHECKLIST
+### /home/zack/dev/llmx/docs/STABLE_BACKPORT_PLAN.md (md, 519 lines)
+- 71dd731bd6ca (1-8) LLMX Stable Version - Backport Analysis & Hardening Plan
+- 52b0fdea1b23 (9-20) LLMX Stable Version - Backport Analysis & Hardening Plan > Executive Summary
+- 3e709c23c394 (21-22) LLMX Stable Version - Backport Analysis & Hardening Plan > 1. CRITICAL BUG FIXES (Must Apply)
+- 30fd18847c95 (23-44) LLMX Stable Version - Backport Analysis & Hardening Plan > 1. CRITICAL BUG FIXES (Must Apply) > 1.1 Stale Embeddings After Selective Update
+- 6c7d8e50ea23 (45-71) LLMX Stable Version - Backport Analysis & Hardening Plan > 1. CRITICAL BUG FIXES (Must Apply) > 1.2 Status Messages Not Visible
+- 49b73816523b (72-96) LLMX Stable Version - Backport Analysis & Hardening Plan > 1. CRITICAL BUG FIXES (Must Apply) > 1.3 Unnecessary Page Reloads
+- ea339206386f (97-98) LLMX Stable Version - Backport Analysis & Hardening Plan > 2. STABILITY & RELIABILITY FIXES
+- 68344769baff (99-125) LLMX Stable Version - Backport Analysis & Hardening Plan > 2. STABILITY & RELIABILITY FIXES > 2.1 Firefox Memory Crashes with CPU Embeddings
+- e9f3a9c54466 (126-147) LLMX Stable Version - Backport Analysis & Hardening Plan > 2. STABILITY & RELIABILITY FIXES > 2.2 Button Selection UX Fix
+- e7680219d37e (148-149) LLMX Stable Version - Backport Analysis & Hardening Plan > 3. SECURITY HARDENING
+- 9107ea3b329c (150-167) LLMX Stable Version - Backport Analysis & Hardening Plan > 3. SECURITY HARDENING > 3.1 Model URL Security Documentation
+- 0d2f08d6fef7 (168-188) LLMX Stable Version - Backport Analysis & Hardening Plan > 3. SECURITY HARDENING > 3.2 Factory Pattern for Async Constructor
+- 5287bc91b901 (189-190) LLMX Stable Version - Backport Analysis & Hardening Plan > 4. PERFORMANCE IMPROVEMENTS
+- 9bc20f586899 (191-216) LLMX Stable Version - Backport Analysis & Hardening Plan > 4. PERFORMANCE IMPROVEMENTS > 4.1 Reduced File Size Limits (Token Efficiency)
+- 078f219ab16c (217-236) LLMX Stable Version - Backport Analysis & Hardening Plan > 4. PERFORMANCE IMPROVEMENTS > 4.2 Worker Error Stack Traces
+- c73fe7aefb56 (237-238) LLMX Stable Version - Backport Analysis & Hardening Plan > 5. FEATURE ENHANCEMENTS (Optional)
+- 01b83c0b0399 (239-260) LLMX Stable Version - Backport Analysis & Hardening Plan > 5. FEATURE ENHANCEMENTS (Optional) > 5.1 File Type Support: .log and .har
+- bdd3f06dbfb9 (261-271) LLMX Stable Version - Backport Analysis & Hardening Plan > 5. FEATURE ENHANCEMENTS (Optional) > 5.2 Settings UI with Backend Detection
+- 73e73d590344 (272-280) LLMX Stable Version - Backport Analysis & Hardening Plan > 5. FEATURE ENHANCEMENTS (Optional) > 5.3 Embeddings in index.json Export
+- 0e32ed0373f0 (281-294) LLMX Stable Version - Backport Analysis & Hardening Plan > 6. WHAT'S NOT APPLICABLE TO STABLE
+- 44112cf61a92 (295-296) LLMX Stable Version - Backport Analysis & Hardening Plan > 7. IMPLEMENTATION PRIORITIES
+- 32ed35e5c02e (297-305) LLMX Stable Version - Backport Analysis & Hardening Plan > 7. IMPLEMENTATION PRIORITIES > Phase 1: Critical Fixes (Day 1)
+- 35be608c782f (306-314) LLMX Stable Version - Backport Analysis & Hardening Plan > 7. IMPLEMENTATION PRIORITIES > Phase 2: Stability (Day 1-2)
+- 6f65c059ddaa (315-323) LLMX Stable Version - Backport Analysis & Hardening Plan > 7. IMPLEMENTATION PRIORITIES > Phase 3: Performance & UX (Day 2)
+- ada5c274279a (324-334) LLMX Stable Version - Backport Analysis & Hardening Plan > 7. IMPLEMENTATION PRIORITIES > Phase 4: Testing & Validation (Day 2-3)
+- 8dceba5288a6 (335-336) LLMX Stable Version - Backport Analysis & Hardening Plan > 8. TESTING CHECKLIST
+- c977e91397db (337-345) LLMX Stable Version - Backport Analysis & Hardening Plan > 8. TESTING CHECKLIST > Critical Path Testing
+- 9712c574d19c (346-352) LLMX Stable Version - Backport Analysis & Hardening Plan > 8. TESTING CHECKLIST > Stability Testing
+- 8727ef0f07dc (353-358) LLMX Stable Version - Backport Analysis & Hardening Plan > 8. TESTING CHECKLIST > Performance Testing
+- b2ec3eba2d3e (359-365) LLMX Stable Version - Backport Analysis & Hardening Plan > 8. TESTING CHECKLIST > File Type Testing
+- 12ec94889ec6 (366-367) LLMX Stable Version - Backport Analysis & Hardening Plan > 9. RISK ASSESSMENT
+- 1fe22ca258d2 (368-374) LLMX Stable Version - Backport Analysis & Hardening Plan > 9. RISK ASSESSMENT > Low Risk Changes (Safe to Apply)
+- d444140a4d95 (375-379) LLMX Stable Version - Backport Analysis & Hardening Plan > 9. RISK ASSESSMENT > Medium Risk Changes (Test Thoroughly)
+- e2d7ff34e59e (380-384) LLMX Stable Version - Backport Analysis & Hardening Plan > 9. RISK ASSESSMENT > High Risk Changes (Not Recommended)
+- 5347cd3251ee (385-408) LLMX Stable Version - Backport Analysis & Hardening Plan > 10. CONTEXT-AWARE CHUNKING ANALYSIS
+- 707ba9952d48 (409-410) LLMX Stable Version - Backport Analysis & Hardening Plan > 11. TOKEN EFFICIENCY ANALYSIS
+- 842fece1f321 (411-415) LLMX Stable Version - Backport Analysis & Hardening Plan > 11. TOKEN EFFICIENCY ANALYSIS > Current Token Usage (Stable)
+- 1400465e24bf (416-425) LLMX Stable Version - Backport Analysis & Hardening Plan > 11. TOKEN EFFICIENCY ANALYSIS > Improved Token Usage (After Backport)
+- 909944c48804 (426-427) LLMX Stable Version - Backport Analysis & Hardening Plan > 12. RECOMMENDATIONS
+- 46202f7cfaee (428-432) LLMX Stable Version - Backport Analysis & Hardening Plan > 12. RECOMMENDATIONS > Must Apply (Security & Correctness)
+- b033a0b5e810 (433-437) LLMX Stable Version - Backport Analysis & Hardening Plan > 12. RECOMMENDATIONS > Should Apply (Reliability)
+- 64962c570196 (438-441) LLMX Stable Version - Backport Analysis & Hardening Plan > 12. RECOMMENDATIONS > Nice to Have (Features)
+- 0b125a2d3073 (442-448) LLMX Stable Version - Backport Analysis & Hardening Plan > 12. RECOMMENDATIONS > Don't Apply (Not Applicable)
+- 0dec09916a9f (449-462) LLMX Stable Version - Backport Analysis & Hardening Plan > 13. ESTIMATED EFFORT
+- 3d0de9952ac4 (463-464) LLMX Stable Version - Backport Analysis & Hardening Plan > 14. DEPLOYMENT STRATEGY
+- e93821b0a02a (465-469) LLMX Stable Version - Backport Analysis & Hardening Plan > 14. DEPLOYMENT STRATEGY > Option A: Single Hardening PR
+- 151b183dfcad (470-479) LLMX Stable Version - Backport Analysis & Hardening Plan > 14. DEPLOYMENT STRATEGY > Option B: Incremental PRs
+- 7c9dddeeb2b4 (480-481) LLMX Stable Version - Backport Analysis & Hardening Plan > 15. SUCCESS METRICS
+- b091e733d960 (482-489) LLMX Stable Version - Backport Analysis & Hardening Plan > 15. SUCCESS METRICS > Before Backport (Baseline)
+- 98080bd3a593 (490-501) LLMX Stable Version - Backport Analysis & Hardening Plan > 15. SUCCESS METRICS > After Backport (Target)
+- 558a77803f4b (502-519) LLMX Stable Version - Backport Analysis & Hardening Plan > 16. NEXT STEPS
+### /home/zack/dev/llmx/docs/STABLE_HARDENING_SUMMARY.md (md, 265 lines)
+- dda4aec5e87f (1-8) LLMX Stable Hardening - Executive Summary
+- c9e3cc0a6e54 (9-22) LLMX Stable Hardening - Executive Summary > Quick Stats
+- 4ecf0d0e7922 (23-24) LLMX Stable Hardening - Executive Summary > Critical Findings
+- 11f0b59d0bc4 (25-30) LLMX Stable Hardening - Executive Summary > Critical Findings > 🔴 HIGH SEVERITY: Stale Embeddings Bug
+- a02a1297e16e (31-36) LLMX Stable Hardening - Executive Summary > Critical Findings > 🟡 MEDIUM: Status Messages Not Visible
+- 410980571590 (37-44) LLMX Stable Hardening - Executive Summary > Critical Findings > 🟡 MEDIUM: Token Inefficiency
+- c58a30137b2e (45-46) LLMX Stable Hardening - Executive Summary > What Can Be Backported
+- 28f0d94250f0 (47-60) LLMX Stable Hardening - Executive Summary > What Can Be Backported > ✅ APPLY THESE (High Value, Low Risk)
+- fa3e2b8d3d18 (61-72) LLMX Stable Hardening - Executive Summary > What Can Be Backported > ❌ DON'T APPLY THESE (Not in Stable)
+- bf7805dd3a85 (73-84) LLMX Stable Hardening - Executive Summary > Token Efficiency Impact
+- c16d1a51a182 (85-86) LLMX Stable Hardening - Executive Summary > Security Assessment
+- a1085c056e43 (87-92) LLMX Stable Hardening - Executive Summary > Security Assessment > ✅ Already Secure
+- 54b38e8e978a (93-98) LLMX Stable Hardening - Executive Summary > Security Assessment > ✅ Improvements from Backport
+- 831c4d75225e (99-107) LLMX Stable Hardening - Executive Summary > Security Assessment > ⚠️ Future Work (Not Included)
+- 38970f8c32c4 (108-127) LLMX Stable Hardening - Executive Summary > Context-Aware Chunking
+- dc24a5330754 (128-140) LLMX Stable Hardening - Executive Summary > Performance Impact
+- 692c2b709596 (141-142) LLMX Stable Hardening - Executive Summary > Browser Compatibility
+- f6b4cd389e10 (143-148) LLMX Stable Hardening - Executive Summary > Browser Compatibility > Before Backport
+- 3b1acf585b75 (149-158) LLMX Stable Hardening - Executive Summary > Browser Compatibility > After Backport
+- 1f03915af25e (159-160) LLMX Stable Hardening - Executive Summary > Recommended Implementation Plan
+- 55af7cfadf86 (161-174) LLMX Stable Hardening - Executive Summary > Recommended Implementation Plan > Option A: All-at-Once (RECOMMENDED)
+- cb57a8dcf9de (175-188) LLMX Stable Hardening - Executive Summary > Recommended Implementation Plan > Option B: Incremental
+- 3396440e19f4 (189-206) LLMX Stable Hardening - Executive Summary > Success Metrics
+- 6a57e0be440f (207-221) LLMX Stable Hardening - Executive Summary > Cost-Benefit Analysis
+- b7541a7e0bbd (222-236) LLMX Stable Hardening - Executive Summary > Next Steps
+- 0541bd14f2e8 (237-255) LLMX Stable Hardening - Executive Summary > Questions to Consider
+- c696e0f47edc (256-265) LLMX Stable Hardening - Executive Summary > Detailed Documentation
+### /home/zack/dev/llmx/docs/USAGE.md (md, 58 lines)
+- d03f3b079c7a (1-2) Prototype Usage
+- e325d8e8ee5d (3-11) Prototype Usage > Build WASM
+- f1121b794394 (12-29) Prototype Usage > Run UI
+- 2bef79ff36f1 (30-38) Prototype Usage > Browser compatibility notes
+- 84a6573f05be (39-46) Prototype Usage > Notes
+- 314697b1285f (47-58) Prototype Usage > Quick QA (manual)
+### /home/zack/dev/llmx/docs/llms.txt (txt, 31 lines)
+- e8fa5ba78a68 (1-31) llms-l1-31
+### /home/zack/dev/llmx/docs/llmx-export-evaluation.md (md, 174 lines)
+- 520d2481bcb0 (1-1) LLMX Export Evaluation Report
+- 0c75d7444ce7 (2-8) LLMX Export Evaluation Report > chat-exporter.llmx-0d3c1609
+- 74f7580b078a (9-18) LLMX Export Evaluation Report > Executive Summary
+- 3ddca1fc4325 (19-36) LLMX Export Evaluation Report > Executive Summary > Key Observations
+- 623b9d2947e7 (37-38) LLMX Export Evaluation Report > Manifest Structure Analysis
+- 3f68f15a3523 (39-44) LLMX Export Evaluation Report > Manifest Structure Analysis > Directory Index (D rows)
+- d08039f898fe (45-53) LLMX Export Evaluation Report > Manifest Structure Analysis > Path Index (P rows) - Sample
+- 0c2cf08e3322 (54-59) LLMX Export Evaluation Report > Manifest Structure Analysis > Kind Index (K rows)
+- 32c2ced8d2d1 (60-68) LLMX Export Evaluation Report > Manifest Structure Analysis > File Summaries (F rows) - Top 5 by Token Count
+- 599574196b0a (69-72) LLMX Export Evaluation Report > Performance Impact (P0-P4 Optimizations)
+- 32b4bbecf64b (73-76) LLMX Export Evaluation Report > Performance Impact (P0-P4 Optimizations) > P0: Hybrid Search HashMap
+- a22e6fa4b661 (77-81) LLMX Export Evaluation Report > Performance Impact (P0-P4 Optimizations) > P1: MinExportData Sharing
+- bc54bf543f29 (82-85) LLMX Export Evaluation Report > Performance Impact (P0-P4 Optimizations) > P2: MCP Search Handler HashMap
+- 83d4026ceb46 (86-89) LLMX Export Evaluation Report > Performance Impact (P0-P4 Optimizations) > P3: heading_matches_prefix
+- da0fc2753c40 (90-95) LLMX Export Evaluation Report > Performance Impact (P0-P4 Optimizations) > P4: truncate_slug O(n²) → O(n)
+- 68ab4d508f38 (96-111) LLMX Export Evaluation Report > Token Budget Analysis
+- d8cff8d6f75e (112-113) LLMX Export Evaluation Report > Quality Assessment
+- 220dff43470c (114-118) LLMX Export Evaluation Report > Quality Assessment > Chunking Accuracy
+- 74161387d740 (119-123) LLMX Export Evaluation Report > Quality Assessment > Referencing System
+- 106b626fdcf9 (124-132) LLMX Export Evaluation Report > Quality Assessment > Export Completeness
+- 2d061a113765 (133-153) LLMX Export Evaluation Report > Recommendations for Opus Evaluation
+- 398274d9bc72 (154-168) LLMX Export Evaluation Report > Files Available for Review
+- b1a3eeeca805 (169-174) LLMX Export Evaluation Report > Next Steps
+### /home/zack/dev/llmx/docs/llmx-size-comparison.md (md, 125 lines)
+- 002f601b6448 (1-2) LLMX Export Size and Readability Analysis
+- 6fe695c76439 (3-4) LLMX Export Size and Readability Analysis > Size Comparison
+- 5342199514fe (5-9) LLMX Export Size and Readability Analysis > Size Comparison > Source Documents
+- 4c1b79bd62d9 (10-14) LLMX Export Size and Readability Analysis > Size Comparison > LLMX Export
+- 2f1eb4cca47b (15-16) LLMX Export Size and Readability Analysis > Size Analysis
+- 388a1403e456 (17-21) LLMX Export Size and Readability Analysis > Size Analysis > Why Compressed LLMX is Smaller (576KB vs 960KB)
+- d475b1f70cfd (22-35) LLMX Export Size and Readability Analysis > Size Analysis > Why Uncompressed LLMX is Larger (2.9MB vs 960KB = 3x)
+- 73975cdbe03a (36-37) LLMX Export Size and Readability Analysis > Human Readability Assessment
+- c6e7bf588fc7 (38-64) LLMX Export Size and Readability Analysis > Human Readability Assessment > LLMX Format IS Human Readable ✅
+- 92f6f6c868c3 (65-79) LLMX Export Size and Readability Analysis > Human Readability Assessment > Human Browsing Experience
+- 187e7b7782ea (80-83) LLMX Export Size and Readability Analysis > Design Philosophy
+- 46714de88818 (84-89) LLMX Export Size and Readability Analysis > Design Philosophy > Primary Use Case: LLM Agents
+- a10f938ba8d1 (90-95) LLMX Export Size and Readability Analysis > Design Philosophy > Secondary Use Case: Human Review
+- c22d121a23c0 (96-97) LLMX Export Size and Readability Analysis > When to Use Each Format
+- 7f866791071e (98-103) LLMX Export Size and Readability Analysis > When to Use Each Format > Use Source Files When:
+- efc6efe57b19 (104-109) LLMX Export Size and Readability Analysis > When to Use Each Format > Use LLMX Export When:
+- 063568401871 (110-125) LLMX Export Size and Readability Analysis > Conclusion
+### /home/zack/dev/llmx/docs/llmx-v5-design-prompt.md (md, 236 lines)
+- 588cd722565b (1-2) LLMX v5 Format Redesign - External Review Prompt
+- 2304f815abb7 (3-12) LLMX v5 Format Redesign - External Review Prompt > Context
+- cd0bb80bd366 (13-14) LLMX v5 Format Redesign - External Review Prompt > Current Format (v4) - The Problem
+- 2eec9050a900 (15-27) LLMX v5 Format Redesign - External Review Prompt > Current Format (v4) - The Problem > Structure
+- f4be603c044b (28-47) LLMX v5 Format Redesign - External Review Prompt > Current Format (v4) - The Problem > Manifest Format (TSV)
+- dbdeaf95130f (48-57) LLMX v5 Format Redesign - External Review Prompt > Current Format (v4) - The Problem > Chunk File Format
+- 715b68e26324 (58-65) LLMX v5 Format Redesign - External Review Prompt > Current Format (v4) - The Problem > Real-World Example Stats
+- 2f262550b74c (66-67) LLMX v5 Format Redesign - External Review Prompt > The Problems
+- d3bffa360b29 (68-70) LLMX v5 Format Redesign - External Review Prompt > The Problems > 1. Filenames Are Useless
+- 51d327894644 (71-73) LLMX v5 Format Redesign - External Review Prompt > The Problems > 2. Too Many Files
+- e84c3e702c60 (74-76) LLMX v5 Format Redesign - External Review Prompt > The Problems > 3. Manifest Is Too Large
+- 76b707e0b074 (77-79) LLMX v5 Format Redesign - External Review Prompt > The Problems > 4. Redundant Metadata
+- e92fcd4b067e (80-82) LLMX v5 Format Redesign - External Review Prompt > The Problems > 5. No Human Readability
+- 1a96c02f9c39 (83-85) LLMX v5 Format Redesign - External Review Prompt > The Problems > 6. No Selective Loading
+- 3219a204ddb1 (86-88) LLMX v5 Format Redesign - External Review Prompt > The Problems > 7. Similar Content Not Condensed
+- 21edb2fa464b (89-90) LLMX v5 Format Redesign - External Review Prompt > Design Goals for v5
+- b4902d82209d (91-98) LLMX v5 Format Redesign - External Review Prompt > Design Goals for v5 > Must Have
+- 096af334afef (99-103) LLMX v5 Format Redesign - External Review Prompt > Design Goals for v5 > Nice to Have
+- a67810738822 (104-109) LLMX v5 Format Redesign - External Review Prompt > Design Goals for v5 > Constraints
+- 10bf596c7a2e (110-111) LLMX v5 Format Redesign - External Review Prompt > Proposed Directions
+- c2c7e5b0e506 (112-129) LLMX v5 Format Redesign - External Review Prompt > Proposed Directions > Option A: Single-File Archive
+- 2a7cbba0ff1c (130-139) LLMX v5 Format Redesign - External Review Prompt > Proposed Directions > Option B: Semantic Bundles
+- 20928f1bb880 (140-147) LLMX v5 Format Redesign - External Review Prompt > Proposed Directions > Option C: Progressive Outline
+- 1733416c29c4 (148-157) LLMX v5 Format Redesign - External Review Prompt > Proposed Directions > Option D: Smart Filenames Only
+- da58d18bb672 (158-166) LLMX v5 Format Redesign - External Review Prompt > Proposed Directions > Option E: Delta Compression
+- 7e5fa79be267 (167-201) LLMX v5 Format Redesign - External Review Prompt > Questions for Review
+- 9f28a17f5100 (202-212) LLMX v5 Format Redesign - External Review Prompt > Success Metrics
+- c22a2e4067a8 (213-214) LLMX v5 Format Redesign - External Review Prompt > Additional Context
+- 506579b81cf5 (215-221) LLMX v5 Format Redesign - External Review Prompt > Additional Context > Use Cases
+- 6e48833c4063 (222-227) LLMX v5 Format Redesign - External Review Prompt > Additional Context > Target Users
+- fbb11e4bae1b (228-236) LLMX v5 Format Redesign - External Review Prompt > Additional Context > Non-Goals
+### /home/zack/dev/llmx/docs/opus-evaluation-results.md (md, 324 lines)
+- 884309580336 (1-7) Opus Evaluation Results: LLMX Export Validation
+- da9e97b26cf4 (8-15) Opus Evaluation Results: LLMX Export Validation > Executive Summary
+- 609c08fadb24 (16-17) Opus Evaluation Results: LLMX Export Validation > 1. Manifest Correctness ✅
+- ccc2409d91b2 (18-33) Opus Evaluation Results: LLMX Export Validation > 1. Manifest Correctness ✅ > Row Count Validation
+- 2614f43aa85e (34-58) Opus Evaluation Results: LLMX Export Validation > 1. Manifest Correctness ✅ > Format Compliance
+- cfffefacdd7d (59-60) Opus Evaluation Results: LLMX Export Validation > 2. Token Budgeting Analysis ✅
+- 4699d98df33b (61-71) Opus Evaluation Results: LLMX Export Validation > 2. Token Budgeting Analysis ✅ > Total Token Count
+- 600223761a2e (72-86) Opus Evaluation Results: LLMX Export Validation > 2. Token Budgeting Analysis ✅ > Token Distribution by File
+- 81ef3336d005 (87-100) Opus Evaluation Results: LLMX Export Validation > 2. Token Budgeting Analysis ✅ > Chunk Statistics
+- 023f51c42473 (101-111) Opus Evaluation Results: LLMX Export Validation > 2. Token Budgeting Analysis ✅ > Context Window Strategy
+- fbc809a4a458 (112-113) Opus Evaluation Results: LLMX Export Validation > 3. Chunking Quality Assessment ✅
+- bad6b74dd7ea (114-121) Opus Evaluation Results: LLMX Export Validation > 3. Chunking Quality Assessment ✅ > Markdown Files
+- 2f45a93dc617 (122-134) Opus Evaluation Results: LLMX Export Validation > 3. Chunking Quality Assessment ✅ > JavaScript Files
+- d4e8fc9297a6 (135-142) Opus Evaluation Results: LLMX Export Validation > 3. Chunking Quality Assessment ✅ > Reference System
+- b2392003ec34 (143-144) Opus Evaluation Results: LLMX Export Validation > 4. Performance Optimizations Validation ✅
+- 19736e038565 (145-154) Opus Evaluation Results: LLMX Export Validation > 4. Performance Optimizations Validation ✅ > P0: Hybrid Search HashMap
+- 82641378676b (155-167) Opus Evaluation Results: LLMX Export Validation > 4. Performance Optimizations Validation ✅ > P1: MinExportData Sharing
+- 00f82ceebea4 (168-173) Opus Evaluation Results: LLMX Export Validation > 4. Performance Optimizations Validation ✅ > P2: MCP Search Handler HashMap
+- abe2290b9f49 (174-179) Opus Evaluation Results: LLMX Export Validation > 4. Performance Optimizations Validation ✅ > P3: heading_matches_prefix
+- fbfffc521d2a (180-187) Opus Evaluation Results: LLMX Export Validation > 4. Performance Optimizations Validation ✅ > P4: truncate_slug O(n²) → O(n)
+- f0ca39e66ea1 (188-189) Opus Evaluation Results: LLMX Export Validation > 5. Export Completeness ✅
+- c40913d34844 (190-199) Opus Evaluation Results: LLMX Export Validation > 5. Export Completeness ✅ > File Coverage
+- cdf94f336b38 (200-209) Opus Evaluation Results: LLMX Export Validation > 5. Export Completeness ✅ > Chunk Coverage
+- d75aae2f6f3b (210-223) Opus Evaluation Results: LLMX Export Validation > 5. Export Completeness ✅ > Directory Structure
+- 61565a2a3c61 (224-225) Opus Evaluation Results: LLMX Export Validation > 6. Discrepancies from Haiku's Report
+- fa07af125d84 (226-240) Opus Evaluation Results: LLMX Export Validation > 6. Discrepancies from Haiku's Report > Token Count Mismatch
+- 4576476f41df (241-254) Opus Evaluation Results: LLMX Export Validation > 6. Discrepancies from Haiku's Report > Archive Size
+- d77ef22302e5 (255-256) Opus Evaluation Results: LLMX Export Validation > 7. Recommendations
+- df58a244661b (257-263) Opus Evaluation Results: LLMX Export Validation > 7. Recommendations > For Production Use
+- d08bc7351491 (264-272) Opus Evaluation Results: LLMX Export Validation > 7. Recommendations > For Further Testing
+- 23d9a1e018c3 (273-297) Opus Evaluation Results: LLMX Export Validation > 8. Conclusion
+- 6b3ae3f37f37 (298-324) Opus Evaluation Results: LLMX Export Validation > Appendix: Test Commands Used
+### /home/zack/dev/llmx/docs/templates/AGENTS_TEMPLATE.md (md, 8 lines)
+- 1543b3bdd92c (1-8) AGENTS
+### /home/zack/dev/llmx/docs/templates/llms.template.txt (txt, 30 lines)
+- 9d388b565c32 (1-30) llms-template-l1-30
+### /home/zack/dev/llmx/ingestor-core/Cargo.toml (?, 87 lines)
+- 01daf4f1ee27 (1-87) cargo-l1-87
+### /home/zack/dev/llmx/ingestor-core/benches/baseline.rs (?, 294 lines)
+- c2812e64ca56 (1-136) baseline-l1-136
+- 34db4ab795ac (137-266) baseline-l137-266
+- 3055ad584ced (267-294) baseline-l267-294
+### /home/zack/dev/llmx/ingestor-core/spike.rs (?, 22 lines)
+- 46a77f7f05ae (1-22) spike-l1-22
+### /home/zack/dev/llmx/ingestor-core/src/bin/llmx.rs (?, 564 lines)
+- ce48c237a64d (1-157) llmx-l1-157
+- 72a4eb6f49ba (158-296) llmx-l158-296
+- c6cfccab838a (297-461) llmx-l297-461
+- bfaa8ccc0daf (462-564) llmx-l462-564
+### /home/zack/dev/llmx/ingestor-core/src/bin/mcp_server.rs (?, 156 lines)
+- 6a3123068be2 (1-107) mcp-server-l1-107
+- da5aea00c7ab (108-156) mcp-server-l108-156
+### /home/zack/dev/llmx/ingestor-core/src/chunk.rs (?, 636 lines)
+- 846a5b3b6819 (1-127) chunk-l1-127
+- 0fbcc158ff5f (128-271) chunk-l128-271
+- 84f27984a4e0 (272-431) chunk-l272-431
+- 04d562a9afc8 (432-577) chunk-l432-577
+- 1d37478add3b (578-636) chunk-l578-636
+### /home/zack/dev/llmx/ingestor-core/src/embeddings.rs (?, 126 lines)
+- b45378c5e15f (1-126) embeddings-l1-126
+### /home/zack/dev/llmx/ingestor-core/src/export.rs (?, 410 lines)
+- f9f256cfc1d2 (1-121) export-l1-121
+- 65d260f18a38 (122-266) export-l122-266
+- 1d6c7375ceff (267-410) export-l267-410
+### /home/zack/dev/llmx/ingestor-core/src/handlers/mod.rs (?, 428 lines)
+- f8924a0a0bfd (1-146) mod-l1-146
+- 1aff1329d748 (147-286) mod-l147-286
+- 8ace38698b90 (287-428) mod-l287-428
+### /home/zack/dev/llmx/ingestor-core/src/handlers/storage.rs (?, 269 lines)
+- 6bd8e5f39e3e (1-130) storage-l1-130
+- df89fccbc219 (131-248) storage-l131-248
+- a43b032cefd1 (249-269) storage-l249-269
+### /home/zack/dev/llmx/ingestor-core/src/handlers/types.rs (?, 129 lines)
+- e633456752e9 (1-129) types-l1-129
+### /home/zack/dev/llmx/ingestor-core/src/index.rs (?, 329 lines)
+- 347b604538f1 (1-138) index-l1-138
+- 61630a6ba8ce (139-280) index-l139-280
+- 537b80e076e7 (281-329) index-l281-329
+### /home/zack/dev/llmx/ingestor-core/src/lib.rs (?, 421 lines)
+- ae09f0038ffb (1-124) lib-l1-124
+- 477a665cdaf0 (125-243) lib-l125-243
+- b87be3bd1595 (244-362) lib-l244-362
+- 6e83c200bec9 (363-421) lib-l363-421
+### /home/zack/dev/llmx/ingestor-core/src/mcp/mod.rs (?, 11 lines)
+- 09b45bbd4155 (1-11) mod-l1-11
+### /home/zack/dev/llmx/ingestor-core/src/mcp/tools.rs (?, 131 lines)
+- 8fb6bacb6920 (1-113) tools-l1-113
+- 40a0d9c1162c (114-131) tools-l114-131
+### /home/zack/dev/llmx/ingestor-core/src/model.rs (?, 147 lines)
+- a47f4da7e0aa (1-147) model-l1-147
+### /home/zack/dev/llmx/ingestor-core/src/util.rs (?, 198 lines)
+- afbbebae2968 (1-178) util-l1-178
+- 963db1bb72b0 (179-198) util-l179-198
+### /home/zack/dev/llmx/ingestor-core/tests/chunking_tests.rs (?, 154 lines)
+- aa0294e06d22 (1-117) chunking-tests-l1-117
+- 134ba0997d90 (118-154) chunking-tests-l118-154
+### /home/zack/dev/llmx/ingestor-core/tests/cli_tests.rs (?, 732 lines)
+- e92dab0376e4 (1-165) cli-tests-l1-165
+- 3ca5ac7fb672 (166-347) cli-tests-l166-347
+- 2c93d12bb405 (348-507) cli-tests-l348-507
+- ca7b0cb6708f (508-670) cli-tests-l508-670
+- 3dddc5301c6f (671-732) cli-tests-l671-732
+### /home/zack/dev/llmx/ingestor-core/tests/common/mod.rs (?, 159 lines)
+- facc6d3a43ea (1-155) mod-l1-155
+- ddad68e8a7a5 (156-159) mod-l156-159
+### /home/zack/dev/llmx/ingestor-core/tests/edge_cases_tests.rs (?, 499 lines)
+- 8bb5f3a397f4 (1-136) edge-cases-tests-l1-136
+- ac68812df3b9 (137-278) edge-cases-tests-l137-278
+- 6abcb86a1737 (279-419) edge-cases-tests-l279-419
+- bb97775142d2 (420-499) edge-cases-tests-l420-499
+### /home/zack/dev/llmx/ingestor-core/tests/export_tests.rs (?, 182 lines)
+- ac92fec19d2d (1-120) export-tests-l1-120
+- 11d2511b296e (121-182) export-tests-l121-182
+### /home/zack/dev/llmx/ingestor-core/tests/filetype_tests.rs (?, 394 lines)
+- 9d8a3894bc09 (1-120) filetype-tests-l1-120
+- 0c53df79554b (121-241) filetype-tests-l121-241
+- b5a78c614af4 (242-346) filetype-tests-l242-346
+- 7784aba98bc9 (347-394) filetype-tests-l347-394
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/edge_cases/long_lines.txt (txt, 7 lines)
+- 86916b2cc0bc (1-6) long-lines-l1-6
+- f1fda7df2e7f (7-7) long-lines-l7-7
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/edge_cases/mixed_line_endings.txt (txt, 3 lines)
+- f99074a03c8e (1-3) mixed-line-endings-l1-3
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/edge_cases/unicode_content.md (md, 68 lines)
+- 0a71bf318570 (1-2) Unicode Test Document
+- aa2af883fecf (3-6) Unicode Test Document > Japanese (日本語)
+- e3010c6ef42c (7-11) Unicode Test Document > Japanese (日本語) > Sample Content
+- 78a509efdd7b (12-15) Unicode Test Document > Chinese (中文)
+- 080922615c66 (16-20) Unicode Test Document > Chinese (中文) > Sample Content
+- 2d4bd5f866ce (21-24) Unicode Test Document > Korean (한국어)
+- faaaa7a71b34 (25-29) Unicode Test Document > Korean (한국어) > Sample Content
+- eb13e9ba910e (30-36) Unicode Test Document > Emoji
+- 3ebf79734546 (37-47) Unicode Test Document > Mathematical Symbols
+- 5e0e166532ed (48-51) Unicode Test Document > Greek Letters
+- 63bb7ec1c233 (52-55) Unicode Test Document > Currency Symbols
+- 979f43371866 (56-59) Unicode Test Document > RTL Text (Arabic)
+- 5e77afaf9b62 (60-68) Unicode Test Document > Special Characters
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/filetypes/c_cpp/sample.c (?, 78 lines)
+- ccf0cfc3da2a (1-78) sample-l1-78
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/filetypes/c_cpp/sample.cpp (?, 98 lines)
+- 88507322f4a0 (1-98) sample-l1-98
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/filetypes/c_cpp/sample.h (?, 62 lines)
+- a4206d0aa848 (1-62) sample-l1-62
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/filetypes/data/sample.json (json, 27 lines)
+- 0d7f3045f091 (1-27) sample--author
+- f4d6da2834d6 (1-27) sample--config
+- 6ef4cacac2bd (1-27) sample--dependencies
+- 9cf42789bf90 (1-27) sample--description
+- 6ee27b745f4c (1-27) sample--devdependencies
+- a162122edd4e (1-27) sample--name
+- b7005d6cc1f3 (1-27) sample--scripts
+- dafc1b35aff7 (1-27) sample--version
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/filetypes/data/sample.toml (?, 40 lines)
+- e4c8c9488365 (1-40) sample-l1-40
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/filetypes/data/sample.yaml (?, 46 lines)
+- 789f251815fa (1-46) sample-l1-46
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/filetypes/docs/sample.md (md, 59 lines)
+- d694dc5cc6fb (1-4) Sample Markdown Document
+- e572195e8d1b (5-8) Sample Markdown Document > Introduction
+- 94b57615df57 (9-14) Sample Markdown Document > Introduction > Features
+- e4c7963bf4c4 (15-16) Sample Markdown Document > Code Examples
+- ac6180c5a007 (17-24) Sample Markdown Document > Code Examples > Rust Example
+- b4d20d799605 (25-32) Sample Markdown Document > Code Examples > JavaScript Example
+- 619889376353 (33-41) Sample Markdown Document > Tables
+- 7960d12cb19e (42-46) Sample Markdown Document > Blockquotes
+- 8f19dba587c4 (47-52) Sample Markdown Document > Task Lists
+- ec0b4d6f60f2 (53-59) Sample Markdown Document > Conclusion
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/filetypes/docs/sample.txt (txt, 50 lines)
+- 835523ffd1f4 (1-50) sample-l1-50
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/filetypes/go/sample.go (?, 90 lines)
+- 7ecbe94cf901 (1-90) sample-l1-90
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/filetypes/javascript/sample.cjs (?, 29 lines)
+- 2cd072eaba13 (1-29) sample-l1-29
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/filetypes/javascript/sample.js (js, 47 lines)
+- 589535f77006 (11-13) `greet()`
+- 7c7fab1b9e59 (18-36) `Calculator()`
+- 4eb9235a7422 (42-45) `fetchData()`
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/filetypes/javascript/sample.jsx (?, 61 lines)
+- cb38751c41f8 (1-61) sample-l1-61
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/filetypes/javascript/sample.mjs (?, 27 lines)
+- 2a1ebbec1c68 (1-27) sample-l1-27
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/filetypes/javascript/sample.ts (js, 44 lines)
+- 222540dcd4fe (16-32) `UserService()`
+- 2ebd58900d79 (35-37) `identity()`
+- b2e8cc3ead53 (40-42) `isUser()`
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/filetypes/javascript/sample.tsx (js, 51 lines)
+- aadf7c210f00 (34-48) `Counter()`
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/filetypes/python/sample.py (?, 70 lines)
+- e169845aeb83 (1-70) sample-l1-70
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/filetypes/rust/sample.rs (?, 42 lines)
+- ea04ee3d0243 (1-42) sample-l1-42
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/filetypes/shell/sample.sh (?, 107 lines)
+- 42c852057beb (1-107) sample-l1-107
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/filetypes/sql/sample.sql (?, 77 lines)
+- eb99cc144b40 (1-77) sample-l1-77
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/filetypes/web/sample.css (?, 70 lines)
+- 894cc3ffe3d8 (1-70) sample-l1-70
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/filetypes/web/sample.html (html, 45 lines)
+- 8a2f5df85817 (1-21) sample
+- 6d71adb00fb9 (22-26) sample--welcome
+- b3c9514759dc (27-31) sample--about-us
+- ff0cd706cb52 (32-45) sample--contact
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/filetypes/web/sample.scss (?, 83 lines)
+- 53ac80349495 (1-83) sample-l1-83
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/projects/small/Cargo.toml (?, 6 lines)
+- b83e21a419b0 (1-6) cargo-l1-6
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/projects/small/README.md (md, 18 lines)
+- 284218cae5ff (1-4) Small Test Project
+- 8aff4e1c2fdd (5-13) Small Test Project > Structure
+- b546add649fa (14-18) Small Test Project > Usage
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/projects/small/src/config.rs (?, 24 lines)
+- 4025fbc185e0 (1-24) config-l1-24
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/projects/small/src/main.rs (?, 12 lines)
+- 78e52e4288d2 (1-12) main-l1-12
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/projects/small/src/utils.rs (?, 26 lines)
+- 22410f2fe9e3 (1-26) utils-l1-26
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/sample.html (html, 14 lines)
+- bb570c4f509c (1-7) sample
+- 154579455e07 (8-10) sample--main-title
+- bc9e51e06e6e (11-14) sample--subsection
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/sample.js (js, 13 lines)
+- c32b96202748 (1-3) `add()`
+- 6be625806465 (5-13) `Greeter()`
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/sample.json (json, 12 lines)
+- 71747543f5d4 (1-12) sample--items
+- 100cee24060e (1-12) sample--name
+- 66cdf412d195 (1-12) sample--settings
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/sample.md (md, 18 lines)
+- 9a0d7623508c (1-4) Sample Document
+- b8ef894fe2d2 (5-15) Sample Document > Section One
+- f509ea075678 (16-18) Sample Document > Section Two
+### /home/zack/dev/llmx/ingestor-core/tests/fixtures/sample.txt (txt, 5 lines)
+- 5a160f683e75 (1-5) sample-l1-5
+### /home/zack/dev/llmx/ingestor-core/tests/handler_tests.rs (?, 683 lines)
+- 1ffb2ce895d9 (1-157) handler-tests-l1-157
+- eaf92390e976 (158-292) handler-tests-l158-292
+- d56e6b0f1dfd (293-420) handler-tests-l293-420
+- 4c51ab53ad79 (421-561) handler-tests-l421-561
+- bdae6cd3c0a5 (562-683) handler-tests-l562-683
+### /home/zack/dev/llmx/ingestor-core/tests/hig_usability_tests.rs (?, 550 lines)
+- 11729da71b18 (1-140) hig-usability-tests-l1-140
+- 4fed894f9729 (141-292) hig-usability-tests-l141-292
+- 137a8f510deb (293-436) hig-usability-tests-l293-436
+- 96f682f8dfe7 (437-550) hig-usability-tests-l437-550
+### /home/zack/dev/llmx/ingestor-core/tests/mcp_tests.rs (?, 293 lines)
+- fe66fa7074e5 (1-125) mcp-tests-l1-125
+- f38df545acdc (126-247) mcp-tests-l126-247
+- 1756cc740457 (248-293) mcp-tests-l248-293
+### /home/zack/dev/llmx/ingestor-core/tests/smoke_tests.rs (?, 313 lines)
+- 7fe4c6f382b6 (1-129) smoke-tests-l1-129
+- 2897deefdc5a (130-249) smoke-tests-l130-249
+- 418a1eab9b41 (250-313) smoke-tests-l250-313
+### /home/zack/dev/llmx/ingestor-core/tests/token_savings_tests.rs (?, 480 lines)
+- 9c528115f7dd (1-132) token-savings-tests-l1-132
+- 8aec4fb3e61d (133-280) token-savings-tests-l133-280
+- 97013d2dfb3b (281-413) token-savings-tests-l281-413
+- bbdc4503bda6 (414-480) token-savings-tests-l414-480
+### /home/zack/dev/llmx/ingestor-wasm/Cargo.toml (?, 19 lines)
+- bf09ab71a11e (1-19) cargo-l1-19
+### /home/zack/dev/llmx/ingestor-wasm/models/tokenizer.json (json, 30684 lines)
+- 162ecd2d7a23 (1-30684) tokenizer--added-tokens
+- 94c4762c69fb (1-30684) tokenizer--decoder
+- b5b47c8a2b50 (1-30684) tokenizer--model
+- f86fd0a11d75 (1-30684) tokenizer--normalizer
+- 9a47aa6ea86d (1-30684) tokenizer--padding
+- bdbdc2de7180 (1-30684) tokenizer--post-processor
+- 056cf3d79184 (1-30684) tokenizer--pre-tokenizer
+- c31a76f06e5d (1-30684) tokenizer--truncation
+- 60dd349e6ef1 (1-30684) tokenizer--version
+### /home/zack/dev/llmx/ingestor-wasm/pkg/ingestor_wasm.d.ts (js, 145 lines)
+- 5ba63b815859 (1-124) ingestor-wasm-d
+- 58b303d7d36f (125-145) ingestor-wasm-d
+### /home/zack/dev/llmx/ingestor-wasm/pkg/ingestor_wasm.js (js, 1276 lines)
+- b596d05e5c5d (392-917) `__wbg_get_imports()`
+- fcb18326847f (919-921) `wasm_bindgen__convert__closures_____invoke__h714cd1fbbdb842dd()`
+- d71ca1d1b6ea (923-925) `wasm_bindgen__convert__closures_____invoke__h6300d623e82c7c1e()`
+- 8a014fc7d4e6 (927-929) `wasm_bindgen__convert__closures_____invoke__h962d103488fc59cc()`
+- 10fd6694a8cb (931-933) `wasm_bindgen__convert__closures_____invoke__h9c671d3ad2d9eb13()`
+- ee5ccaf2c080 (947-951) `addToExternrefTable0()`
+- 2a57817d0d2b (957-1020) `debugString()`
+- 1f8155e7a7d3 (1022-1025) `getArrayF32FromWasm0()`
+- 963c65472a6c (1027-1030) `getArrayU8FromWasm0()`
+- 024742aaad90 (1033-1038) `getDataViewMemory0()`
+- c5bdf9c3236a (1041-1046) `getFloat32ArrayMemory0()`
+- e61c69465af7 (1048-1051) `getStringFromWasm0()`
+- 13ab393e0a12 (1054-1059) `getUint8ArrayMemory0()`
+- c3de0e0624cb (1061-1068) `handleError()`
+- 41f5f1a7a32b (1070-1072) `isLikeNone()`
+- e610d728058b (1074-1100) `makeMutClosure()`
+- 29fbe61bb7ff (1102-1110) `passArrayJsValueToWasm0()`
+- c5530259fa5f (1112-1147) `passStringToWasm0()`
+- f0da55e5a4c7 (1149-1153) `takeFromExternrefTable0()`
+- b952967ecd97 (1159-1167) `decodeText()`
+- a237d82d3f91 (1185-1193) `__wbg_finalize_init()`
+- 809c554e1e43 (1195-1228) `__wbg_load()`
+- 8b429af44502 (1230-1248) `initSync()`
+- cb27fc92a8d7 (1250-1274) `__wbg_init()`
+### /home/zack/dev/llmx/ingestor-wasm/pkg/ingestor_wasm_bg.wasm.d.ts (js, 46 lines)
+- 6087ab172edd (1-46) ingestor-wasm-bg-wasm-d
+### /home/zack/dev/llmx/ingestor-wasm/pkg/package.json (json, 15 lines)
+- 90cb23adde65 (1-15) package--files
+- 9b16296bfbf9 (1-15) package--main
+- c9c547ea6d7a (1-15) package--name
+- f87090594a25 (1-15) package--sideeffects
+- 807069ff197b (1-15) package--type
+- 927162442f6f (1-15) package--types
+- 1e6b81e68742 (1-15) package--version
+### /home/zack/dev/llmx/ingestor-wasm/src/lib.rs (?, 201 lines)
+- 8251ae2d2642 (1-109) lib-l1-109
+- 1070f1f36cba (110-201) lib-l110-201
+### /home/zack/dev/llmx/ingestor-wasm/test_burn_import.rs (?, 22 lines)
+- ba751bb5437b (1-22) test-burn-import-l1-22
+### /home/zack/dev/llmx/ingestor-wasm/web/pkg/ingestor_wasm.d.ts (js, 75 lines)
+- 20b6c2218548 (1-75) ingestor-wasm-d
+### /home/zack/dev/llmx/ingestor-wasm/web/pkg/ingestor_wasm.js (js, 699 lines)
+- 4b8cc6900f1a (3-7) `addToExternrefTable0()`
+- 619b05f715d6 (9-72) `debugString()`
+- 76cbeb048dce (74-77) `getArrayU8FromWasm0()`
+- 00878d2e488f (80-85) `getDataViewMemory0()`
+- 897e255460b0 (87-90) `getStringFromWasm0()`
+- 57d7a7af1cb3 (93-98) `getUint8ArrayMemory0()`
+- 9d3b1a2754b4 (100-107) `handleError()`
+- a2139d98411e (109-111) `isLikeNone()`
+- 5e67a6d8e942 (113-148) `passStringToWasm0()`
+- 7708d720bd9b (150-154) `takeFromExternrefTable0()`
+- b30496a15dc7 (160-168) `decodeText()`
+- fabf51ef3712 (396-424) `__wbg_load()`
+- ef7cd772732a (426-639) `__wbg_get_imports()`
+- 96ecd9dc3331 (641-650) `__wbg_finalize_init()`
+- e0d5c42c251f (652-670) `initSync()`
+- cbeb15e3134f (672-696) `__wbg_init()`
+### /home/zack/dev/llmx/ingestor-wasm/web/pkg/ingestor_wasm_bg.wasm.d.ts (js, 27 lines)
+- fc34ee09115d (1-27) ingestor-wasm-bg-wasm-d
+### /home/zack/dev/llmx/ingestor-wasm/web/pkg/package.json (json, 15 lines)
+- 92fdc5144cc5 (1-15) package--files
+- 414c99522d04 (1-15) package--main
+- 45ef7240c230 (1-15) package--name
+- b28c2418ec77 (1-15) package--sideeffects
+- 00ad812658e2 (1-15) package--type
+- 59050e10bbc5 (1-15) package--types
+- c5f40aa3b06d (1-15) package--version
+### /home/zack/dev/llmx/llm.md (md, 47 lines)
+- 831b18042e55 (1-9) llm
+- e9a7edb464bd (10-13) LLM Export Package
+- 6d6b09665160 (14-17) LLM Export Package > File Layout
+- e1ede908db40 (18-18) LLM Export Package > Format Details
+- e215ca40a89f (19-35) LLM Export Package > Format Details > Chunk Metadata (YAML front matter)
+- 95d13b297d13 (36-42) LLM Export Package > Format Details > Provenance Anchors
+- 8184803ce4bc (43-45) LLM Export Package > Format Details > Chunk Body
+- 32f96d4244ea (46-47) LLM Export Package > Chunk Index
+### /home/zack/dev/llmx/llms.txt (txt, 74 lines)
+- 1c9707b4a639 (1-74) llms-l1-74
+### /home/zack/dev/llmx/llmx-export/chunks/0001.md (md, 18 lines)
+- cb465e03af32 (1-18) 0001
+### /home/zack/dev/llmx/llmx-export/llm.md (md, 47 lines)
+- 6a813b31ed77 (1-9) llm
+- 328685794285 (10-13) LLM Export Package
+- 2e7c61bc4449 (14-17) LLM Export Package > File Layout
+- c1437ebf99ba (18-18) LLM Export Package > Format Details
+- 75b06980ae23 (19-35) LLM Export Package > Format Details > Chunk Metadata (YAML front matter)
+- 46d0ca47d471 (36-42) LLM Export Package > Format Details > Provenance Anchors
+- b65099374995 (43-45) LLM Export Package > Format Details > Chunk Body
+- 3d38dfdd9804 (46-47) LLM Export Package > Chunk Index
+### /home/zack/dev/llmx/test_mcp_server.sh (?, 206 lines)
+- 6ad0178dfa1d (1-149) test-mcp-server-l1-149
+- 7db451f5e235 (150-206) test-mcp-server-l150-206
+### /home/zack/dev/llmx/web/SETTINGS-UI-REDESIGN.md (md, 130 lines)
+- 1439da01274e (1-2) LLMX Settings UI Redesign
+- 2d3d39b9c5b5 (3-6) LLMX Settings UI Redesign > Design Philosophy: Organic-Technical Fusion
+- b2e14b0c625b (7-8) LLMX Settings UI Redesign > Key Design Elements
+- efe0a7a7c29e (9-14) LLMX Settings UI Redesign > Key Design Elements > 1. Typography Hierarchy
+- 24c2b3b537da (15-28) LLMX Settings UI Redesign > Key Design Elements > 2. Setting Cards
+- c74c5e1631f9 (29-35) LLMX Settings UI Redesign > Key Design Elements > 3. Custom Toggle Switches
+- c163ad3c1119 (36-41) LLMX Settings UI Redesign > Key Design Elements > 4. Micro-Interactions
+- b5e17a16f722 (42-47) LLMX Settings UI Redesign > Key Design Elements > 5. Color Psychology
+- cd0f850390ab (48-53) LLMX Settings UI Redesign > Key Design Elements > 6. Spatial Composition
+- 6d1dd2c99be3 (54-59) LLMX Settings UI Redesign > Key Design Elements > 7. Responsive Design
+- 36f00143c577 (60-61) LLMX Settings UI Redesign > Technical Implementation
+- 575b6c975017 (62-68) LLMX Settings UI Redesign > Technical Implementation > CSS Architecture
+- 5ee274a09062 (69-74) LLMX Settings UI Redesign > Technical Implementation > Performance
+- 458fca2f8ca1 (75-76) LLMX Settings UI Redesign > Before vs After
+- 864896485bc6 (77-83) LLMX Settings UI Redesign > Before vs After > Before
+- ebb79b505fdc (84-92) LLMX Settings UI Redesign > Before vs After > After
+- d40b8c643324 (93-94) LLMX Settings UI Redesign > Design Rationale
+- 962c9987dd7e (95-101) LLMX Settings UI Redesign > Design Rationale > Why This Aesthetic?
+- 7df31dd30e00 (102-106) LLMX Settings UI Redesign > Design Rationale > Typography Choices
+- e837d03761ea (107-111) LLMX Settings UI Redesign > Design Rationale > Color Rationale
+- 38a2c1d8ea6e (112-119) LLMX Settings UI Redesign > Accessibility Features
+- 5bcb94ecbdad (120-130) LLMX Settings UI Redesign > Future Enhancements
+### /home/zack/dev/llmx/web/app.js (js, 968 lines)
+- ac2306698721 (65-67) `setStatus()`
+- 9ad111af8234 (69-73) `hasFolderPickerSupport()`
+- a162522274d3 (75-81) `configureFolderPickerUi()`
+- 9d581690de6c (86-90) `formatErrorForUi()`
+- 14c83fdbce40 (92-97) `rejectAllPendingWorkerCalls()`
+- eb57171b077f (99-104) `callWorker()`
+- d26b3970e31c (106-146) `createWorkerBackend()`
+- e99d2ac3367a (148-223) `createLocalBackend()`
+- 24ff2ecf07cc (225-256) `initWorker()`
+- c58cde7345b6 (266-272) `isAllowedPath()`
+- 6bb74d508438 (274-296) `collectFilesFromInput()`
+- ed69e1c7975a (298-331) `collectFilesFromHandle()`
+- 5c854489a6e4 (333-343) `isImagePath()`
+- 66685116b598 (345-351) `hexEncode()`
+- a8f1a5b42843 (353-357) `sha256Hex()`
+- afe5b65029e2 (359-379) `fingerprintFile()`
+- 6d2afabc5965 (381-535) `runIngest()`
+- 5bef540e3065 (537-547) `renderWarnings()`
+- 6cbcbf0d9437 (681-719) `runSearch()`
+- b0f1ae5aa5f5 (721-765) `renderResults()`
+- b65c16127d1a (767-780) `downloadFile()`
+- 6ebd56d04fd1 (782-794) `populateFileFilter()`
+- 2933ca609783 (796-829) `updateOutlineSymbols()`
+- 77ee76f788a7 (831-837) `selectPathPrefix()`
+- 9e3d4897b278 (839-851) `openDb()`
+- f2c8cfdf8372 (854-865) `scheduleSearch()`
+- abd0a6ea62a1 (867-875) `saveIndex()`
+- 2fa78c67b5f3 (877-885) `listIndexes()`
+- 7a531626a871 (887-895) `deleteIndex()`
+- 4933572d3965 (897-914) `populateSavedIndexes()`
+### /home/zack/dev/llmx/web/index.html (html, 119 lines)
+- 691d027fcc6c (1-13) index
+- eee4bdcb2344 (14-36) index--llmx-ingestor
+- c3285e14c9df (37-60) index--ingest
+- 0555aebd5e03 (61-98) index--search
+- 555ac1889068 (99-119) index--export
+### /home/zack/dev/llmx/web/models/tokenizer.json (json, 30684 lines)
+- 22e80470ddfe (1-30684) tokenizer--added-tokens
+- a9ac2004490c (1-30684) tokenizer--decoder
+- 1ff38376490d (1-30684) tokenizer--model
+- 1be8a1edf3e7 (1-30684) tokenizer--normalizer
+- ab5969bd9161 (1-30684) tokenizer--padding
+- 4af9d7f51eb0 (1-30684) tokenizer--post-processor
+- 91dbbff75d8c (1-30684) tokenizer--pre-tokenizer
+- 677b996586d8 (1-30684) tokenizer--truncation
+- 29d363a9e57e (1-30684) tokenizer--version
+### /home/zack/dev/llmx/web/pkg/ingestor_wasm.d.ts (js, 149 lines)
+- a5f8805baaac (1-128) ingestor-wasm-d
+- c697edd3803f (129-149) ingestor-wasm-d
+### /home/zack/dev/llmx/web/pkg/ingestor_wasm.js (js, 1846 lines)
+- 624dd733dc5e (409-1446) `__wbg_get_imports()`
+- baef300f0752 (1448-1450) `wasm_bindgen__convert__closures_____invoke__heeac315472b66a44()`
+- 91a745b3a772 (1452-1454) `wasm_bindgen__convert__closures_____invoke__h16ac6a4e26c05031()`
+- 8b99c6cec1e0 (1456-1458) `wasm_bindgen__convert__closures_____invoke__h962d103488fc59cc()`
+- 430d3e81d8bd (1460-1462) `wasm_bindgen__convert__closures_____invoke__h9c671d3ad2d9eb13()`
+- fb14babd6c33 (1503-1507) `addToExternrefTable0()`
+- c2fb604a8ef2 (1513-1576) `debugString()`
+- 8b49ba53d99d (1578-1581) `getArrayF32FromWasm0()`
+- c753b228265b (1583-1586) `getArrayU32FromWasm0()`
+- ba075b2779ec (1588-1591) `getArrayU8FromWasm0()`
+- 8b6aed05c0ad (1594-1599) `getDataViewMemory0()`
+- e230eb139def (1602-1607) `getFloat32ArrayMemory0()`
+- 865b795fd40c (1609-1612) `getStringFromWasm0()`
+- fd91d2a52f2f (1615-1620) `getUint32ArrayMemory0()`
+- 084c806cbce6 (1623-1628) `getUint8ArrayMemory0()`
+- 3cf9579dbcdd (1630-1637) `handleError()`
+- a4a3119ef960 (1639-1641) `isLikeNone()`
+- 1d7c8a517372 (1643-1669) `makeMutClosure()`
+- c56d0dcf6a84 (1671-1679) `passArrayJsValueToWasm0()`
+- d95b1c5e1d35 (1681-1716) `passStringToWasm0()`
+- a5e50d218024 (1718-1722) `takeFromExternrefTable0()`
+- 03715b753a57 (1728-1736) `decodeText()`
+- 29bbedf53a4a (1754-1763) `__wbg_finalize_init()`
+- e14ec0ec0558 (1765-1798) `__wbg_load()`
+- 5af8929a89a9 (1800-1818) `initSync()`
+- aba5c770a30d (1820-1844) `__wbg_init()`
+### /home/zack/dev/llmx/web/pkg/ingestor_wasm_bg.wasm.d.ts (js, 48 lines)
+- d5da12a56502 (1-48) ingestor-wasm-bg-wasm-d
+### /home/zack/dev/llmx/web/pkg/package.json (json, 15 lines)
+- f2e18a4d0763 (1-15) package--files
+- 734a953c702e (1-15) package--main
+- 7f27adfb51c2 (1-15) package--name
+- 0109e7b7c85f (1-15) package--sideeffects
+- 98a04ba0372e (1-15) package--type
+- 77eba52d4de5 (1-15) package--types
+- b541ef68bda8 (1-15) package--version
+### /home/zack/dev/llmx/web/styles.css (?, 280 lines)
+- 663f287dc03e (1-256) styles-l1-256
+- fca38b428fd1 (257-280) styles-l257-280
+### /home/zack/dev/llmx/web/worker.js (js, 168 lines)
+- c3e0970a57ea (10-22) `toError()`
+- 329802e5bd7d (24-29) `ensureReady()`
