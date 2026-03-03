@@ -2,13 +2,26 @@
 //!
 //! A CLI for efficiently indexing and searching codebases with semantic chunking.
 //! Designed for both human users and AI agents.
+//!
+//! ## Dynamic Search (default)
+//!
+//! By default, `llmx search` auto-detects the project root and builds an in-memory
+//! index on the fly. Results are cached for repeat queries.
+//!
+//! ```bash
+//! llmx search "handleError"              # Auto-detect project, use cache
+//! llmx search "handleError" --dynamic    # Force fresh dynamic index
+//! llmx search "handleError" --no-cache   # Skip cache, rebuild index
+//! llmx search "handleError" --path ./src # Explicit search path
+//! ```
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use ingestor_core::handlers::{
     llmx_explore_handler, llmx_get_chunk_handler, llmx_index_handler, llmx_manage_handler,
-    llmx_search_handler, ExploreInput, IndexInput, IngestOptionsInput, ManageInput, SearchInput,
-    SearchFiltersInput, IndexStore,
+    llmx_search_dynamic_handler, llmx_search_handler, DynamicCache, DynamicSearchInput,
+    ExploreInput, IndexInput, IndexStore, IngestOptionsInput, ManageInput, SearchFiltersInput,
+    SearchInput,
 };
 use ingestor_core::{export_llm, export_manifest_json, export_zip};
 use std::fs;
@@ -25,7 +38,7 @@ struct Cli {
     #[arg(long, global = true)]
     json: bool,
 
-    /// Target specific index ID (default: auto-detect from cwd)
+    /// Target specific index ID (bypasses dynamic search)
     #[arg(long, global = true)]
     index_id: Option<String>,
 
@@ -36,7 +49,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Create or update index from paths
+    /// Create or update persistent index from paths
     Index {
         /// File or directory paths to index
         #[arg(required = true)]
@@ -52,9 +65,28 @@ enum Commands {
     },
 
     /// Search with inline content (token-budgeted)
+    ///
+    /// By default, auto-detects project root and uses dynamic indexing.
+    /// Use --index-id to search a specific persistent index.
     Search {
         /// Search query
         query: String,
+
+        /// Search path (default: auto-detect project root)
+        #[arg(long)]
+        path: Option<PathBuf>,
+
+        /// Force dynamic mode (ignore persistent index)
+        #[arg(long)]
+        dynamic: bool,
+
+        /// Skip cache (force fresh index build)
+        #[arg(long)]
+        no_cache: bool,
+
+        /// Allow searching dangerous paths (/, /home, etc.)
+        #[arg(long)]
+        force: bool,
 
         /// Token budget for inline content (default: 16000)
         #[arg(long, default_value = "16000")]
@@ -64,9 +96,9 @@ enum Commands {
         #[arg(long, default_value = "10")]
         limit: usize,
 
-        /// Filter by path prefix
+        /// Filter by path prefix (within the project)
         #[arg(long)]
-        path: Option<String>,
+        filter_path: Option<String>,
 
         /// Filter by chunk kind (markdown, javascript, json, html, text, image)
         #[arg(long)]
@@ -77,7 +109,7 @@ enum Commands {
         semantic: bool,
     },
 
-    /// List files, outline, or symbols
+    /// List files, outline, or symbols from index
     Explore {
         /// What to list: 'files', 'outline', or 'symbols'
         mode: String,
@@ -87,10 +119,10 @@ enum Commands {
         path: Option<String>,
     },
 
-    /// List all indexes
+    /// List all persistent indexes
     List,
 
-    /// Delete an index
+    /// Delete a persistent index
     Delete {
         /// Index ID to delete
         id: String,
@@ -128,6 +160,7 @@ fn main() -> Result<()> {
     });
 
     let mut store = IndexStore::new(storage_dir)?;
+    let mut cache = DynamicCache::default_size();
 
     match cli.command {
         Commands::Index {
@@ -138,18 +171,27 @@ fn main() -> Result<()> {
 
         Commands::Search {
             query,
+            path,
+            dynamic,
+            no_cache,
+            force,
             max_tokens,
             limit,
-            path,
+            filter_path,
             kind,
             semantic,
         } => cmd_search(
             &mut store,
+            &mut cache,
             &cli.index_id,
             query,
+            path,
+            dynamic,
+            no_cache,
+            force,
             max_tokens,
             limit,
-            path,
+            filter_path,
             kind,
             semantic,
             cli.json,
@@ -226,9 +268,130 @@ fn cmd_index(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_search(
     store: &mut IndexStore,
+    cache: &mut DynamicCache,
     index_id_override: &Option<String>,
+    query: String,
+    path: Option<PathBuf>,
+    dynamic: bool,
+    no_cache: bool,
+    force: bool,
+    max_tokens: usize,
+    limit: usize,
+    filter_path: Option<String>,
+    kind: Option<String>,
+    semantic: bool,
+    json_output: bool,
+) -> Result<()> {
+    // If explicit --index-id is provided, use the old search handler
+    if let Some(index_id) = index_id_override {
+        return cmd_search_persistent(
+            store,
+            index_id.clone(),
+            query,
+            max_tokens,
+            limit,
+            filter_path,
+            kind,
+            semantic,
+            json_output,
+        );
+    }
+
+    // Use dynamic search
+    let input = DynamicSearchInput {
+        query: query.clone(),
+        path,
+        force_dynamic: dynamic,
+        no_cache,
+        force_dangerous: force,
+        filters: Some(SearchFiltersInput {
+            path_prefix: filter_path,
+            kind,
+            symbol_prefix: None,
+            heading_prefix: None,
+        }),
+        limit: Some(limit),
+        max_tokens: Some(max_tokens),
+        use_semantic: Some(semantic),
+    };
+
+    let output = llmx_search_dynamic_handler(store, cache, input)?;
+
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else {
+        // Print mode indicator with stats
+        let mode_display = match output.mode.as_str() {
+            "dynamic" => format!(
+                "[dynamic] Indexing {} ({} files, {})",
+                output.stats.root_path,
+                output.stats.file_count,
+                format_bytes(output.stats.total_bytes)
+            ),
+            "cached" => "[cached]".to_string(),
+            "persistent" => "[persistent]".to_string(),
+            _ => format!("[{}]", output.mode),
+        };
+
+        let total_ms = output.stats.index_time_ms + output.stats.search_time_ms;
+        println!(
+            "{} Found {} results in {}ms\n",
+            mode_display, output.total_matches, total_ms
+        );
+
+        for (i, result) in output.results.iter().enumerate() {
+            println!(
+                "[{}] {}:{}-{} (score: {:.2})",
+                i + 1,
+                result.path,
+                result.start_line,
+                result.end_line,
+                result.score
+            );
+
+            if let Some(ref sym) = result.symbol {
+                println!("    Symbol: {}", sym);
+            }
+            if !result.heading_path.is_empty() {
+                println!("    Heading: {}", result.heading_path.join(" > "));
+            }
+
+            println!("    ───────────────────────────────────");
+            for line in result.content.lines().take(10) {
+                println!("    {}", line);
+            }
+            if result.content.lines().count() > 10 {
+                println!("    ...");
+            }
+            println!("    ───────────────────────────────────");
+            println!();
+        }
+
+        if let Some(ref truncated) = output.truncated_ids {
+            println!(
+                "Note: {} more results available (token budget exceeded)",
+                truncated.len()
+            );
+        }
+
+        if output.stats.truncated {
+            println!(
+                "Warning: Search was truncated due to safety limits (too many files or bytes)"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Search a specific persistent index (legacy behavior when --index-id is used)
+#[allow(clippy::too_many_arguments)]
+fn cmd_search_persistent(
+    store: &mut IndexStore,
+    index_id: String,
     query: String,
     max_tokens: usize,
     limit: usize,
@@ -238,7 +401,6 @@ fn cmd_search(
     json_output: bool,
 ) -> Result<()> {
     let start = Instant::now();
-    let index_id = resolve_index_id(store, index_id_override)?;
 
     let input = SearchInput {
         index_id,
@@ -261,7 +423,7 @@ fn cmd_search(
         println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
         println!(
-            "Found {} results in {:.1}ms\n",
+            "[persistent] Found {} results in {:.1}ms\n",
             output.total_matches,
             elapsed.as_secs_f64() * 1000.0
         );
@@ -348,9 +510,11 @@ fn cmd_list(store: &mut IndexStore, json_output: bool) -> Result<()> {
         }
     } else if let Some(indexes) = &output.indexes {
         if indexes.is_empty() {
-            println!("No indexes found. Run `llmx index <path>` to create one.");
+            println!("No persistent indexes found. Run `llmx index <path>` to create one.");
+            println!("\nNote: `llmx search` now works without a persistent index!");
+            println!("It auto-detects project roots and builds indexes on the fly.");
         } else {
-            println!("Indexes:\n");
+            println!("Persistent indexes:\n");
             for idx in indexes {
                 println!("  {} ({})", idx.id, idx.root_path);
                 println!(
@@ -488,12 +652,10 @@ fn cmd_get(
             println!("{}", chunk.content);
             println!("───────────────────────────────────");
         }
+    } else if json_output {
+        println!("null");
     } else {
-        if json_output {
-            println!("null");
-        } else {
-            eprintln!("Chunk not found: {}", chunk_id);
-        }
+        eprintln!("Chunk not found: {}", chunk_id);
     }
 
     Ok(())
@@ -514,7 +676,13 @@ fn resolve_index_id(store: &mut IndexStore, override_id: &Option<String>) -> Res
     let mut dir = cwd.as_path();
     loop {
         // Check for common project markers
-        let markers = [".git", "Cargo.toml", "package.json", "pyproject.toml", "go.mod"];
+        let markers = [
+            ".git",
+            "Cargo.toml",
+            "package.json",
+            "pyproject.toml",
+            "go.mod",
+        ];
         for marker in markers {
             let marker_path = dir.join(marker);
             if marker_path.exists() {
@@ -561,4 +729,15 @@ fn resolve_index_id(store: &mut IndexStore, override_id: &Option<String>) -> Res
         "No index found and no project root detected.\n\
          Run `llmx index <path>` to create one, or use --index-id to specify."
     )
+}
+
+/// Format bytes as human-readable string
+fn format_bytes(bytes: usize) -> String {
+    if bytes >= 1024 * 1024 {
+        format!("{:.1}MB", bytes as f64 / (1024.0 * 1024.0))
+    } else if bytes >= 1024 {
+        format!("{:.1}KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{}B", bytes)
+    }
 }

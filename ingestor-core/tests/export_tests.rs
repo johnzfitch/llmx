@@ -138,7 +138,7 @@ fn manifest_chunk_files_match_refs() {
             "expected chunk row length to match chunk_columns length"
         );
 
-        let r#ref = row.get(0).and_then(|v| v.as_str()).expect("ref");
+        let r#ref = row.first().and_then(|v| v.as_str()).expect("ref");
         let path_i = row.get(3).and_then(|v| v.as_u64()).expect("path_i") as usize;
         let kind_i = row.get(4).and_then(|v| v.as_u64()).expect("kind_i") as usize;
 
@@ -176,7 +176,6 @@ mod tests {
         
         println!("\n=== Generated llm.md ===\n{}\n", llm);
         
-        // Always pass so we can see the output
-        assert!(true);
+        // Output visible in test with `cargo test -- --nocapture`
     }
 }

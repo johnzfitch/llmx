@@ -9,6 +9,7 @@ use tempfile::TempDir;
 
 /// Get a Command for the llmx binary.
 fn llmx() -> Command {
+    #[allow(deprecated)]
     Command::cargo_bin("llmx").expect("Failed to find llmx binary")
 }
 

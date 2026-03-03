@@ -29,6 +29,8 @@ pub struct IngestOptionsInput {
     pub chunk_target_chars: Option<usize>,
     #[cfg_attr(feature = "mcp", schemars(description = "Maximum file size in bytes"))]
     pub max_file_bytes: Option<usize>,
+    #[cfg_attr(feature = "mcp", schemars(description = "Maximum total bytes to ingest (default 100MB)"))]
+    pub max_total_bytes: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
@@ -211,24 +213,26 @@ pub fn llmx_index_handler(store: &mut IndexStore, input: IndexInput) -> Result<I
         chunk_max_chars: 8000,
         max_file_bytes: input.options.as_ref()
             .and_then(|o| o.max_file_bytes)
-            .unwrap_or(10 * 1024 * 1024),
-        max_total_bytes: 50 * 1024 * 1024,
+            .unwrap_or(100 * 1024 * 1024),
+        max_total_bytes: input.options.as_ref()
+            .and_then(|o| o.max_total_bytes)
+            .unwrap_or(100 * 1024 * 1024),
         max_chunks_per_file: 2000,
     };
 
     let mut index = ingest_files(files, options);
     let created = existing_id.is_none();
 
-    // Phase 5: Generate embeddings for semantic search
+    // Phase 6: Generate embeddings for semantic search using Burn
     #[cfg(feature = "embeddings")]
     {
-        use crate::embeddings::generate_embeddings;
+        use crate::embeddings::{generate_embeddings, MODEL_ID};
         let chunk_texts: Vec<&str> = index.chunks.iter()
             .map(|c| c.content.as_str())
             .collect();
         let embeddings = generate_embeddings(&chunk_texts);
         index.embeddings = Some(embeddings);
-        index.embedding_model = Some("hash-based-v1".to_string());
+        index.embedding_model = Some(MODEL_ID.to_string());
     }
 
     let index_id = store.save(index.clone(), root_path)?;

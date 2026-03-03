@@ -7,7 +7,7 @@ fn load_fixture(path: &str) -> Vec<u8> {
 
 #[test]
 fn deterministic_chunking_across_runs() {
-    let fixtures = vec![
+    let fixtures = [
         ("fixtures/sample.md", "docs/sample.md"),
         ("fixtures/sample.json", "data/sample.json"),
         ("fixtures/sample.js", "src/sample.js"),
@@ -72,8 +72,10 @@ fn enforces_size_limits() {
         mtime_ms: None,
         fingerprint_sha256: None,
     };
-    let mut options = IngestOptions::default();
-    options.max_file_bytes = 512;
+    let options = IngestOptions {
+        max_file_bytes: 512,
+        ..IngestOptions::default()
+    };
     let index = ingest_files(vec![input], options);
     assert!(index.files.is_empty());
     assert!(!index.warnings.is_empty());

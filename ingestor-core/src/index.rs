@@ -187,10 +187,8 @@ fn heading_matches_prefix(heading_path: &[String], prefix: &str) -> bool {
         // Check if prefix could still match
         if i > 0 {
             // Check the '/' separator
-            if accumulated_len < prefix_bytes.len() {
-                if prefix_bytes[accumulated_len] != b'/' {
-                    return false;
-                }
+            if accumulated_len < prefix_bytes.len() && prefix_bytes[accumulated_len] != b'/' {
+                return false;
             }
             accumulated_len += 1;
         }
@@ -198,10 +196,8 @@ fn heading_matches_prefix(heading_path: &[String], prefix: &str) -> bool {
         // Check the part
         for (j, &byte) in part_bytes.iter().enumerate() {
             let pos = accumulated_len + j;
-            if pos < prefix_bytes.len() {
-                if prefix_bytes[pos] != byte {
-                    return false;
-                }
+            if pos < prefix_bytes.len() && prefix_bytes[pos] != byte {
+                return false;
             }
         }
         accumulated_len += part_bytes.len();
@@ -301,6 +297,7 @@ pub fn vector_search(
 /// - RRF (Reciprocal Rank Fusion): More robust, doesn't require normalization (default)
 /// - Linear: Weighted combination of normalized scores (Phase 5 compatibility)
 #[cfg(feature = "embeddings")]
+#[allow(clippy::too_many_arguments)]
 pub fn hybrid_search(
     chunks: &[Chunk],
     inverted: &BTreeMap<String, TermEntry>,
@@ -326,6 +323,7 @@ pub fn hybrid_search(
 
 /// Phase 6: Hybrid search with configurable strategy
 #[cfg(feature = "embeddings")]
+#[allow(clippy::too_many_arguments)]
 pub fn hybrid_search_with_strategy(
     chunks: &[Chunk],
     inverted: &BTreeMap<String, TermEntry>,

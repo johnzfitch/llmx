@@ -347,6 +347,8 @@ mod tests {
                 avg_chunk_tokens: 0,
             },
             warnings: vec![],
+            embeddings: None,
+            embedding_model: None,
         };
 
         // Save
@@ -379,6 +381,8 @@ mod tests {
                 avg_chunk_tokens: 0,
             },
             warnings: vec![],
+            embeddings: None,
+            embedding_model: None,
         };
 
         store.save(index, "/test".to_string())?;

@@ -135,19 +135,14 @@ pub struct SearchFilters {
 }
 
 /// Phase 6: Hybrid search strategy
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum HybridStrategy {
     /// Linear combination (Phase 5 default, kept for compatibility)
     Linear,
     /// Reciprocal Rank Fusion (Phase 6 default, recommended)
+    #[default]
     Rrf,
-}
-
-impl Default for HybridStrategy {
-    fn default() -> Self {
-        Self::Rrf // Phase 6: RRF is now the default
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,10 +1,10 @@
-/// Phase 6: Reciprocal Rank Fusion (RRF) for hybrid search
-///
-/// RRF is more robust than linear combination for merging ranked lists.
-/// It works well across different score scales without normalization.
-///
-/// Formula: RRF(d) = Σ 1/(k + rank(d))
-/// where k = 60 (standard constant from literature)
+//! Phase 6: Reciprocal Rank Fusion (RRF) for hybrid search
+//!
+//! RRF is more robust than linear combination for merging ranked lists.
+//! It works well across different score scales without normalization.
+//!
+//! Formula: RRF(d) = Σ 1/(k + rank(d))
+//! where k = 60 (standard constant from literature)
 
 use std::collections::HashMap;
 

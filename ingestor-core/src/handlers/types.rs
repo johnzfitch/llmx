@@ -1,7 +1,8 @@
 //! Input/Output types for llmx handlers.
 
-use crate::handlers::storage::IndexMetadata;
+use super::IndexMetadata;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 // Input types
 
@@ -126,4 +127,72 @@ pub struct ChunkOutput {
     pub symbol: Option<String>,
     pub heading_path: Vec<String>,
     pub token_estimate: usize,
+}
+
+// Dynamic search types
+
+/// Input for dynamic search (no persistent index required).
+#[derive(Debug, Deserialize)]
+pub struct DynamicSearchInput {
+    /// The search query
+    pub query: String,
+    /// Explicit search path (default: auto-detect project root)
+    #[serde(default)]
+    pub path: Option<PathBuf>,
+    /// Force dynamic mode (ignore persistent index)
+    #[serde(default)]
+    pub force_dynamic: bool,
+    /// Skip cache (force fresh index build)
+    #[serde(default)]
+    pub no_cache: bool,
+    /// Allow dangerous paths (/, /home, etc.)
+    #[serde(default)]
+    pub force_dangerous: bool,
+    /// Search filters
+    #[serde(default)]
+    pub filters: Option<SearchFiltersInput>,
+    /// Maximum number of results (default: 10)
+    #[serde(default)]
+    pub limit: Option<usize>,
+    /// Token budget for inline content (default: 16000)
+    #[serde(default)]
+    pub max_tokens: Option<usize>,
+    /// Use hybrid BM25+embeddings search
+    #[serde(default)]
+    pub use_semantic: Option<bool>,
+}
+
+/// Output from dynamic search.
+#[derive(Debug, Serialize)]
+pub struct DynamicSearchOutput {
+    /// Search mode used: "dynamic", "cached", or "persistent"
+    pub mode: String,
+    /// Search results with inline content
+    pub results: Vec<SearchResultOutput>,
+    /// Statistics about the search operation
+    pub stats: DynamicSearchStats,
+    /// IDs of results that exceeded token budget
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncated_ids: Option<Vec<String>>,
+    /// Total number of matches found
+    pub total_matches: usize,
+}
+
+/// Statistics for dynamic search operations.
+#[derive(Debug, Serialize, Clone, Default)]
+pub struct DynamicSearchStats {
+    /// Number of files processed
+    pub file_count: usize,
+    /// Total bytes processed
+    pub total_bytes: usize,
+    /// Number of chunks in index
+    pub chunk_count: usize,
+    /// Indexing time in milliseconds
+    pub index_time_ms: u64,
+    /// Search time in milliseconds
+    pub search_time_ms: u64,
+    /// Whether the walk was truncated due to limits
+    pub truncated: bool,
+    /// Root path that was searched
+    pub root_path: String,
 }

@@ -7,8 +7,9 @@
 /server.pid
 /approval.log
 
-# Phase 6: ONNX models (fetched at build time, not committed)
+# Phase 6: Burn models (fetched at build time, not committed)
 /models/
+/ingestor-core/models/
 /ingestor-wasm/models/*
 !/ingestor-wasm/models/arctic-embed-s.bin
 /ingestor-wasm/target/

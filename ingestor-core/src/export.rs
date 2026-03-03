@@ -102,9 +102,9 @@ pub fn export_llm(index: &IndexFile) -> String {
         out.push_str("## Warnings\n\n");
         out.push_str("Some files were skipped or truncated.\n\n");
         for warning in &index.warnings {
-            let _ = write!(
+            let _ = writeln!(
                 out,
-                "- {}: {}\n",
+                "- {}: {}",
                 markdown_code_span(&warning.path),
                 sanitize_single_line(&warning.message)
             );
@@ -120,9 +120,9 @@ pub fn export_llm(index: &IndexFile) -> String {
             current_path.clone_from(&chunk.path);
             if let Some(meta) = file_meta.get(current_path.as_str()) {
                 let kind_short = kind_short_label(meta.kind);
-                let _ = write!(out, "### {} ({}, {} lines)\n", &current_path, kind_short, meta.line_count);
+                let _ = writeln!(out, "### {} ({}, {} lines)", &current_path, kind_short, meta.line_count);
             } else {
-                let _ = write!(out, "### {}\n", &current_path);
+                let _ = writeln!(out, "### {}", &current_path);
             }
         }
 
@@ -290,26 +290,26 @@ fn export_manifest_llm_tsv_with_data(index: &IndexFile, data: &MinExportData) ->
         + data.entries.len() * 96;
     
     let mut out = String::with_capacity(estimated_size);
-    let _ = write!(out, "llmx_manifest_llm_tsv\t4\t{}\n", index.index_id);
+    let _ = writeln!(out, "llmx_manifest_llm_tsv\t4\t{}", index.index_id);
 
     for (idx, dir) in data.dirs.iter().enumerate() {
-        let _ = write!(out, "D\t{}\t{}\n", idx, dir);
+        let _ = writeln!(out, "D\t{}\t{}", idx, dir);
     }
 
     for (idx, _path) in data.paths.iter().enumerate() {
         let dir_i = data.path_dirs[idx];
         let base = &data.path_bases[idx];
-        let _ = write!(out, "P\t{}\t{}\t{}\n", idx, dir_i, base);
+        let _ = writeln!(out, "P\t{}\t{}\t{}", idx, dir_i, base);
     }
 
     for (idx, kind) in data.kinds.iter().enumerate() {
-        let _ = write!(out, "K\t{}\t{}\n", idx, kind);
+        let _ = writeln!(out, "K\t{}\t{}", idx, kind);
     }
 
     for summary in &data.file_summaries {
-        let _ = write!(
-            out, 
-            "F\t{}\t{}\t{}\t{}\t{}\t{}\n",
+        let _ = writeln!(
+            out,
+            "F\t{}\t{}\t{}\t{}\t{}\t{}",
             summary.path_i,
             summary.kind_i,
             summary.chunk_count,
@@ -321,14 +321,14 @@ fn export_manifest_llm_tsv_with_data(index: &IndexFile, data: &MinExportData) ->
 
     for entry in &data.entries {
         let label = chunk_label(
-            &entry.chunk, 
-            entry.symbol.as_deref(), 
-            entry.heading_last.as_deref(), 
+            &entry.chunk,
+            entry.symbol.as_deref(),
+            entry.heading_last.as_deref(),
             entry.address.as_deref()
         );
-        let _ = write!(
+        let _ = writeln!(
             out,
-            "C\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            "C\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             entry.chunk_ref,
             entry.path_i,
             entry.kind_i,
@@ -374,7 +374,7 @@ fn export_catalog_llm_md_with_data(index: &IndexFile, data: &MinExportData) -> S
     out.push_str("top_dirs:\n");
     for (dir_i, tok_total, file_count) in dir_rank.into_iter().take(20) {
         let dir = data.dirs.get(dir_i).map(String::as_str).unwrap_or("");
-        let _ = write!(out, "- {} files={} tok={}\n", dir, file_count, tok_total);
+        let _ = writeln!(out, "- {} files={} tok={}", dir, file_count, tok_total);
     }
     out.push('\n');
 
