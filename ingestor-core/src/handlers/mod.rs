@@ -107,11 +107,11 @@ pub fn llmx_index_handler(store: &mut IndexStore, input: IndexInput) -> Result<I
 
     #[cfg(feature = "embeddings")]
     {
-        use crate::embeddings::generate_embeddings;
+        use crate::embeddings::{generate_embeddings, MODEL_ID};
         let chunk_texts: Vec<&str> = index.chunks.iter().map(|c| c.content.as_str()).collect();
         let embeddings = generate_embeddings(&chunk_texts);
         index.embeddings = Some(embeddings);
-        index.embedding_model = Some("hash-based-v1".to_string());
+        index.embedding_model = Some(MODEL_ID.to_string());
     }
 
     let index_id = store.save(index.clone(), root_path)?;
@@ -511,11 +511,11 @@ pub fn llmx_search_dynamic_handler(
 
     #[cfg(feature = "embeddings")]
     {
-        use crate::embeddings::generate_embeddings;
+        use crate::embeddings::{generate_embeddings, MODEL_ID};
         let chunk_texts: Vec<&str> = index.chunks.iter().map(|c| c.content.as_str()).collect();
         let embeddings = generate_embeddings(&chunk_texts);
         index.embeddings = Some(embeddings);
-        index.embedding_model = Some("hash-based-v1".to_string());
+        index.embedding_model = Some(MODEL_ID.to_string());
     }
 
     let index_time_ms = index_start.elapsed().as_millis() as u64;
