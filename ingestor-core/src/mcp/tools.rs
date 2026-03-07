@@ -1,5 +1,7 @@
 use crate::mcp::storage::{IndexStore, IndexMetadata};
-use crate::{ingest_files, search, FileInput, HybridStrategy, IngestOptions, SearchFilters};
+use crate::{ingest_files, search, FileInput, IngestOptions, SearchFilters};
+#[cfg(feature = "embeddings")]
+use crate::HybridStrategy;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "mcp")]
@@ -224,20 +226,22 @@ pub fn llmx_index_handler(store: &mut IndexStore, input: IndexInput) -> Result<I
         max_chunks_per_file: 2000,
     };
 
-    let mut index = ingest_files(files, options);
+    let index = {
+        #[cfg_attr(not(feature = "embeddings"), allow(unused_mut))]
+        let mut index = ingest_files(files, options);
+        #[cfg(feature = "embeddings")]
+        {
+            use crate::embeddings::{generate_embeddings, MODEL_ID};
+            let chunk_texts: Vec<&str> = index.chunks.iter()
+                .map(|c| c.content.as_str())
+                .collect();
+            let embeddings = generate_embeddings(&chunk_texts);
+            index.embeddings = Some(embeddings);
+            index.embedding_model = Some(MODEL_ID.to_string());
+        }
+        index
+    };
     let created = existing_id.is_none();
-
-    // Phase 6: Generate embeddings for semantic search using Burn
-    #[cfg(feature = "embeddings")]
-    {
-        use crate::embeddings::{generate_embeddings, MODEL_ID};
-        let chunk_texts: Vec<&str> = index.chunks.iter()
-            .map(|c| c.content.as_str())
-            .collect();
-        let embeddings = generate_embeddings(&chunk_texts);
-        index.embeddings = Some(embeddings);
-        index.embedding_model = Some(MODEL_ID.to_string());
-    }
 
     let index_id = store.save(index.clone(), root_path)?;
 
@@ -467,6 +471,7 @@ fn parse_chunk_kind(s: &str) -> Option<crate::ChunkKind> {
     }
 }
 
+#[cfg(feature = "embeddings")]
 fn parse_hybrid_strategy(value: Option<&str>) -> Result<HybridStrategy> {
     let normalized = value.map(|v| v.to_ascii_lowercase());
     match normalized.as_deref() {

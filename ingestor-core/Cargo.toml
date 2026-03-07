@@ -1,6 +1,6 @@
 [package]
 name = "llmx-mcp"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "Fast codebase indexing and semantic search MCP server with BM25 and hybrid embeddings"
 license = "MIT"
