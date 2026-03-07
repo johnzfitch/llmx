@@ -9,11 +9,11 @@
 
 mod common;
 
-use llmx::handlers::{
+use llmx_mcp::handlers::{
     llmx_explore_handler, llmx_get_chunk_handler, llmx_index_handler, llmx_manage_handler,
     llmx_search_handler, ExploreInput, IndexInput, IndexStore, ManageInput, SearchInput,
 };
-use llmx::{export_llm, export_zip};
+use llmx_mcp::{export_llm, export_zip};
 use tempfile::TempDir;
 use std::fs;
 
@@ -214,7 +214,7 @@ fn smoke_search_with_filters() {
         let input = SearchInput {
             index_id: idx_output.index_id.clone(),
             query: "test".to_string(),
-            filters: Some(llmx::handlers::SearchFiltersInput {
+            filters: Some(llmx_mcp::handlers::SearchFiltersInput {
                 path_prefix: path_prefix.map(String::from),
                 kind: kind.map(String::from),
                 symbol_prefix: None,

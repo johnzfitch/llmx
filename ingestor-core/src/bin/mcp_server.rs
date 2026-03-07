@@ -1,4 +1,4 @@
-use llmx::mcp::{
+use llmx_mcp::mcp::{
     llmx_explore_handler, llmx_index_handler, llmx_manage_handler, llmx_search_handler,
     ExploreInput, IndexInput, IndexStore, ManageInput, SearchInput,
 };
@@ -22,7 +22,7 @@ use tracing_subscriber::EnvFilter;
 /// # Architecture
 ///
 /// The server uses an `IndexStore` to manage persistent indexes on disk with an
-/// in-memory cache for performance. All indexes are stored in `~/.llmx/indexes/`
+/// in-memory cache for performance. All indexes are stored in `~/.llmx_mcp/indexes/`
 /// by default (configurable via `LLMX_STORAGE_DIR`).
 ///
 /// # Thread Safety
@@ -148,7 +148,7 @@ impl ServerHandler for LlmxServer {
             protocol_version: ProtocolVersion::V_2024_11_05,
             capabilities: ServerCapabilities::builder().enable_tools().build(),
             server_info: Implementation {
-                name: "llmx-mcp".to_string(),
+                name: "llmx_mcp-mcp".to_string(),
                 version: "0.1.0".to_string(),
             },
             instructions: Some("Codebase indexing and semantic search with inline content. Supports indexing codebases, searching with token-budgeted results, exploring index structure, and managing indexes.".to_string()),
@@ -169,7 +169,7 @@ async fn main() -> anyhow::Result<()> {
     // Get storage directory from env or default
     let storage_dir = env::var("LLMX_STORAGE_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| dirs::home_dir().unwrap().join(".llmx/indexes"));
+        .unwrap_or_else(|_| dirs::home_dir().unwrap().join(".llmx_mcp/indexes"));
 
     tracing::info!("Starting LLMX MCP server, storage: {:?}", storage_dir);
 

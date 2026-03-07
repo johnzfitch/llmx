@@ -1,9 +1,9 @@
-//! Shared test utilities for llmx test suite.
+//! Shared test utilities for llmx_mcp test suite.
 //!
 //! This module provides common helpers for testing handlers, CLI commands,
 //! and measuring token savings.
 
-use llmx::{ingest_files, FileInput, IndexFile, IngestOptions};
+use llmx_mcp::{ingest_files, FileInput, IndexFile, IngestOptions};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;

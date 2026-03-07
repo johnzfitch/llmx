@@ -4,7 +4,7 @@
 
 #![cfg(feature = "mcp")]
 
-use llmx::mcp::tools::{
+use llmx_mcp::mcp::tools::{
     ExploreInput, IndexInput, IngestOptionsInput, ManageInput,
     SearchFiltersInput, SearchInput,
 };

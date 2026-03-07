@@ -1,6 +1,6 @@
 //! Token savings analysis tests - measure and verify token reduction claims.
 //!
-//! These tests verify that llmx delivers on its promise of 80-95% token savings
+//! These tests verify that llmx_mcp delivers on its promise of 80-95% token savings
 //! compared to reading raw files.
 //!
 //! Run with: cargo test --features cli --test token_savings_tests
@@ -10,10 +10,10 @@
 mod common;
 
 use common::{calculate_raw_tokens, estimate_tokens};
-use llmx::handlers::{
+use llmx_mcp::handlers::{
     llmx_index_handler, llmx_search_handler, IndexInput, IndexStore, SearchInput,
 };
-use llmx::export_llm;
+use llmx_mcp::export_llm;
 use std::fs;
 use tempfile::TempDir;
 
@@ -256,7 +256,7 @@ fn format_output(data: Data) -> String {
         .repeat(20);
     let grep_tokens = estimate_tokens(&grep_output);
 
-    // llmx search (with context and deduplication)
+    // llmx_mcp search (with context and deduplication)
     let idx_input = IndexInput {
         paths: vec![project.path().to_string_lossy().to_string()],
         options: None,
@@ -282,10 +282,10 @@ fn format_output(data: Data) -> String {
     println!("  Grep tokens: {}", grep_tokens);
     println!("  Search tokens: {}", search_tokens);
 
-    // llmx should be more efficient than raw grep
+    // llmx_mcp should be more efficient than raw grep
     assert!(
         search_tokens < grep_tokens,
-        "llmx search should use fewer tokens than grep"
+        "llmx_mcp search should use fewer tokens than grep"
     );
 }
 
@@ -386,20 +386,20 @@ fn test_token_savings_explore_vs_tree() {
         .collect::<String>();
     let tree_tokens = estimate_tokens(&tree_output);
 
-    // llmx explore files
+    // llmx_mcp explore files
     let idx_input = IndexInput {
         paths: vec![project.path().to_string_lossy().to_string()],
         options: None,
     };
     let idx_output = llmx_index_handler(&mut store, idx_input).unwrap();
 
-    let explore_input = llmx::handlers::ExploreInput {
+    let explore_input = llmx_mcp::handlers::ExploreInput {
         index_id: idx_output.index_id,
         mode: "files".to_string(),
         path_filter: None,
     };
     let explore_output =
-        llmx::handlers::llmx_explore_handler(&mut store, explore_input).unwrap();
+        llmx_mcp::handlers::llmx_explore_handler(&mut store, explore_input).unwrap();
 
     let explore_tokens: usize = explore_output
         .items

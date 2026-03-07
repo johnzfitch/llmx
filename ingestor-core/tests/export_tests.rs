@@ -1,4 +1,4 @@
-use llmx::{export_llm, ingest_files, FileInput, IngestOptions};
+use llmx_mcp::{export_llm, ingest_files, FileInput, IngestOptions};
 
 #[test]
 fn export_llm_uses_clean_file_headers() {
@@ -49,7 +49,7 @@ fn export_chunks_use_short_filenames() {
         fingerprint_sha256: None,
     };
     let index = ingest_files(vec![input], IngestOptions::default());
-    let exported = llmx::export_chunks(&index);
+    let exported = llmx_mcp::export_chunks(&index);
     assert!(!exported.is_empty(), "expected chunk files");
     for (name, _body) in exported {
         assert!(name.starts_with("chunks/"), "expected chunks/ prefix: {}", name);
@@ -110,7 +110,7 @@ fn manifest_chunk_files_match_refs() {
         fingerprint_sha256: None,
     };
     let index = ingest_files(vec![input], IngestOptions::default());
-    let manifest_json = llmx::export_manifest_json(&index);
+    let manifest_json = llmx_mcp::export_manifest_json(&index);
     let value: serde_json::Value = serde_json::from_str(&manifest_json).expect("manifest json");
     assert_eq!(
         value.get("format_version").and_then(|v| v.as_u64()),
@@ -152,7 +152,7 @@ fn manifest_chunk_files_match_refs() {
 }
 #[cfg(test)]
 mod tests {
-    use llmx::{export_llm, ingest_files, FileInput, IngestOptions};
+    use llmx_mcp::{export_llm, ingest_files, FileInput, IngestOptions};
 
     #[test]
     #[ignore]

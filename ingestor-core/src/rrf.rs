@@ -46,7 +46,7 @@ impl Default for RrfConfig {
 /// # Example
 ///
 /// ```
-/// use llmx::rrf::{rrf_fusion, RankedResult, RrfConfig};
+/// use llmx_mcp::rrf::{rrf_fusion, RankedResult, RrfConfig};
 ///
 /// let bm25_results = vec![
 ///     RankedResult { id: "doc1".to_string(), rank: 0 },

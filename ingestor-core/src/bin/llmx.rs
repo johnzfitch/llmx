@@ -1,35 +1,35 @@
-//! llmx CLI - Codebase indexing and semantic search
+//! llmx_mcp CLI - Codebase indexing and semantic search
 //!
 //! A CLI for efficiently indexing and searching codebases with semantic chunking.
 //! Designed for both human users and AI agents.
 //!
 //! ## Dynamic Search (default)
 //!
-//! By default, `llmx search` auto-detects the project root and builds an in-memory
+//! By default, `llmx_mcp search` auto-detects the project root and builds an in-memory
 //! index on the fly. Results are cached for repeat queries.
 //!
 //! ```bash
-//! llmx search "handleError"              # Auto-detect project, use cache
-//! llmx search "handleError" --dynamic    # Force fresh dynamic index
-//! llmx search "handleError" --no-cache   # Skip cache, rebuild index
-//! llmx search "handleError" --path ./src # Explicit search path
+//! llmx_mcp search "handleError"              # Auto-detect project, use cache
+//! llmx_mcp search "handleError" --dynamic    # Force fresh dynamic index
+//! llmx_mcp search "handleError" --no-cache   # Skip cache, rebuild index
+//! llmx_mcp search "handleError" --path ./src # Explicit search path
 //! ```
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use llmx::handlers::{
+use llmx_mcp::handlers::{
     llmx_explore_handler, llmx_get_chunk_handler, llmx_index_handler, llmx_manage_handler,
     llmx_search_dynamic_handler, llmx_search_handler, DynamicCache, DynamicSearchInput,
     ExploreInput, IndexInput, IndexStore, IngestOptionsInput, ManageInput, SearchFiltersInput,
     SearchInput,
 };
-use llmx::{export_llm, export_manifest_json, export_zip};
+use llmx_mcp::{export_llm, export_manifest_json, export_zip};
 use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
 
 #[derive(Parser)]
-#[command(name = "llmx", version, about = "Codebase indexing and semantic search")]
+#[command(name = "llmx_mcp", version, about = "Codebase indexing and semantic search")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -42,7 +42,7 @@ struct Cli {
     #[arg(long, global = true)]
     index_id: Option<String>,
 
-    /// Override storage directory (default: ~/.llmx/indexes)
+    /// Override storage directory (default: ~/.llmx_mcp/indexes)
     #[arg(long, global = true)]
     storage_dir: Option<PathBuf>,
 }
@@ -155,7 +155,7 @@ fn main() -> Result<()> {
     let storage_dir = cli.storage_dir.unwrap_or_else(|| {
         dirs::home_dir()
             .expect("Could not find home directory")
-            .join(".llmx")
+            .join(".llmx_mcp")
             .join("indexes")
     });
 
@@ -510,8 +510,8 @@ fn cmd_list(store: &mut IndexStore, json_output: bool) -> Result<()> {
         }
     } else if let Some(indexes) = &output.indexes {
         if indexes.is_empty() {
-            println!("No persistent indexes found. Run `llmx index <path>` to create one.");
-            println!("\nNote: `llmx search` now works without a persistent index!");
+            println!("No persistent indexes found. Run `llmx_mcp index <path>` to create one.");
+            println!("\nNote: `llmx_mcp search` now works without a persistent index!");
             println!("It auto-detects project roots and builds indexes on the fly.");
         } else {
             println!("Persistent indexes:\n");
@@ -727,7 +727,7 @@ fn resolve_index_id(store: &mut IndexStore, override_id: &Option<String>) -> Res
 
     anyhow::bail!(
         "No index found and no project root detected.\n\
-         Run `llmx index <path>` to create one, or use --index-id to specify."
+         Run `llmx_mcp index <path>` to create one, or use --index-id to specify."
     )
 }
 

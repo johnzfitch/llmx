@@ -1,6 +1,6 @@
 //! Handler unit tests - tests handler functions directly without CLI overhead.
 //!
-//! These tests verify the core business logic of llmx handlers.
+//! These tests verify the core business logic of llmx_mcp handlers.
 //!
 //! Run with: cargo test --features cli --test handler_tests
 
@@ -8,7 +8,7 @@
 
 mod common;
 
-use llmx::handlers::{
+use llmx_mcp::handlers::{
     llmx_explore_handler, llmx_get_chunk_handler, llmx_index_handler, llmx_manage_handler,
     llmx_search_handler, ExploreInput, IndexInput, IndexStore, IngestOptionsInput, ManageInput,
     SearchFiltersInput, SearchInput,

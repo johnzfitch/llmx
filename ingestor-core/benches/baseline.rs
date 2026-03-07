@@ -1,11 +1,11 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
-use llmx::{
+use llmx_mcp::{
     ingest_files, search, build_inverted_index, compute_stats, FileInput, IngestOptions,
     SearchFilters, IndexFile,
 };
 
 #[cfg(feature = "embeddings")]
-use llmx::{
+use llmx_mcp::{
     embeddings::{generate_embedding, generate_embeddings, cosine_similarity},
     hybrid_search, vector_search,
 };

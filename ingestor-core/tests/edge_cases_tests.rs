@@ -8,10 +8,10 @@
 
 mod common;
 
-use llmx::handlers::{
+use llmx_mcp::handlers::{
     llmx_index_handler, llmx_search_handler, IndexInput, IndexStore, SearchInput,
 };
-use llmx::{ingest_files, FileInput, IngestOptions};
+use llmx_mcp::{ingest_files, FileInput, IngestOptions};
 use std::fs;
 use tempfile::TempDir;
 
