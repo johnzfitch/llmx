@@ -1,6 +1,6 @@
 #![recursion_limit = "256"]
 
-use ingestor_core::{
+use llmx::{
     export_catalog_llm_md, export_chunks, export_chunks_compact, export_llm, export_llm_pointer,
     export_manifest_json, export_manifest_llm_tsv, export_manifest_min_json, ingest_files, search, update_index,
     update_index_selective, FileInput, IngestOptions,
@@ -180,13 +180,13 @@ impl Ingestor {
 
     #[wasm_bindgen(js_name = listOutline)]
     pub fn list_outline(&self, path: String) -> Result<JsValue, JsValue> {
-        let outline = ingestor_core::list_outline(&self.index.chunks, &path);
+        let outline = llmx::list_outline(&self.index.chunks, &path);
         to_value(&outline).map_err(to_js_error)
     }
 
     #[wasm_bindgen(js_name = listSymbols)]
     pub fn list_symbols(&self, path: String) -> Result<JsValue, JsValue> {
-        let symbols = ingestor_core::list_symbols(&self.index.chunks, &path);
+        let symbols = llmx::list_symbols(&self.index.chunks, &path);
         to_value(&symbols).map_err(to_js_error)
     }
 

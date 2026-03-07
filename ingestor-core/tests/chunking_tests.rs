@@ -1,4 +1,4 @@
-use ingestor_core::{ingest_files, IngestOptions};
+use llmx::{ingest_files, IngestOptions};
 use pretty_assertions::assert_eq;
 
 fn load_fixture(path: &str) -> Vec<u8> {
@@ -15,9 +15,9 @@ fn deterministic_chunking_across_runs() {
         ("fixtures/sample.txt", "notes/sample.txt"),
     ];
 
-    let files_a: Vec<ingestor_core::FileInput> = fixtures
+    let files_a: Vec<llmx::FileInput> = fixtures
         .iter()
-        .map(|(fixture, path)| ingestor_core::FileInput {
+        .map(|(fixture, path)| llmx::FileInput {
             path: (*path).to_string(),
             data: load_fixture(&format!("{}/tests/{}", env!("CARGO_MANIFEST_DIR"), fixture)),
             mtime_ms: None,
@@ -47,7 +47,7 @@ fn deterministic_chunking_across_runs() {
 
 #[test]
 fn html_strips_script_content() {
-    let input = ingestor_core::FileInput {
+    let input = llmx::FileInput {
         path: "web/attack.html".to_string(),
         data: load_fixture(&format!("{}/tests/fixtures/sample.html", env!("CARGO_MANIFEST_DIR"))),
         mtime_ms: None,
@@ -66,7 +66,7 @@ fn html_strips_script_content() {
 #[test]
 fn enforces_size_limits() {
     let data = vec![b'a'; 1024];
-    let input = ingestor_core::FileInput {
+    let input = llmx::FileInput {
         path: "notes/large.txt".to_string(),
         data,
         mtime_ms: None,
@@ -84,7 +84,7 @@ fn enforces_size_limits() {
 
 #[test]
 fn ingests_images_as_assets_without_utf8_decode() {
-    let input = ingestor_core::FileInput {
+    let input = llmx::FileInput {
         path: "assets/screenshot.png".to_string(),
         data: vec![0, 1, 2, 3, 4, 5],
         mtime_ms: None,
@@ -93,16 +93,16 @@ fn ingests_images_as_assets_without_utf8_decode() {
     let index = ingest_files(vec![input], IngestOptions::default());
     assert_eq!(index.files.len(), 1);
     assert!(index.warnings.is_empty());
-    assert_eq!(index.files[0].kind, ingestor_core::ChunkKind::Image);
+    assert_eq!(index.files[0].kind, llmx::ChunkKind::Image);
     assert_eq!(index.chunks.len(), 1);
-    assert_eq!(index.chunks[0].kind, ingestor_core::ChunkKind::Image);
+    assert_eq!(index.chunks[0].kind, llmx::ChunkKind::Image);
     assert!(index.chunks[0].asset_path.as_deref().unwrap_or("").starts_with("images/"));
 }
 
 #[test]
 fn ingests_png_paths_with_spaces_as_image() {
     let path = "chatgpt-apps/Screenshot 2026-01-06 at 02-36-22 SDKs - Model Context Protocol.png";
-    let input = ingestor_core::FileInput {
+    let input = llmx::FileInput {
         path: path.to_string(),
         data: vec![0, 1, 2, 3, 4, 5],
         mtime_ms: None,
@@ -112,9 +112,9 @@ fn ingests_png_paths_with_spaces_as_image() {
     assert!(index.warnings.is_empty());
     assert_eq!(index.files.len(), 1);
     assert_eq!(index.files[0].path, path);
-    assert_eq!(index.files[0].kind, ingestor_core::ChunkKind::Image);
+    assert_eq!(index.files[0].kind, llmx::ChunkKind::Image);
     assert_eq!(index.chunks.len(), 1);
-    assert_eq!(index.chunks[0].kind, ingestor_core::ChunkKind::Image);
+    assert_eq!(index.chunks[0].kind, llmx::ChunkKind::Image);
 }
 
 #[test]
@@ -122,13 +122,13 @@ fn selective_update_keeps_unchanged_paths() {
     let options = IngestOptions::default();
     let prev = ingest_files(
         vec![
-            ingestor_core::FileInput {
+            llmx::FileInput {
                 path: "docs/a.md".to_string(),
                 data: b"# A\n\nHello\n".to_vec(),
                 mtime_ms: None,
                 fingerprint_sha256: Some("fp-a".to_string()),
             },
-            ingestor_core::FileInput {
+            llmx::FileInput {
                 path: "docs/b.md".to_string(),
                 data: b"# B\n\nOld\n".to_vec(),
                 mtime_ms: None,
@@ -138,9 +138,9 @@ fn selective_update_keeps_unchanged_paths() {
         options.clone(),
     );
 
-    let updated = ingestor_core::update_index_selective(
+    let updated = llmx::update_index_selective(
         prev,
-        vec![ingestor_core::FileInput {
+        vec![llmx::FileInput {
             path: "docs/b.md".to_string(),
             data: b"# B\n\nNew\n".to_vec(),
             mtime_ms: None,

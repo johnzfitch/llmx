@@ -3,7 +3,7 @@
 //! This module provides common helpers for testing handlers, CLI commands,
 //! and measuring token savings.
 
-use ingestor_core::{ingest_files, FileInput, IndexFile, IngestOptions};
+use llmx::{ingest_files, FileInput, IndexFile, IngestOptions};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;

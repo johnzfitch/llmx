@@ -17,13 +17,13 @@
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use ingestor_core::handlers::{
+use llmx::handlers::{
     llmx_explore_handler, llmx_get_chunk_handler, llmx_index_handler, llmx_manage_handler,
     llmx_search_dynamic_handler, llmx_search_handler, DynamicCache, DynamicSearchInput,
     ExploreInput, IndexInput, IndexStore, IngestOptionsInput, ManageInput, SearchFiltersInput,
     SearchInput,
 };
-use ingestor_core::{export_llm, export_manifest_json, export_zip};
+use llmx::{export_llm, export_manifest_json, export_zip};
 use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;

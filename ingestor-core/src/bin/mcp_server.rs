@@ -1,4 +1,4 @@
-use ingestor_core::mcp::{
+use llmx::mcp::{
     llmx_explore_handler, llmx_index_handler, llmx_manage_handler, llmx_search_handler,
     ExploreInput, IndexInput, IndexStore, ManageInput, SearchInput,
 };

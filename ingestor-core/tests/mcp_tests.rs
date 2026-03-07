@@ -4,7 +4,7 @@
 
 #![cfg(feature = "mcp")]
 
-use ingestor_core::mcp::tools::{
+use llmx::mcp::tools::{
     ExploreInput, IndexInput, IngestOptionsInput, ManageInput,
     SearchFiltersInput, SearchInput,
 };

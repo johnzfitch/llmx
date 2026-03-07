@@ -10,10 +10,10 @@
 mod common;
 
 use common::{calculate_raw_tokens, estimate_tokens};
-use ingestor_core::handlers::{
+use llmx::handlers::{
     llmx_index_handler, llmx_search_handler, IndexInput, IndexStore, SearchInput,
 };
-use ingestor_core::export_llm;
+use llmx::export_llm;
 use std::fs;
 use tempfile::TempDir;
 
@@ -393,13 +393,13 @@ fn test_token_savings_explore_vs_tree() {
     };
     let idx_output = llmx_index_handler(&mut store, idx_input).unwrap();
 
-    let explore_input = ingestor_core::handlers::ExploreInput {
+    let explore_input = llmx::handlers::ExploreInput {
         index_id: idx_output.index_id,
         mode: "files".to_string(),
         path_filter: None,
     };
     let explore_output =
-        ingestor_core::handlers::llmx_explore_handler(&mut store, explore_input).unwrap();
+        llmx::handlers::llmx_explore_handler(&mut store, explore_input).unwrap();
 
     let explore_tokens: usize = explore_output
         .items

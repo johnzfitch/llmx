@@ -8,7 +8,7 @@
 
 mod common;
 
-use ingestor_core::handlers::{
+use llmx::handlers::{
     llmx_explore_handler, llmx_get_chunk_handler, llmx_index_handler, llmx_manage_handler,
     llmx_search_handler, ExploreInput, IndexInput, IndexStore, IngestOptionsInput, ManageInput,
     SearchFiltersInput, SearchInput,

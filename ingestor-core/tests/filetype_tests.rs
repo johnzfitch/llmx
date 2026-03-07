@@ -7,7 +7,7 @@
 
 mod common;
 
-use ingestor_core::{ingest_files, ChunkKind, FileInput, IngestOptions};
+use llmx::{ingest_files, ChunkKind, FileInput, IngestOptions};
 use test_case::test_case;
 
 /// Helper to create a FileInput from extension and content.
