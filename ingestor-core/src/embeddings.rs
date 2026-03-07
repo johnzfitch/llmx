@@ -3,6 +3,15 @@
 //! Phase 6: Pure Rust embeddings using arctic-embed-s model (384-dim).
 //! Model is compiled into the binary at build time.
 
+// Catch the broken feature combination at compile time with a clear message.
+// `embeddings` alone compiles code that calls `with_model`, which is only
+// defined when a backend (ndarray-backend or wgpu-backend) is also enabled.
+#[cfg(all(feature = "embeddings", not(any(feature = "ndarray-backend", feature = "wgpu-backend"))))]
+compile_error!(
+    "Feature 'embeddings' requires a backend. Enable 'ndarray-backend' (pure Rust, recommended) \
+     or 'wgpu-backend' (GPU-accelerated)."
+);
+
 use sha2::{Digest, Sha256};
 
 #[cfg(feature = "embeddings")]
