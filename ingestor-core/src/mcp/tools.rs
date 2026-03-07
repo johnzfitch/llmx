@@ -202,8 +202,12 @@ pub fn llmx_index_handler(store: &mut IndexStore, input: IndexInput) -> Result<I
         }
     }
 
-    // Check if index exists for these paths
-    let root_path = input.paths[0].clone();
+    // Check if index exists for these paths (canonicalize for stable registry key)
+    let root_path = PathBuf::from(&input.paths[0])
+        .canonicalize()
+        .unwrap_or_else(|_| PathBuf::from(&input.paths[0]))
+        .to_string_lossy()
+        .to_string();
     let existing_id = store.find_by_path(Path::new(&root_path));
 
     let options = IngestOptions {

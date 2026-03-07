@@ -146,8 +146,15 @@ impl IndexStore {
         // Update cache
         self.cache.insert(index.index_id.clone(), index.clone());
 
-        // Update registry
+        // Update registry, cleaning up any orphaned index file from a previous ID
         let path_hash = Self::hash_path(&root_path);
+        if let Some(old_meta) = self.registry.indexes.get(&path_hash) {
+            if old_meta.id != index.index_id {
+                let old_file = self.storage_dir.join(format!("{}.json", old_meta.id));
+                let _ = fs::remove_file(&old_file);
+                self.cache.remove(&old_meta.id);
+            }
+        }
         self.registry.indexes.insert(
             path_hash,
             IndexMetadata {
