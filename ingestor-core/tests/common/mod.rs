@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 /// Create a temporary project directory with test files.
+#[allow(dead_code)]
 pub fn create_test_project(files: &[(&str, &str)]) -> TempDir {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
 
@@ -40,6 +41,7 @@ pub fn load_fixture_str(relative_path: &str) -> String {
 }
 
 /// Estimate token count (same algorithm as util.rs).
+#[allow(dead_code)]
 pub fn estimate_tokens(text: &str) -> usize {
     text.chars().count().div_ceil(4)
 }

@@ -21,9 +21,9 @@ sha2 = "0.10"
 getrandom = { version = "0.3.3", default-features = false, features = ["wasm_js"] }
 
 # Phase 6: Burn framework for WebGPU embeddings
-burn = { git = "https://github.com/tracel-ai/burn", branch = "main", default-features = false }
-burn-wgpu = { git = "https://github.com/tracel-ai/burn", branch = "main", optional = true }
-burn-ndarray = { git = "https://github.com/tracel-ai/burn", branch = "main", optional = true }
+burn = { git = "https://github.com/tracel-ai/burn", rev = "64871dfffaca8b57cc7ce5bfdc51f9afb84154a9", default-features = false }
+burn-wgpu = { git = "https://github.com/tracel-ai/burn", rev = "64871dfffaca8b57cc7ce5bfdc51f9afb84154a9", optional = true }
+burn-ndarray = { git = "https://github.com/tracel-ai/burn", rev = "64871dfffaca8b57cc7ce5bfdc51f9afb84154a9", optional = true }
 # Tokenizers with WASM support (using unstable_wasm feature for pure Rust regex)
 tokenizers = { version = "0.20", default-features = false, features = ["unstable_wasm"] }
 
@@ -59,13 +59,13 @@ wgpu-backend = ["burn-wgpu"]
 ndarray-backend = ["burn-ndarray"]
 
 [build-dependencies]
-burn = { git = "https://github.com/tracel-ai/burn", branch = "main", default-features = false }
-burn-ndarray = { git = "https://github.com/tracel-ai/burn", branch = "main" }
-burn-import = { git = "https://github.com/tracel-ai/burn", branch = "main" }
+burn = { git = "https://github.com/tracel-ai/burn", rev = "64871dfffaca8b57cc7ce5bfdc51f9afb84154a9", default-features = false }
+burn-ndarray = { git = "https://github.com/tracel-ai/burn", rev = "64871dfffaca8b57cc7ce5bfdc51f9afb84154a9" }
+burn-import = { git = "https://github.com/tracel-ai/burn", rev = "64871dfffaca8b57cc7ce5bfdc51f9afb84154a9" }
 reqwest = { version = "0.12", features = ["blocking"] }
 
 [dev-dependencies]
-burn-import = { git = "https://github.com/tracel-ai/burn", branch = "main" }
+burn-import = { git = "https://github.com/tracel-ai/burn", rev = "64871dfffaca8b57cc7ce5bfdc51f9afb84154a9" }
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = false

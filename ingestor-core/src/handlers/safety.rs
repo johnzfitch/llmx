@@ -9,7 +9,7 @@
 
 use crate::handlers::ALLOWED_EXTENSIONS;
 use crate::FileInput;
-use anyhow::{bail, Result};
+use anyhow::Result;
 use ignore::WalkBuilder;
 use std::fs;
 use std::path::Path;
@@ -266,7 +266,6 @@ pub fn dynamic_walk(root: &Path, limits: &SafetyLimits) -> Result<(Vec<FileInput
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     #[test]
     fn test_dangerous_path_detection() {

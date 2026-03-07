@@ -19,19 +19,20 @@ zip = { version = "0.6", default-features = false, features = ["deflate"] }
 ignore = "0.4"  # .gitignore-aware file walking (same as ripgrep)
 lru = "0.16"    # LRU cache for dynamic index caching
 
-# Phase 5: ONNX-based semantic embeddings (MCP server only)
-# Note: Phase 6 uses Burn framework for WASM, not ort
-ort = { version = "2.0.0-rc.11", optional = true }
-tokenizers = { version = "0.20", optional = true }
-ndarray = { version = "0.16", optional = true }
-reqwest = { version = "0.12", features = ["blocking"], optional = true }
+# Phase 6: Burn-based semantic embeddings (pure Rust, no C++ runtime)
+burn = { git = "https://github.com/tracel-ai/burn", rev = "64871dfffaca8b57cc7ce5bfdc51f9afb84154a9", default-features = false, features = ["std"], optional = true }
+burn-ndarray = { git = "https://github.com/tracel-ai/burn", rev = "64871dfffaca8b57cc7ce5bfdc51f9afb84154a9", optional = true }
+burn-wgpu = { git = "https://github.com/tracel-ai/burn", rev = "64871dfffaca8b57cc7ce5bfdc51f9afb84154a9", optional = true }
+tokenizers = { version = "0.20", default-features = false, features = ["unstable_wasm"], optional = true }
 
 [features]
 default = ["treesitter", "mcp"]
 treesitter = ["tree-sitter", "tree-sitter-javascript", "tree-sitter-typescript"]
-mcp = ["dep:rmcp", "dep:schemars", "dep:tokio", "dep:dirs", "dep:tracing", "dep:tracing-subscriber", "dep:anyhow", "embeddings"]
-cli = ["dep:clap", "dep:dirs", "dep:anyhow", "embeddings"]
-embeddings = ["dep:ort", "dep:tokenizers", "dep:ndarray", "dep:reqwest"]
+mcp = ["dep:rmcp", "dep:schemars", "dep:tokio", "dep:dirs", "dep:tracing", "dep:tracing-subscriber", "dep:anyhow", "ndarray-backend"]
+cli = ["dep:clap", "dep:dirs", "dep:anyhow", "ndarray-backend"]
+embeddings = ["dep:burn", "dep:tokenizers"]
+ndarray-backend = ["embeddings", "dep:burn-ndarray"]
+wgpu-backend = ["embeddings", "dep:burn-wgpu"]
 
 [[bin]]
 name = "llmx-mcp"
@@ -86,6 +87,9 @@ criterion = "0.5"
 test-case = "3"
 assert_cmd = "2"
 predicates = "3"
+
+[build-dependencies]
+# Model files are pre-built, no conversion needed at build time
 
 [[bench]]
 name = "baseline"

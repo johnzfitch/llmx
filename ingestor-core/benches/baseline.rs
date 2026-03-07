@@ -193,7 +193,7 @@ fn bench_embedding_generation(c: &mut Criterion) {
 fn bench_vector_search(c: &mut Criterion) {
     let mut group = c.benchmark_group("vector_search");
 
-    let mut index = create_test_index(50, 2);
+    let index = create_test_index(50, 2);
 
     // Generate embeddings
     let chunk_texts: Vec<&str> = index.chunks.iter().map(|c| c.content.as_str()).collect();
@@ -221,7 +221,7 @@ fn bench_vector_search(c: &mut Criterion) {
 fn bench_hybrid_search(c: &mut Criterion) {
     let mut group = c.benchmark_group("hybrid_search");
 
-    let mut index = create_test_index(50, 2);
+    let index = create_test_index(50, 2);
 
     // Generate embeddings
     let chunk_texts: Vec<&str> = index.chunks.iter().map(|c| c.content.as_str()).collect();

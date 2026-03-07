@@ -3,10 +3,13 @@ mod export;
 pub mod handlers;
 mod index;
 mod model;
-mod util;
+pub mod util;
 
 #[cfg(feature = "mcp")]
 pub mod mcp;
+
+#[cfg(feature = "embeddings")]
+mod bert;
 
 #[cfg(feature = "embeddings")]
 pub mod embeddings;

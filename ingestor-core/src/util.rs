@@ -95,30 +95,96 @@ fn is_noise_token(token: &str) -> bool {
     false
 }
 
+/// Split a token on CamelCase boundaries.
+///
+/// Examples:
+/// - "HTMLParser" -> ["html", "parser"]
+/// - "getUserById" -> ["get", "user", "by", "id"]
+/// - "XMLHttpRequest" -> ["xml", "http", "request"]
+/// - "simpleword" -> ["simpleword"]
+/// - "URL" -> ["url"]
+fn split_camel_case(token: &str) -> Vec<String> {
+    if token.len() <= 2 {
+        return vec![token.to_ascii_lowercase()];
+    }
+
+    let bytes = token.as_bytes();
+    let mut parts = Vec::new();
+    let mut start = 0;
+
+    for i in 1..bytes.len() {
+        let prev = bytes[i - 1];
+        let curr = bytes[i];
+        let next = bytes.get(i + 1).copied();
+
+        // Split on:
+        // 1. lowercase -> uppercase: "getUser" at U
+        // 2. uppercase -> uppercase followed by lowercase: "XMLHttp" at H (to keep "XML" and "Http")
+        let should_split = (prev.is_ascii_lowercase() && curr.is_ascii_uppercase())
+            || (prev.is_ascii_uppercase()
+                && curr.is_ascii_uppercase()
+                && next.is_some_and(|n| n.is_ascii_lowercase()));
+
+        if should_split {
+            let part = &token[start..i];
+            if !part.is_empty() {
+                parts.push(part.to_ascii_lowercase());
+            }
+            start = i;
+        }
+    }
+
+    // Push remaining
+    if start < token.len() {
+        let part = &token[start..];
+        if !part.is_empty() {
+            parts.push(part.to_ascii_lowercase());
+        }
+    }
+
+    // If we didn't split anything, return the whole token
+    if parts.is_empty() {
+        vec![token.to_ascii_lowercase()]
+    } else {
+        parts
+    }
+}
+
 pub fn tokenize(text: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut buf = String::new();
     let mut buf_too_long = false;
     const MAX_TOKEN_LEN: usize = 96;
+
     for ch in text.chars() {
         if ch.is_ascii_alphanumeric() {
             if buf.len() < MAX_TOKEN_LEN {
-                buf.push(ch.to_ascii_lowercase());
+                buf.push(ch); // Keep original case for CamelCase detection
             } else {
                 buf_too_long = true;
             }
         } else if !buf.is_empty() {
-            let token = std::mem::take(&mut buf);
-            if !buf_too_long && !is_noise_token(&token) {
-                tokens.push(token);
+            let raw_token = std::mem::take(&mut buf);
+            if !buf_too_long {
+                // Split on CamelCase and add each part
+                for part in split_camel_case(&raw_token) {
+                    if !is_noise_token(&part) {
+                        tokens.push(part);
+                    }
+                }
             }
             buf_too_long = false;
         }
     }
-    if !buf.is_empty()
-        && !buf_too_long && !is_noise_token(&buf) {
-            tokens.push(buf);
+
+    if !buf.is_empty() && !buf_too_long {
+        for part in split_camel_case(&buf) {
+            if !is_noise_token(&part) {
+                tokens.push(part);
+            }
         }
+    }
+
     tokens
 }
 
@@ -129,39 +195,49 @@ pub(crate) fn tokenize_counts(text: &str, counts: &mut HashMap<String, usize>) -
     let mut buf_too_long = false;
     let mut doc_len = 0usize;
 
-    let mut flush = |buf: &[u8], len: usize, buf_too_long: bool| {
+    // Flush a raw token buffer, splitting on CamelCase and updating counts
+    let flush = |buf: &[u8],
+                 len: usize,
+                 buf_too_long: bool,
+                 counts: &mut HashMap<String, usize>,
+                 doc_len: &mut usize| {
         if len == 0 || buf_too_long {
             return;
         }
-        let token = unsafe { std::str::from_utf8_unchecked(&buf[..len]) };
-        if is_noise_token(token) {
-            return;
-        }
-        doc_len += 1;
-        if let Some(value) = counts.get_mut(token) {
-            *value += 1;
-        } else {
-            counts.insert(token.to_string(), 1);
+        // SAFETY: buf only contains ASCII alphanumeric bytes
+        let raw_token = unsafe { std::str::from_utf8_unchecked(&buf[..len]) };
+
+        // Split on CamelCase and count each part
+        for part in split_camel_case(raw_token) {
+            if is_noise_token(&part) {
+                continue;
+            }
+            *doc_len += 1;
+            if let Some(value) = counts.get_mut(&part) {
+                *value += 1;
+            } else {
+                counts.insert(part, 1);
+            }
         }
     };
 
     for &byte in text.as_bytes() {
         if byte.is_ascii_alphanumeric() {
             if len < MAX_TOKEN_LEN {
-                buf[len] = byte.to_ascii_lowercase();
+                buf[len] = byte; // Keep original case for CamelCase detection
                 len += 1;
             } else {
                 buf_too_long = true;
             }
         } else if len > 0 {
-            flush(&buf, len, buf_too_long);
+            flush(&buf, len, buf_too_long, counts, &mut doc_len);
             len = 0;
             buf_too_long = false;
         }
     }
 
     if len > 0 {
-        flush(&buf, len, buf_too_long);
+        flush(&buf, len, buf_too_long, counts, &mut doc_len);
     }
 
     doc_len
@@ -174,40 +250,6 @@ pub fn snippet(text: &str, max_len: usize) -> String {
     let mut out = text.chars().take(max_len).collect::<String>();
     out.push_str("...");
     out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{tokenize, tokenize_counts};
-    use std::collections::HashMap;
-
-    #[test]
-    fn tokenize_counts_matches_tokenize_doc_len() {
-        let inputs = [
-            "",
-            "Hello world",
-            "Prev next show more",
-            "abc DEF 123 123 123",
-            "sha256: a80e2e953bcd6a2cfe102043d84adfead9f21b4c2f89fa70527eebf4c2cf0821",
-            "Mix-of_things-and123symbols",
-        ];
-
-        for input in inputs {
-            let expected = tokenize(input);
-            let mut counts = HashMap::new();
-            let doc_len = tokenize_counts(input, &mut counts);
-
-            assert_eq!(
-                doc_len,
-                expected.len(),
-                "doc_len mismatch for input: {input}"
-            );
-
-            for token in expected {
-                assert!(counts.contains_key(&token), "missing token {token} for input: {input}");
-            }
-        }
-    }
 }
 
 #[allow(dead_code)]
@@ -297,4 +339,80 @@ pub fn build_chunk_refs(chunks: &[Chunk]) -> BTreeMap<String, String> {
     }
 
     refs
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{split_camel_case, tokenize, tokenize_counts};
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_camelcase_splitting() {
+        // Basic CamelCase
+        assert_eq!(split_camel_case("getUserById"), vec!["get", "user", "by", "id"]);
+        assert_eq!(split_camel_case("HTMLParser"), vec!["html", "parser"]);
+        assert_eq!(split_camel_case("XMLHttpRequest"), vec!["xml", "http", "request"]);
+
+        // Single word
+        assert_eq!(split_camel_case("simple"), vec!["simple"]);
+        assert_eq!(split_camel_case("ALLCAPS"), vec!["allcaps"]);
+
+        // Short tokens
+        assert_eq!(split_camel_case("ID"), vec!["id"]);
+        assert_eq!(split_camel_case("a"), vec!["a"]);
+
+        // Numbers
+        assert_eq!(split_camel_case("getUser123"), vec!["get", "user123"]);
+
+        // Edge cases
+        assert_eq!(split_camel_case("URLParser"), vec!["url", "parser"]);
+        assert_eq!(split_camel_case("parseURL"), vec!["parse", "url"]);
+    }
+
+    #[test]
+    fn test_tokenize_with_camelcase() {
+        let tokens = tokenize("function getUserById() { return null; }");
+        assert!(tokens.contains(&"get".to_string()));
+        assert!(tokens.contains(&"user".to_string()));
+        assert!(tokens.contains(&"by".to_string()));
+
+        let tokens = tokenize("const xhr = new XMLHttpRequest();");
+        assert!(tokens.contains(&"xml".to_string()));
+        assert!(tokens.contains(&"http".to_string()));
+        assert!(tokens.contains(&"request".to_string()));
+
+        let tokens = tokenize("class HTMLParser extends BaseParser {}");
+        assert!(tokens.contains(&"html".to_string()));
+        assert!(tokens.contains(&"parser".to_string()));
+        assert!(tokens.contains(&"base".to_string()));
+    }
+
+    #[test]
+    fn tokenize_counts_matches_tokenize_doc_len() {
+        let inputs = [
+            "",
+            "Hello world",
+            "Prev next show more",
+            "abc DEF 123 123 123",
+            "sha256: a80e2e953bcd6a2cfe102043d84adfead9f21b4c2f89fa70527eebf4c2cf0821",
+            "Mix-of_things-and123symbols",
+            "getUserById HTMLParser XMLHttpRequest",
+        ];
+
+        for input in inputs {
+            let expected = tokenize(input);
+            let mut counts = HashMap::new();
+            let doc_len = tokenize_counts(input, &mut counts);
+
+            assert_eq!(
+                doc_len,
+                expected.len(),
+                "doc_len mismatch for input: {input}"
+            );
+
+            for token in &expected {
+                assert!(counts.contains_key(token), "missing token {token} for input: {input}");
+            }
+        }
+    }
 }
