@@ -2,6 +2,14 @@
 name = "llmx"
 version = "0.1.0"
 edition = "2021"
+description = "Fast codebase indexing and semantic search MCP server with BM25 and hybrid embeddings"
+license = "MIT"
+repository = "https://github.com/johnzfitch/llmx"
+homepage = "https://llm.cat"
+documentation = "https://github.com/johnzfitch/llmx#readme"
+keywords = ["mcp", "search", "indexing", "embeddings", "rag"]
+categories = ["command-line-utilities", "development-tools"]
+readme = "../README.md"
 
 [dependencies]
 hex = "0.4"
@@ -20,9 +28,9 @@ ignore = "0.4"  # .gitignore-aware file walking (same as ripgrep)
 lru = "0.16"    # LRU cache for dynamic index caching
 
 # Phase 6: Burn-based semantic embeddings (pure Rust, no C++ runtime)
-burn = { git = "https://github.com/tracel-ai/burn", rev = "64871dfffaca8b57cc7ce5bfdc51f9afb84154a9", default-features = false, features = ["std"], optional = true }
-burn-ndarray = { git = "https://github.com/tracel-ai/burn", rev = "64871dfffaca8b57cc7ce5bfdc51f9afb84154a9", optional = true }
-burn-wgpu = { git = "https://github.com/tracel-ai/burn", rev = "64871dfffaca8b57cc7ce5bfdc51f9afb84154a9", optional = true }
+burn = { version = "0.21.0-pre.2", default-features = false, features = ["std"], optional = true }
+burn-ndarray = { version = "0.21.0-pre.2", optional = true }
+burn-wgpu = { version = "0.21.0-pre.2", optional = true }
 tokenizers = { version = "0.20", default-features = false, features = ["unstable_wasm"], optional = true }
 
 [features]

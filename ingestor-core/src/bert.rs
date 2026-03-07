@@ -3,8 +3,7 @@ use burn::nn::{
     Dropout, DropoutConfig, Embedding, EmbeddingConfig, Gelu, LayerNorm, LayerNormConfig, Linear,
     LinearConfig,
 };
-use burn::tensor::module::attention;
-use burn::tensor::{backend::Backend, Bool, Int, Tensor};
+use burn::tensor::{activation::softmax, backend::Backend, Bool, Int, Tensor};
 
 const VOCAB_SIZE: usize = 30_522;
 const HIDDEN_SIZE: usize = 384;
@@ -114,10 +113,14 @@ impl<B: Backend> BertSelfAttention<B> {
             .reshape([batch_size, seq_len, NUM_ATTENTION_HEADS, head_dim])
             .swap_dims(1, 2);
 
-        // Note: attention_mask.clone() here is necessary as Burn's attention() takes Option<Tensor>
-        // This clone happens 12x per forward pass (once per layer)
-        // Potential optimization: Check if future Burn versions accept Option<&Tensor>
-        let context = attention(query, key, value, Some(attention_mask.clone()));
+        // Scaled dot-product attention (manual impl, avoids burn internal API churn)
+        let scale = (head_dim as f64).sqrt();
+        let scores = query.clone().matmul(key.swap_dims(2, 3)).div_scalar(scale);
+        // attention_mask: true = mask out → add large negative to logits before softmax
+        let bias = attention_mask.clone().float().mul_scalar(-10000.0f64);
+        let scores = scores + bias;
+        let weights = softmax(scores, 3);
+        let context = weights.matmul(value);
         context
             .swap_dims(1, 2)
             .reshape([batch_size, seq_len, HIDDEN_SIZE])
