@@ -1,8 +1,10 @@
 use crate::{build_inverted_index, compute_stats, FileMeta, IndexFile, IndexStats};
 use anyhow::{Context, Result};
+use lru::LruCache;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
 /// Stored index format (without inverted_index)
@@ -69,11 +71,32 @@ pub struct Registry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexMetadata {
-    pub id: String,
+    #[serde(alias = "id")]
+    pub index_id: String,
     pub root_path: String,
     pub created_at: u64,
     pub file_count: usize,
     pub chunk_count: usize,
+}
+
+/// Maximum size of an index file we will read from disk before deserialization.
+const MAX_INDEX_FILE_BYTES: u64 = 512 * 1024 * 1024; // 512 MB
+
+/// Number of deserialized indexes kept in the in-memory LRU cache.
+const CACHE_CAPACITY: usize = 20;
+
+/// Validate that an index_id is safe to use in file paths.
+///
+/// Index IDs must be non-empty, ≤128 chars, and contain only ASCII
+/// alphanumerics, hyphens, and underscores to prevent path traversal.
+fn validate_index_id(id: &str) -> Result<()> {
+    if id.is_empty() || id.len() > 128 {
+        anyhow::bail!("Invalid index_id length");
+    }
+    if !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        anyhow::bail!("Invalid index_id: must contain only alphanumerics, hyphens, and underscores");
+    }
+    Ok(())
 }
 
 /// Index storage with in-memory cache and persistent disk backing.
@@ -82,24 +105,25 @@ pub struct IndexMetadata {
 ///
 /// `IndexStore` manages codebase indexes with a two-tier architecture:
 /// 1. **Disk Storage**: Atomic writes with temp-file-and-rename pattern
-/// 2. **Memory Cache**: Lazy-loaded indexes for fast repeated access
+/// 2. **Memory Cache**: LRU-evicting cache for fast repeated access
 ///
 /// # Storage Format
 ///
 /// - Indexes: `{storage_dir}/{index_id}.json` (without inverted index for size)
 /// - Registry: `{storage_dir}/registry.json` (path → index_id mapping)
 ///
-/// # Performance Characteristics
+/// # Note on index_id
 ///
-/// - Save: O(n) where n = index size, includes atomic write
-/// - Load: O(n) first access (rebuild inverted index), O(1) cached
-/// - Search: O(1) cache lookup + O(m) search where m = matching chunks
+/// `index_id` is content-addressed (sha256 of chunk content). Two codebases
+/// with identical content share an index entry; the registry disambiguates by
+/// `root_path` for `list` and `find_by_path`, but `load`/`delete` work on the
+/// raw ID.
 ///
 /// # Thread Safety
 ///
 /// Not thread-safe internally. Use `Arc<Mutex<IndexStore>>` for concurrent access.
 pub struct IndexStore {
-    cache: HashMap<String, IndexFile>,
+    cache: LruCache<String, IndexFile>,
     storage_dir: PathBuf,
     registry: Registry,
 }
@@ -129,7 +153,7 @@ impl IndexStore {
         let registry = Self::load_registry(&storage_dir)?;
 
         Ok(IndexStore {
-            cache: HashMap::new(),
+            cache: LruCache::new(NonZeroUsize::new(CACHE_CAPACITY).unwrap()),
             storage_dir,
             registry,
         })
@@ -151,10 +175,11 @@ impl IndexStore {
     ///
     /// Returns error if index file doesn't exist or is corrupted.
     pub fn load(&mut self, id: &str) -> Result<&IndexFile> {
-        if !self.cache.contains_key(id) {
+        validate_index_id(id)?;
+        if !self.cache.contains(id) {
             let stored = self.load_from_disk(id)?;
             let index = self.rebuild_index(stored)?;
-            self.cache.insert(id.to_string(), index);
+            self.cache.put(id.to_string(), index);
         }
         Ok(self.cache.get(id).unwrap())
     }
@@ -181,6 +206,7 @@ impl IndexStore {
     ///
     /// Returns error if unable to write to disk or update registry.
     pub fn save(&mut self, index: IndexFile, root_path: String) -> Result<String> {
+        validate_index_id(&index.index_id)?;
         let mut stored = StoredIndex::from(&index);
         stored.root_path = root_path.clone();
 
@@ -196,21 +222,21 @@ impl IndexStore {
             .context("Failed to rename temp index file")?;
 
         // Update cache
-        self.cache.insert(index.index_id.clone(), index.clone());
+        self.cache.put(index.index_id.clone(), index.clone());
 
         // Update registry, cleaning up any orphaned index file from a previous ID
         let path_hash = Self::hash_path(&root_path);
         if let Some(old_meta) = self.registry.indexes.get(&path_hash) {
-            if old_meta.id != index.index_id {
-                let old_file = self.storage_dir.join(format!("{}.json", old_meta.id));
+            if old_meta.index_id != index.index_id {
+                let old_file = self.storage_dir.join(format!("{}.json", old_meta.index_id));
                 let _ = fs::remove_file(&old_file);
-                self.cache.remove(&old_meta.id);
+                self.cache.pop(&old_meta.index_id);
             }
         }
         self.registry.indexes.insert(
             path_hash,
             IndexMetadata {
-                id: index.index_id.clone(),
+                index_id: index.index_id.clone(),
                 root_path,
                 created_at: stored.created_at,
                 file_count: index.files.len(),
@@ -229,6 +255,7 @@ impl IndexStore {
 
     /// Delete index by ID
     pub fn delete(&mut self, id: &str) -> Result<()> {
+        validate_index_id(id)?;
         // Remove from disk
         let target = self.storage_dir.join(format!("{}.json", id));
         if target.exists() {
@@ -237,10 +264,10 @@ impl IndexStore {
         }
 
         // Remove from cache
-        self.cache.remove(id);
+        self.cache.pop(id);
 
         // Remove from registry
-        self.registry.indexes.retain(|_, meta| meta.id != id);
+        self.registry.indexes.retain(|_, meta| meta.index_id != id);
         self.save_registry()?;
 
         Ok(())
@@ -250,7 +277,7 @@ impl IndexStore {
     pub fn find_by_path(&self, root: &Path) -> Option<String> {
         let path_hash = Self::hash_path(&root.to_string_lossy());
         self.registry.indexes.get(&path_hash)
-            .map(|meta| meta.id.clone())
+            .map(|meta| meta.index_id.clone())
     }
 
     /// Get mutable reference to cached index
@@ -294,7 +321,14 @@ impl IndexStore {
     }
 
     fn load_from_disk(&self, id: &str) -> Result<StoredIndex> {
+        validate_index_id(id)?;
         let path = self.storage_dir.join(format!("{}.json", id));
+        let file_size = fs::metadata(&path)
+            .with_context(|| format!("Index not found: {}", id))?
+            .len();
+        if file_size > MAX_INDEX_FILE_BYTES {
+            anyhow::bail!("Index file too large ({} bytes)", file_size);
+        }
         let data = fs::read(&path)
             .with_context(|| format!("Failed to read index file for {}", id))?;
 

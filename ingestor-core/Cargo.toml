@@ -36,7 +36,7 @@ tokenizers = { version = "0.20", default-features = false, features = ["unstable
 [features]
 default = ["treesitter", "mcp"]
 treesitter = ["tree-sitter", "tree-sitter-javascript", "tree-sitter-typescript"]
-mcp = ["dep:rmcp", "dep:schemars", "dep:tokio", "dep:dirs", "dep:tracing", "dep:tracing-subscriber", "dep:anyhow"]
+mcp = ["dep:rmcp", "dep:schemars", "dep:tokio", "dep:dirs", "dep:tracing", "dep:tracing-subscriber", "dep:anyhow", "dep:getrandom"]
 cli = ["dep:clap", "dep:dirs", "dep:anyhow"]
 embeddings = ["dep:burn", "dep:tokenizers"]
 ndarray-backend = ["embeddings", "dep:burn-ndarray"]
@@ -81,6 +81,10 @@ features = ["env-filter"]
 
 [dependencies.anyhow]
 version = "1"
+optional = true
+
+[dependencies.getrandom]
+version = "0.4"
 optional = true
 
 [dependencies.clap]

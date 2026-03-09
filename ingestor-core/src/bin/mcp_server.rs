@@ -1,6 +1,7 @@
 use llmx_mcp::mcp::{
-    llmx_explore_handler, llmx_index_handler, llmx_manage_handler, llmx_search_handler,
-    ExploreInput, IndexInput, IndexStore, ManageInput, SearchInput,
+    llmx_explore_handler, llmx_manage_handler, llmx_search_handler, run_index_work,
+    ExploreInput, IndexInput, IndexStatsOutput, IndexStore, ManageInput, SearchInput,
+    JobState, JobStatus, JobStore, new_job_id, new_job_store, active_job_count, MAX_CONCURRENT_JOBS,
 };
 use rmcp::handler::server::{router::tool::ToolRouter, tool::Parameters};
 use rmcp::model::{ErrorData as McpError, *};
@@ -9,6 +10,7 @@ use std::env;
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tracing_subscriber::EnvFilter;
 
 /// MCP server for codebase indexing and semantic search.
@@ -32,39 +34,87 @@ use tracing_subscriber::EnvFilter;
 #[derive(Clone)]
 struct LlmxServer {
     store: Arc<Mutex<IndexStore>>,
+    jobs: JobStore,
     tool_router: ToolRouter<Self>,
 }
 
 #[tool_router]
 impl LlmxServer {
-    fn new(store: Arc<Mutex<IndexStore>>) -> Self {
+    fn new(store: Arc<Mutex<IndexStore>>, jobs: JobStore) -> Self {
         Self {
             store,
+            jobs,
             tool_router: Self::tool_router(),
         }
     }
 
-    /// Create or update a codebase index from file paths
-    #[tool(description = "Create or update index from file paths")]
+    /// Create or update a codebase index from file paths.
+    /// Returns a job_id immediately; poll with llmx_manage(action='job_status').
+    #[tool(description = "Create or update index from file paths. Returns job_id immediately; poll with llmx_manage(action='job_status', index_id='<job_id>')")]
     async fn llmx_index(
         &self,
         Parameters(input): Parameters<IndexInput>,
     ) -> Result<CallToolResult, McpError> {
-        let mut store = self
-            .store
-            .lock()
-            .map_err(|e| {
-                McpError::internal_error(
-                    format!("IndexStore mutex poisoned - indicates a panic in a previous operation: {e}"),
-                    None,
-                )
-            })?;
-        let output = llmx_index_handler(&mut store, input)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        // Reject if too many jobs are already active
+        if active_job_count(&self.jobs) >= MAX_CONCURRENT_JOBS {
+            return Err(McpError::internal_error(
+                format!("Too many active indexing jobs (max {MAX_CONCURRENT_JOBS}). Wait for existing jobs to complete."),
+                None,
+            ));
+        }
 
-        let content = serde_json::to_string_pretty(&output)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let job_id = new_job_id();
 
+        self.jobs.lock()
+            .map_err(|e| McpError::internal_error(format!("Job store lock poisoned: {e}"), None))?
+            .insert(job_id.clone(), JobState::queued());
+
+        let store = self.store.clone();
+        let jobs = self.jobs.clone();
+        let jid = job_id.clone();
+
+        tokio::task::spawn_blocking(move || {
+            // Update status to running
+            if let Ok(mut jobs_guard) = jobs.lock() {
+                if let Some(state) = jobs_guard.get_mut(&jid) {
+                    state.status = JobStatus::Running;
+                }
+            }
+
+            // Heavy work -- NO store lock held here
+            let result = run_index_work(&input);
+
+            let final_status = match result {
+                Ok((index, root_path, _opts)) => {
+                    let stats = IndexStatsOutput {
+                        total_files: index.stats.total_files,
+                        total_chunks: index.stats.total_chunks,
+                        avg_chunk_tokens: index.stats.avg_chunk_tokens,
+                    };
+                    let warnings = index.warnings.len();
+                    match store.lock() {
+                        Ok(mut s) => match s.save(index, root_path) {
+                            Ok(index_id) => JobStatus::Complete { index_id, stats, warnings },
+                            Err(e) => JobStatus::Error { message: e.to_string() },
+                        },
+                        Err(e) => JobStatus::Error { message: format!("Store lock poisoned: {e}") },
+                    }
+                }
+                Err(e) => JobStatus::Error { message: e.to_string() },
+            };
+
+            if let Ok(mut jobs_guard) = jobs.lock() {
+                if let Some(state) = jobs_guard.get_mut(&jid) {
+                    state.status = final_status;
+                }
+            }
+        });
+
+        let content = serde_json::to_string_pretty(&serde_json::json!({
+            "job_id": job_id,
+            "status": "queued",
+            "message": "Indexing started. Poll with llmx_manage(action='job_status', index_id='<job_id>')."
+        })).map_err(|e| McpError::internal_error(e.to_string(), None))?;
         Ok(CallToolResult::success(vec![Content::text(content)]))
     }
 
@@ -116,12 +166,25 @@ impl LlmxServer {
         Ok(CallToolResult::success(vec![Content::text(content)]))
     }
 
-    /// List or delete indexes
-    #[tool(description = "List or delete indexes")]
+    /// List or delete indexes, or check job status
+    #[tool(description = "List, delete indexes, or check job status (action='job_status', index_id='<job_id>')")]
     async fn llmx_manage(
         &self,
         Parameters(input): Parameters<ManageInput>,
     ) -> Result<CallToolResult, McpError> {
+        // Handle job_status before taking the store lock
+        if input.action == "job_status" {
+            let job_id = input.index_id.as_deref()
+                .ok_or_else(|| McpError::invalid_params("index_id (job_id) required for job_status", None))?;
+            let jobs = self.jobs.lock()
+                .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+            let state = jobs.get(job_id)
+                .ok_or_else(|| McpError::invalid_params(format!("Unknown job_id: {job_id}"), None))?;
+            let content = serde_json::to_string_pretty(&state.status)
+                .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+            return Ok(CallToolResult::success(vec![Content::text(content)]));
+        }
+
         let mut store = self
             .store
             .lock()
@@ -174,7 +237,20 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Starting LLMX MCP server, storage: {:?}", storage_dir);
 
     let store = IndexStore::new(storage_dir)?;
-    let server = LlmxServer::new(Arc::new(Mutex::new(store)));
+    let jobs = new_job_store();
+
+    // Spawn cleanup task: remove completed/errored jobs older than 10 minutes
+    let cleanup_jobs = jobs.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            if let Ok(mut jobs) = cleanup_jobs.lock() {
+                jobs.retain(|_, state| state.started_at.elapsed().as_secs() < 600);
+            }
+        }
+    });
+
+    let server = LlmxServer::new(Arc::new(Mutex::new(store)), jobs);
 
     // Run server with stdio transport
     tracing::info!("Server ready, listening on stdio");

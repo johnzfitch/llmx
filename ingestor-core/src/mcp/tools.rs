@@ -1,5 +1,6 @@
+use crate::handlers::{read_file, walk_directory, MAX_SEARCH_LIMIT};
 use crate::mcp::storage::{IndexStore, IndexMetadata};
-use crate::{ingest_files, search, FileInput, IngestOptions, SearchFilters};
+use crate::{ingest_files, search, IngestOptions, SearchFilters};
 #[cfg(feature = "embeddings")]
 use crate::HybridStrategy;
 use anyhow::{Context, Result};
@@ -10,7 +11,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const DEFAULT_MAX_TOKENS: usize = 16000;
+const DEFAULT_MAX_TOKENS: usize = 8000;
 
 // Input/Output types for MCP tools
 
@@ -43,7 +44,7 @@ pub struct IndexOutput {
     pub warnings: Vec<WarningOutput>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct IndexStatsOutput {
     pub total_files: usize,
     pub total_chunks: usize,
@@ -111,24 +112,29 @@ pub struct ExploreInput {
 #[derive(Debug, Deserialize)]
 #[cfg_attr(feature = "mcp", derive(JsonSchema))]
 pub struct ManageInput {
-    #[cfg_attr(feature = "mcp", schemars(description = "Action: 'list' or 'delete'"))]
+    #[cfg_attr(feature = "mcp", schemars(description = "Action: 'list', 'delete', or 'job_status'"))]
     pub action: String,
     #[serde(default)]
-    #[cfg_attr(feature = "mcp", schemars(description = "Index ID (required for delete)"))]
+    #[cfg_attr(feature = "mcp", schemars(description = "Index ID (required for delete) or job ID (required for job_status)"))]
     pub index_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct SearchOutput {
     pub results: Vec<SearchResultOutput>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub truncated_ids: Option<Vec<String>>,
+    /// Number of matches excluded from results due to token budget.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub truncated_count: usize,
     pub total_matches: usize,
 }
 
+fn is_zero(n: &usize) -> bool { *n == 0 }
+
 #[derive(Debug, Serialize)]
 pub struct SearchResultOutput {
+    #[serde(skip)]
     pub chunk_id: String,
+    #[serde(skip)]
     pub score: f32,
     pub path: String,
     pub start_line: usize,
@@ -155,6 +161,65 @@ pub struct ManageOutput {
 }
 
 // Tool handler implementations
+
+/// CPU/IO heavy part of indexing -- runs in spawn_blocking, no store lock held.
+pub fn run_index_work(input: &IndexInput) -> Result<(crate::IndexFile, String, IngestOptions)> {
+    let mut files = vec![];
+    for path_str in &input.paths {
+        let path = PathBuf::from(path_str)
+            .canonicalize()
+            .with_context(|| format!("Invalid path: {}", path_str))?;
+
+        let metadata = fs::symlink_metadata(&path)?;
+        if metadata.is_symlink() {
+            continue;
+        }
+
+        if metadata.is_dir() {
+            walk_directory(&path, &mut files)?;  // crate::handlers::walk_directory
+        } else if metadata.is_file() {
+            read_file(&path, &mut files)?;       // crate::handlers::read_file
+        }
+    }
+
+    let root_path = PathBuf::from(&input.paths[0])
+        .canonicalize()
+        .unwrap_or_else(|_| PathBuf::from(&input.paths[0]))
+        .to_string_lossy()
+        .to_string();
+
+    let options = IngestOptions {
+        chunk_target_chars: input.options.as_ref()
+            .and_then(|o| o.chunk_target_chars)
+            .unwrap_or(4000),
+        chunk_max_chars: 8000,
+        max_file_bytes: input.options.as_ref()
+            .and_then(|o| o.max_file_bytes)
+            .unwrap_or(100 * 1024 * 1024),
+        max_total_bytes: input.options.as_ref()
+            .and_then(|o| o.max_total_bytes)
+            .unwrap_or(100 * 1024 * 1024),
+        max_chunks_per_file: 2000,
+    };
+
+    let index = {
+        #[cfg_attr(not(feature = "embeddings"), allow(unused_mut))]
+        let mut index = ingest_files(files, options.clone());
+        #[cfg(feature = "embeddings")]
+        {
+            use crate::embeddings::{generate_embeddings, MODEL_ID};
+            let chunk_texts: Vec<&str> = index.chunks.iter()
+                .map(|c| c.content.as_str())
+                .collect();
+            let embeddings = generate_embeddings(&chunk_texts);
+            index.embeddings = Some(embeddings);
+            index.embedding_model = Some(MODEL_ID.to_string());
+        }
+        index
+    };
+
+    Ok((index, root_path, options))
+}
 
 /// Handler for `llmx_index` tool: Create or update codebase indexes.
 ///
@@ -183,64 +248,8 @@ pub struct ManageOutput {
 ///
 /// Returns error if unable to read files or save index.
 pub fn llmx_index_handler(store: &mut IndexStore, input: IndexInput) -> Result<IndexOutput> {
-    // Collect files from paths
-    let mut files = vec![];
-    for path_str in &input.paths {
-        // Canonicalize to prevent path traversal attacks
-        let path = PathBuf::from(path_str)
-            .canonicalize()
-            .with_context(|| format!("Invalid path: {}", path_str))?;
-
-        // Skip symlinks to prevent traversal outside intended directories
-        let metadata = fs::symlink_metadata(&path)?;
-        if metadata.is_symlink() {
-            continue;
-        }
-
-        if metadata.is_dir() {
-            walk_directory(&path, &mut files)?;
-        } else if metadata.is_file() {
-            read_file(&path, &mut files)?;
-        }
-    }
-
-    // Check if index exists for these paths (canonicalize for stable registry key)
-    let root_path = PathBuf::from(&input.paths[0])
-        .canonicalize()
-        .unwrap_or_else(|_| PathBuf::from(&input.paths[0]))
-        .to_string_lossy()
-        .to_string();
+    let (index, root_path, _options) = run_index_work(&input)?;
     let existing_id = store.find_by_path(Path::new(&root_path));
-
-    let options = IngestOptions {
-        chunk_target_chars: input.options.as_ref()
-            .and_then(|o| o.chunk_target_chars)
-            .unwrap_or(4000),
-        chunk_max_chars: 8000,
-        max_file_bytes: input.options.as_ref()
-            .and_then(|o| o.max_file_bytes)
-            .unwrap_or(100 * 1024 * 1024),
-        max_total_bytes: input.options.as_ref()
-            .and_then(|o| o.max_total_bytes)
-            .unwrap_or(100 * 1024 * 1024),
-        max_chunks_per_file: 2000,
-    };
-
-    let index = {
-        #[cfg_attr(not(feature = "embeddings"), allow(unused_mut))]
-        let mut index = ingest_files(files, options);
-        #[cfg(feature = "embeddings")]
-        {
-            use crate::embeddings::{generate_embeddings, MODEL_ID};
-            let chunk_texts: Vec<&str> = index.chunks.iter()
-                .map(|c| c.content.as_str())
-                .collect();
-            let embeddings = generate_embeddings(&chunk_texts);
-            index.embeddings = Some(embeddings);
-            index.embedding_model = Some(MODEL_ID.to_string());
-        }
-        index
-    };
     let created = existing_id.is_none();
 
     let index_id = store.save(index.clone(), root_path)?;
@@ -310,7 +319,7 @@ pub fn llmx_search_handler(store: &mut IndexStore, input: SearchInput) -> Result
         symbol_prefix: f.symbol_prefix.clone(),
     }).unwrap_or_default();
 
-    let limit = input.limit.unwrap_or(10);
+    let limit = input.limit.unwrap_or(10).min(MAX_SEARCH_LIMIT);
     let max_tokens = input.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS);
 
     // Phase 5: Choose search strategy based on use_semantic flag
@@ -352,7 +361,7 @@ pub fn llmx_search_handler(store: &mut IndexStore, input: SearchInput) -> Result
 
     let mut results = vec![];
     let mut tokens_used = 0;
-    let mut truncated = vec![];
+    let mut truncated_count = 0;
 
     for result in &search_results {
         let chunk = chunk_map.get(result.chunk_id.as_str())
@@ -371,7 +380,7 @@ pub fn llmx_search_handler(store: &mut IndexStore, input: SearchInput) -> Result
             });
             tokens_used += chunk.token_estimate;
         } else {
-            truncated.push(result.chunk_id.clone());
+            truncated_count += 1;
         }
 
         if results.len() >= limit {
@@ -381,82 +390,9 @@ pub fn llmx_search_handler(store: &mut IndexStore, input: SearchInput) -> Result
 
     Ok(SearchOutput {
         results,
-        truncated_ids: if truncated.is_empty() { None } else { Some(truncated) },
+        truncated_count,
         total_matches: search_results.len(),
     })
-}
-
-// Helper functions
-
-fn walk_directory(path: &Path, files: &mut Vec<FileInput>) -> Result<()> {
-    for entry in fs::read_dir(path)? {
-        let entry = entry?;
-        let entry_path = entry.path();
-
-        // Skip symlinks to prevent directory traversal attacks
-        let metadata = match fs::symlink_metadata(&entry_path) {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-        if metadata.is_symlink() {
-            continue;
-        }
-
-        let is_dir = metadata.is_dir();
-
-        // Skip hidden directories (not files) and common non-code directories
-        if is_dir {
-            if let Some(name) = entry_path.file_name().and_then(|n| n.to_str()) {
-                if name.starts_with('.') || name == "node_modules" || name == "target" || name == "dist" || name == "build" {
-                    continue;
-                }
-            }
-        }
-
-        if is_dir {
-            walk_directory(&entry_path, files)?;
-        } else if metadata.is_file() {
-            read_file(&entry_path, files)?;
-        }
-    }
-    Ok(())
-}
-
-/// Dotfiles we allow indexing (have no extension per Path::extension())
-/// Note: .env is deliberately excluded - it commonly contains secrets
-const ALLOWED_DOTFILES: &[&str] = &[".npmrc", ".nvmrc", ".editorconfig", ".gitignore"];
-
-/// Check if a file should be indexed based on extension or dotfile name.
-fn is_allowed_file(path: &Path) -> bool {
-    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-        crate::handlers::ALLOWED_EXTENSIONS.contains(&ext)
-    } else if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-        ALLOWED_DOTFILES.contains(&name)
-    } else {
-        false
-    }
-}
-
-fn read_file(path: &Path, files: &mut Vec<FileInput>) -> Result<()> {
-    if !is_allowed_file(path) {
-        return Ok(());
-    }
-
-    // Get metadata first to access mtime without double syscall
-    let metadata = fs::metadata(path)?;
-    let data = fs::read(path)?;
-
-    files.push(FileInput {
-        path: path.to_string_lossy().to_string(),
-        data,
-        mtime_ms: metadata.modified()
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_millis() as u64),
-        fingerprint_sha256: None,
-    });
-
-    Ok(())
 }
 
 fn parse_chunk_kind(s: &str) -> Option<crate::ChunkKind> {

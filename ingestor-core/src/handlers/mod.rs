@@ -58,6 +58,15 @@ pub const ALLOWED_EXTENSIONS: &[&str] = &[
     "log", "jsonl", "csv", "xml", "ini", "cfg", "conf",
 ];
 
+const MAX_WALK_DEPTH: usize = 50;
+
+/// Maximum results per search to prevent huge allocations from unbounded `limit`.
+pub const MAX_SEARCH_LIMIT: usize = 200;
+
+/// Dotfiles we allow indexing (no extension per `Path::extension()`).
+/// Note: `.env` is deliberately excluded -- commonly contains secrets.
+pub(crate) const ALLOWED_DOTFILES: &[&str] = &[".npmrc", ".nvmrc", ".editorconfig", ".gitignore"];
+
 /// Handler for `llmx_index` tool: Create or update codebase indexes.
 ///
 /// # Arguments
@@ -75,10 +84,16 @@ pub const ALLOWED_EXTENSIONS: &[&str] = &[
 pub fn llmx_index_handler(store: &mut IndexStore, input: IndexInput) -> Result<IndexOutput> {
     let mut files = vec![];
     for path_str in &input.paths {
-        let path = PathBuf::from(path_str);
-        if path.is_dir() {
+        let path = PathBuf::from(path_str)
+            .canonicalize()
+            .with_context(|| format!("Invalid path: {}", path_str))?;
+        let metadata = fs::symlink_metadata(&path)?;
+        if metadata.is_symlink() {
+            continue;
+        }
+        if metadata.is_dir() {
             walk_directory(&path, &mut files)?;
-        } else if path.is_file() {
+        } else if metadata.is_file() {
             read_file(&path, &mut files)?;
         }
     }
@@ -158,7 +173,7 @@ pub fn llmx_search_handler(store: &mut IndexStore, input: SearchInput) -> Result
         })
         .unwrap_or_default();
 
-    let limit = input.limit.unwrap_or(10);
+    let limit = input.limit.unwrap_or(10).min(MAX_SEARCH_LIMIT);
     let max_tokens = input.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS);
 
     let search_results = if input.use_semantic.unwrap_or(false) {
@@ -580,7 +595,7 @@ fn perform_search(
         })
         .unwrap_or_default();
 
-    let limit = limit.unwrap_or(10);
+    let limit = limit.unwrap_or(10).min(MAX_SEARCH_LIMIT);
     let max_tokens = max_tokens.unwrap_or(DEFAULT_MAX_TOKENS);
 
     let search_results = if use_semantic.unwrap_or(false) {
@@ -658,43 +673,58 @@ fn perform_search(
 
 // Helper functions
 
-fn walk_directory(path: &Path, files: &mut Vec<FileInput>) -> Result<()> {
+pub(crate) fn walk_directory(path: &Path, files: &mut Vec<FileInput>) -> Result<()> {
+    walk_directory_inner(path, files, 0)
+}
+
+fn walk_directory_inner(path: &Path, files: &mut Vec<FileInput>, depth: usize) -> Result<()> {
+    if depth > MAX_WALK_DEPTH {
+        return Ok(());
+    }
     for entry in fs::read_dir(path)? {
         let entry = entry?;
-        let path = entry.path();
+        let entry_path = entry.path();
 
-        // Skip hidden directories and common non-code directories
-        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            if name.starts_with('.')
-                || name == "node_modules"
-                || name == "target"
-                || name == "dist"
-                || name == "build"
-            {
-                continue;
-            }
+        // Use symlink_metadata to avoid following symlinks
+        let metadata = match fs::symlink_metadata(&entry_path) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if metadata.is_symlink() {
+            continue;
         }
 
-        if path.is_dir() {
-            walk_directory(&path, files)?;
-        } else if path.is_file() {
-            read_file(&path, files)?;
+        if metadata.is_dir() {
+            if let Some(name) = entry_path.file_name().and_then(|n| n.to_str()) {
+                if name.starts_with('.')
+                    || matches!(name, "node_modules" | "target" | "dist" | "build")
+                {
+                    continue;
+                }
+            }
+            walk_directory_inner(&entry_path, files, depth + 1)?;
+        } else if metadata.is_file() {
+            read_file(&entry_path, files)?;
         }
     }
     Ok(())
 }
 
-fn read_file(path: &Path, files: &mut Vec<FileInput>) -> Result<()> {
+pub(crate) fn read_file(path: &Path, files: &mut Vec<FileInput>) -> Result<()> {
     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
         if !ALLOWED_EXTENSIONS.contains(&ext) {
+            return Ok(());
+        }
+    } else if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+        if !ALLOWED_DOTFILES.contains(&name) {
             return Ok(());
         }
     } else {
         return Ok(());
     }
 
-    let data = fs::read(path)?;
     let metadata = fs::metadata(path)?;
+    let data = fs::read(path)?;
 
     files.push(FileInput {
         path: path.to_string_lossy().to_string(),
