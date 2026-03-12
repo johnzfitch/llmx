@@ -1,3 +1,4 @@
+use crate::graph::ast_kind_label;
 use crate::model::{Chunk, FileMeta, IndexStats, SearchFilters, SearchResult, TermEntry};
 use crate::util::{snippet, tokenize, tokenize_counts};
 use std::collections::{BTreeMap, HashMap};
@@ -11,7 +12,8 @@ pub fn build_inverted_index(chunks: &[Chunk]) -> BTreeMap<String, TermEntry> {
     let mut term_map: BTreeMap<String, Vec<(String, usize, usize)>> = BTreeMap::new();
     for chunk in chunks {
         let mut counts: HashMap<String, usize> = HashMap::new();
-        let doc_len = tokenize_counts(&chunk.content, &mut counts);
+        let mut doc_len = tokenize_counts(&chunk.content, &mut counts);
+        add_structural_terms(chunk, &mut counts, &mut doc_len);
         if doc_len == 0 {
             continue;
         }
@@ -40,6 +42,52 @@ pub fn build_inverted_index(chunks: &[Chunk]) -> BTreeMap<String, TermEntry> {
     }
 
     inverted
+}
+
+fn add_structural_terms(chunk: &Chunk, counts: &mut HashMap<String, usize>, doc_len: &mut usize) {
+    let mut push_weighted = |text: &str, weight: usize| {
+        if text.trim().is_empty() {
+            return;
+        }
+
+        for token in tokenize(text) {
+            *doc_len += weight;
+            if let Some(count) = counts.get_mut(&token) {
+                *count += weight;
+            } else {
+                counts.insert(token, weight);
+            }
+        }
+    };
+
+    if let Some(symbol) = &chunk.symbol {
+        push_weighted(symbol, 2);
+    }
+    if let Some(qualified_name) = &chunk.qualified_name {
+        push_weighted(qualified_name, 2);
+    }
+    if let Some(signature) = &chunk.signature {
+        push_weighted(signature, 1);
+    }
+    if let Some(doc_summary) = &chunk.doc_summary {
+        push_weighted(doc_summary, 1);
+    }
+    if let Some(ast_kind) = chunk.ast_kind {
+        push_weighted(ast_kind_label(ast_kind), 1);
+    }
+
+    for import in &chunk.imports {
+        push_weighted(import, 1);
+    }
+    for export in &chunk.exports {
+        push_weighted(export, 1);
+    }
+    for call in &chunk.calls {
+        push_weighted(call, 1);
+    }
+    for type_ref in &chunk.type_refs {
+        push_weighted(type_ref, 1);
+    }
 }
 
 pub fn compute_stats(files: &[FileMeta], chunks: &[Chunk]) -> IndexStats {
@@ -128,6 +176,8 @@ pub fn search_index(
                 end_line: chunk.end_line,
                 snippet: snippet(&chunk.content, 200),
                 heading_path: chunk.heading_path.clone(),
+                match_reason: None,
+                matched_engines: vec!["bm25".to_string()],
             })
         })
         .collect();
@@ -137,7 +187,7 @@ pub fn search_index(
     results
 }
 
-fn passes_filters(chunk: &Chunk, filters: &SearchFilters) -> bool {
+pub(crate) fn passes_filters(chunk: &Chunk, filters: &SearchFilters) -> bool {
     if let Some(exact) = &filters.path_exact {
         if chunk.path != *exact {
             return false;
@@ -172,7 +222,7 @@ fn passes_filters(chunk: &Chunk, filters: &SearchFilters) -> bool {
 }
 
 /// Check if a heading path matches a prefix without allocating a joined string.
-fn heading_matches_prefix(heading_path: &[String], prefix: &str) -> bool {
+pub(crate) fn heading_matches_prefix(heading_path: &[String], prefix: &str) -> bool {
     if heading_path.is_empty() {
         return prefix.is_empty();
     }
@@ -286,6 +336,8 @@ pub fn vector_search(
                 end_line: chunk.end_line,
                 snippet: snippet(&chunk.content, 200),
                 heading_path: chunk.heading_path.clone(),
+                match_reason: None,
+                matched_engines: vec!["dense".to_string()],
             }
         })
         .collect()
@@ -378,6 +430,13 @@ pub fn hybrid_search_with_strategy(
                         .get(chunk_id.as_str())
                         .cloned()
                         .unwrap_or_else(|| chunk.short_id.clone());
+                    let mut matched_engines = Vec::new();
+                    if bm25_results.iter().any(|result| result.chunk_id == chunk_id) {
+                        matched_engines.push("bm25".to_string());
+                    }
+                    if semantic_results.iter().any(|result| result.chunk_id == chunk_id) {
+                        matched_engines.push("dense".to_string());
+                    }
                     hybrid_results.push(SearchResult {
                         chunk_id: chunk_id.clone(),
                         chunk_ref,
@@ -387,6 +446,8 @@ pub fn hybrid_search_with_strategy(
                         end_line: chunk.end_line,
                         snippet: snippet(&chunk.content, 200),
                         heading_path: chunk.heading_path.clone(),
+                        match_reason: None,
+                        matched_engines,
                     });
                 }
             }
@@ -432,6 +493,13 @@ pub fn hybrid_search_with_strategy(
                         .get(chunk_id.as_str())
                         .cloned()
                         .unwrap_or_else(|| chunk.short_id.clone());
+                    let mut matched_engines = Vec::new();
+                    if bm25_score > 0.0 {
+                        matched_engines.push("bm25".to_string());
+                    }
+                    if semantic_score > 0.0 {
+                        matched_engines.push("dense".to_string());
+                    }
                     hybrid_results.push(SearchResult {
                         chunk_id: chunk_id.clone(),
                         chunk_ref,
@@ -441,6 +509,8 @@ pub fn hybrid_search_with_strategy(
                         end_line: chunk.end_line,
                         snippet: snippet(&chunk.content, 200),
                         heading_path: chunk.heading_path.clone(),
+                        match_reason: None,
+                        matched_engines,
                     });
                 }
             }
@@ -455,6 +525,7 @@ pub fn hybrid_search_with_strategy(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{AstNodeKind, ChunkKind};
 
     #[test]
     fn test_heading_matches_prefix() {
@@ -480,5 +551,42 @@ mod tests {
         assert!(heading_matches_prefix(&multi, "API/Auth"));
         assert!(!heading_matches_prefix(&multi, "API/B"));
         assert!(!heading_matches_prefix(&multi, "B"));
+    }
+
+    #[test]
+    fn test_type_refs_do_not_inject_bare_type_token() {
+        let chunk = Chunk {
+            id: "chunk-1".to_string(),
+            short_id: "chunk-1".to_string(),
+            slug: "claims".to_string(),
+            path: "src/auth.ts".to_string(),
+            kind: ChunkKind::JavaScript,
+            chunk_index: 0,
+            start_line: 1,
+            end_line: 3,
+            content: "export function verify(claims: Claims) {}".to_string(),
+            content_hash: "hash".to_string(),
+            token_estimate: 6,
+            heading_path: Vec::new(),
+            symbol: Some("verify".to_string()),
+            address: None,
+            asset_path: None,
+            ast_kind: Some(AstNodeKind::Function),
+            qualified_name: Some("verify".to_string()),
+            signature: None,
+            parent_symbol: None,
+            imports: Vec::new(),
+            exports: Vec::new(),
+            calls: Vec::new(),
+            type_refs: vec!["Claims".to_string()],
+            doc_summary: None,
+        };
+
+        let inverted = build_inverted_index(&[chunk]);
+        assert!(inverted.contains_key("claims"));
+        assert!(
+            !inverted.contains_key("type"),
+            "type_refs should not inject a global 'type' token into the index"
+        );
     }
 }

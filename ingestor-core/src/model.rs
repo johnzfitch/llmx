@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+pub const INDEX_VERSION: u32 = 2;
+pub const DEFAULT_MAX_FILE_BYTES: usize = 64 * 1024 * 1024;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileInput {
     pub path: String,
@@ -26,8 +29,8 @@ impl Default for IngestOptions {
         Self {
             chunk_target_chars: 4_000,
             chunk_max_chars: 8_000,
-            max_file_bytes: 10 * 1024 * 1024,
-            max_total_bytes: 50 * 1024 * 1024,
+            max_file_bytes: DEFAULT_MAX_FILE_BYTES,
+            max_total_bytes: usize::MAX,
             max_chunks_per_file: 2_000,
         }
     }
@@ -63,6 +66,55 @@ pub struct Chunk {
     pub address: Option<String>,
     #[serde(default)]
     pub asset_path: Option<String>,
+
+    // Phase 7: Structural metadata for code intelligence
+    /// AST node kind (function, class, method, module, import, type, etc.)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ast_kind: Option<AstNodeKind>,
+    /// Fully qualified symbol name: "auth::jwt::verify_token"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qualified_name: Option<String>,
+    /// Function/method signature: "fn verify_token(token: &str) -> Result<Claims>"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+    /// Parent scope symbol: "auth::jwt" or enclosing class/module
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_symbol: Option<String>,
+    /// Symbols imported or referenced by this chunk
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub imports: Vec<String>,
+    /// Symbols defined/exported by this chunk
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exports: Vec<String>,
+    /// Functions/methods called within this chunk
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub calls: Vec<String>,
+    /// Types referenced (struct names, trait bounds, type annotations)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub type_refs: Vec<String>,
+    /// First sentence of doc comment, if present
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub doc_summary: Option<String>,
+}
+
+/// Phase 7: AST node classification for structural search
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum AstNodeKind {
+    Function,
+    Method,
+    Class,
+    Module,
+    Interface,
+    Type,
+    Enum,
+    Constant,
+    Variable,
+    Import,
+    Export,
+    Test,
+    /// Non-code or unclassified
+    Other,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,6 +175,60 @@ pub struct IndexFile {
     /// Embedding model identifier for cache invalidation
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embedding_model: Option<String>,
+    /// Structural symbol lookup table keyed by lowercase symbol/prefix.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub symbols: SymbolTable,
+    /// Forward and reverse relationship indexes for code graph traversal.
+    #[serde(default, skip_serializing_if = "EdgeIndex::is_empty")]
+    pub edges: EdgeIndex,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SymbolIndexEntry {
+    pub name: String,
+    pub qualified_name: String,
+    pub ast_kind: AstNodeKind,
+    pub chunk_id: String,
+    pub path: String,
+    pub start_line: usize,
+    pub end_line: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub doc_summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_symbol: Option<String>,
+}
+
+pub type SymbolTable = BTreeMap<String, Vec<SymbolIndexEntry>>;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum EdgeKind {
+    Imports,
+    Calls,
+    TypeRef,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Edge {
+    pub source_chunk_id: String,
+    pub target_symbol: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_chunk_id: Option<String>,
+    pub edge_kind: EdgeKind,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct EdgeIndex {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub forward: BTreeMap<String, Vec<Edge>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub reverse: BTreeMap<String, Vec<Edge>>,
+}
+
+impl EdgeIndex {
+    pub fn is_empty(&self) -> bool { self.forward.is_empty() && self.reverse.is_empty() }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -155,4 +261,28 @@ pub struct SearchResult {
     pub end_line: usize,
     pub snippet: String,
     pub heading_path: Vec<String>,
+    /// Phase 7: Human-readable explanation of why this result matched
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub match_reason: Option<String>,
+    /// Phase 7: Which engines contributed to this result
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub matched_engines: Vec<String>,
+}
+
+/// Phase 7: Query intent classification for adaptive routing
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QueryIntent {
+    /// Looks like a symbol name: camelCase, snake_case, ::, .method
+    Symbol,
+    /// Natural language question: "how does auth work"
+    Semantic,
+    /// Exact keyword/grep-like: "TODO", "FIXME", "unsafe"
+    Keyword,
+    /// Auto-detect (default)
+    Auto,
+}
+
+impl Default for QueryIntent {
+    fn default() -> Self { Self::Auto }
 }

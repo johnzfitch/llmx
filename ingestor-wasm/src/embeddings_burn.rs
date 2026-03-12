@@ -1,6 +1,6 @@
 /// Phase 6: Burn-based embeddings with WebGPU acceleration
 ///
-/// Provides real semantic embeddings using arctic-embed-s model
+/// Provides real semantic embeddings using mdbr-leaf-ir
 /// running on WebGPU in the browser.
 
 use burn::tensor::{backend::Backend, Int, Tensor, TensorData};
@@ -16,8 +16,8 @@ use crate::model_loader::load_model_cpu;
 use tokenizers::Tokenizer;
 use wasm_bindgen::prelude::*;
 
-/// Embedding dimension for arctic-embed-s
-pub const EMBEDDING_DIM: usize = 384;
+/// Embedding dimension for mdbr-leaf-ir after projection head
+pub const EMBEDDING_DIM: usize = 768;
 
 /// Maximum sequence length for the model
 const MAX_SEQ_LENGTH: usize = 512;
@@ -72,9 +72,9 @@ fn webgpu_opt_in_enabled() -> bool {
 /// TOKENIZER_SHA256 to match, and ensure the local ./models/tokenizer.json is updated.
 const TOKENIZER_URL_PRIMARY: &str = "./models/tokenizer.json";
 const TOKENIZER_URL_FALLBACK: &str =
-    "https://huggingface.co/Snowflake/snowflake-arctic-embed-s/resolve/main/tokenizer.json";
-const TOKENIZER_CACHE_KEY: &str = "arctic-embed-s-tokenizer-v1";
-const TOKENIZER_SHA256: &str = "91f1def9b9391fdabe028cd3f3fcc4efd34e5d1f08c3bf2de513ebb5911a1854";
+    "https://huggingface.co/MongoDB/mdbr-leaf-ir/resolve/main/tokenizer.json";
+const TOKENIZER_CACHE_KEY: &str = "mdbr-leaf-ir-tokenizer-da0e79933b9e.json";
+const TOKENIZER_SHA256: &str = "da0e79933b9ed51798a3ae27893d3c5fa4a201126cef75586296df9b4d2c62a0";
 const MAX_TOKENIZER_BYTES: usize = 5 * 1024 * 1024;
 const ALLOWED_TOKENIZER_ORIGINS: [&str; 1] = ["https://huggingface.co/"];
 
@@ -192,67 +192,18 @@ impl EmbeddingBackend for CpuEmbeddingGenerator {
     }
 }
 
-/// Hash-based fallback (Phase 5 compatibility)
-pub struct HashEmbeddingGenerator;
-
-impl HashEmbeddingGenerator {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl EmbeddingBackend for HashEmbeddingGenerator {
-    fn embed(&self, text: &str) -> Result<Vec<f32>, JsValue> {
-        // Use the existing hash-based embedding from ingestor-core
-        // This is the Phase 5 fallback
-        use sha2::{Digest, Sha256};
-
-        let mut hasher = Sha256::new();
-        hasher.update(text.as_bytes());
-        let hash = hasher.finalize();
-
-        let mut embedding = Vec::with_capacity(EMBEDDING_DIM);
-        for i in 0..EMBEDDING_DIM {
-            let idx = i % hash.len();
-            let value = (hash[idx] as f32 - 128.0) / 128.0;
-            embedding.push(value);
-        }
-
-        // L2 normalize
-        let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
-        if norm > 0.0 {
-            for x in &mut embedding {
-                *x /= norm;
-            }
-        }
-
-        Ok(embedding)
-    }
-
-    fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, JsValue> {
-        texts.iter()
-            .map(|text| self.embed(text))
-            .collect()
-    }
-
-    fn dimension(&self) -> usize {
-        EMBEDDING_DIM
-    }
-}
-
 /// Smart embedding generator with automatic fallback
 pub enum SmartEmbeddingGenerator {
     #[cfg(feature = "wgpu-backend")]
     WebGpu(WgpuEmbeddingGenerator),
     #[cfg(feature = "ndarray-backend")]
     Cpu(CpuEmbeddingGenerator),
-    Hash(HashEmbeddingGenerator),
 }
 
 impl SmartEmbeddingGenerator {
     /// Create embedding generator with automatic fallback chain:
-    /// WebGPU → CPU → Hash-based
-    pub async fn new() -> Self {
+    /// WebGPU → CPU
+    pub async fn new() -> Result<Self, JsValue> {
         set_panic_hook_once();
 
         // Try WebGPU first (may panic in WASM with Burn 0.21 - known issue)
@@ -263,7 +214,7 @@ impl SmartEmbeddingGenerator {
                 match WgpuEmbeddingGenerator::new().await {
                     Ok(gen) => {
                         web_sys::console::log_1(&JsValue::from_str("Embeddings backend: WebGPU"));
-                        return Self::WebGpu(gen);
+                        return Ok(Self::WebGpu(gen));
                     }
                     Err(e) => {
                         web_sys::console::warn_1(&JsValue::from_str(&format!(
@@ -282,14 +233,12 @@ impl SmartEmbeddingGenerator {
         #[cfg(feature = "ndarray-backend")]
         if let Ok(gen) = CpuEmbeddingGenerator::new().await {
             web_sys::console::log_1(&JsValue::from_str("Embeddings backend: CPU"));
-            return Self::Cpu(gen);
+            return Ok(Self::Cpu(gen));
         }
 
-        // Last resort: hash-based
-        web_sys::console::warn_1(&JsValue::from_str(
-            "Embeddings backend: hash (models unavailable)",
-        ));
-        Self::Hash(HashEmbeddingGenerator::new())
+        Err(JsValue::from_str(
+            "Failed to initialize embeddings backend: WebGPU and CPU backends are unavailable",
+        ))
     }
 }
 
@@ -300,7 +249,6 @@ impl EmbeddingBackend for SmartEmbeddingGenerator {
             Self::WebGpu(gen) => gen.embed(text),
             #[cfg(feature = "ndarray-backend")]
             Self::Cpu(gen) => gen.embed(text),
-            Self::Hash(gen) => gen.embed(text),
         }
     }
 
@@ -310,7 +258,6 @@ impl EmbeddingBackend for SmartEmbeddingGenerator {
             Self::WebGpu(gen) => gen.embed_batch(texts),
             #[cfg(feature = "ndarray-backend")]
             Self::Cpu(gen) => gen.embed_batch(texts),
-            Self::Hash(gen) => gen.embed_batch(texts),
         }
     }
 
@@ -320,7 +267,6 @@ impl EmbeddingBackend for SmartEmbeddingGenerator {
             Self::WebGpu(gen) => gen.dimension(),
             #[cfg(feature = "ndarray-backend")]
             Self::Cpu(gen) => gen.dimension(),
-            Self::Hash(gen) => gen.dimension(),
         }
     }
 }
@@ -368,7 +314,8 @@ fn embed_with_model<B: Backend>(
 
     let hidden = model.forward(input_ids, attention_mask.clone());
     let pooled = mean_pool(hidden, attention_mask);
-    let normalized = l2_normalize(pooled);
+    let projected = model.project_embeddings(pooled);
+    let normalized = l2_normalize(projected);
 
     let data = normalized.into_data();
     data.to_vec::<f32>()
@@ -448,7 +395,8 @@ fn embed_batch_with_model<B: Backend>(
 
     let hidden = model.forward(input_ids, attention_mask.clone());
     let pooled = mean_pool(hidden, attention_mask);
-    let normalized = l2_normalize(pooled);
+    let projected = model.project_embeddings(pooled);
+    let normalized = l2_normalize(projected);
 
     let data = normalized.into_data();
     let flat = data.to_vec::<f32>().map_err(|err| {
@@ -540,7 +488,7 @@ impl Embedder {
     #[wasm_bindgen]
     pub async fn create() -> Result<Embedder, JsValue> {
         set_panic_hook_once();
-        let inner = SmartEmbeddingGenerator::new().await;
+        let inner = SmartEmbeddingGenerator::new().await?;
         Ok(Embedder { inner })
     }
 
@@ -579,7 +527,6 @@ impl Embedder {
             SmartEmbeddingGenerator::WebGpu(_) => MODEL_ID.to_string(),
             #[cfg(feature = "ndarray-backend")]
             SmartEmbeddingGenerator::Cpu(_) => MODEL_ID.to_string(),
-            SmartEmbeddingGenerator::Hash(_) => "hash-based-v1".to_string(),
         }
     }
 }
@@ -600,7 +547,7 @@ mod tests {
         let device = NdArrayDevice::default();
 
         // Load model and tokenizer
-        let model_bytes = include_bytes!("../models/arctic-embed-s.bin");
+        let model_bytes = include_bytes!("../models/mdbr-leaf-ir.bin");
         let tokenizer_bytes = include_bytes!("../models/tokenizer.json");
 
         let tokenizer = Tokenizer::from_bytes(tokenizer_bytes)
@@ -644,7 +591,8 @@ mod tests {
 
             let hidden = model.forward(input_ids_tensor, attention_mask_tensor.clone());
             let pooled = mean_pool(hidden, attention_mask_tensor);
-            let normalized = l2_normalize(pooled);
+            let projected = model.project_embeddings(pooled);
+            let normalized = l2_normalize(projected);
 
             normalized
                 .to_data()
@@ -665,8 +613,8 @@ mod tests {
         );
         assert_eq!(
             emb1.len(),
-            384,
-            "Expected 384-dimensional embeddings for arctic-embed-s"
+            768,
+            "Expected 768-dimensional embeddings for mdbr-leaf-ir"
         );
 
         // Verify exact equality (no randomness from dropout)

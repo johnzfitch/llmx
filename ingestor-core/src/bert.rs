@@ -8,12 +8,13 @@ use burn::tensor::{activation::softmax, backend::Backend, Bool, Int, Tensor};
 const VOCAB_SIZE: usize = 30_522;
 const HIDDEN_SIZE: usize = 384;
 const NUM_ATTENTION_HEADS: usize = 12;
-const NUM_HIDDEN_LAYERS: usize = 12;
+const NUM_HIDDEN_LAYERS: usize = 6;
 const INTERMEDIATE_SIZE: usize = 1_536;
 const MAX_POSITION_EMBEDDINGS: usize = 512;
 const TYPE_VOCAB_SIZE: usize = 2;
 const LAYER_NORM_EPS: f64 = 1e-12;
 const DROPOUT_PROB: f64 = 0.0;
+const EMBEDDING_OUTPUT_SIZE: usize = 768;
 
 pub type Model<B> = BertModel<B>;
 
@@ -291,6 +292,7 @@ impl<B: Backend> BertEncoder<B> {
 pub struct BertModel<B: Backend> {
     pub embeddings: BertEmbeddings<B>,
     pub encoder: BertEncoder<B>,
+    pub dense: Linear<B>,
 }
 
 impl<B: Backend> BertModel<B> {
@@ -300,6 +302,7 @@ impl<B: Backend> BertModel<B> {
         Self {
             embeddings: BertEmbeddings::new(device),
             encoder: BertEncoder::new(device),
+            dense: LinearConfig::new(HIDDEN_SIZE, EMBEDDING_OUTPUT_SIZE).with_bias(true).init(device),
         }
     }
 
@@ -325,6 +328,10 @@ impl<B: Backend> BertModel<B> {
         let embedding_output = self.embeddings.forward(input_ids, token_type_ids);
         let attention_mask = build_attention_mask(attention_mask);
         self.encoder.forward(embedding_output, &attention_mask)
+    }
+
+    pub fn project_embeddings(&self, pooled: Tensor<B, 2>) -> Tensor<B, 2> {
+        self.dense.forward(pooled)
     }
 }
 

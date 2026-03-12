@@ -19,14 +19,17 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use llmx_mcp::handlers::{
     llmx_explore_handler, llmx_get_chunk_handler, llmx_index_handler, llmx_manage_handler,
-    llmx_search_dynamic_handler, llmx_search_handler, DynamicCache, DynamicSearchInput,
-    ExploreInput, IndexInput, IndexStore, IngestOptionsInput, ManageInput, SearchFiltersInput,
-    SearchInput,
+    llmx_lookup_handler, llmx_refs_handler, llmx_search_dynamic_handler, llmx_search_handler,
+    llmx_symbols_handler, DynamicCache, DynamicSearchInput, ExploreInput, IndexInput, IndexStore,
+    IngestOptionsInput, LookupInput, ManageInput, RefsInput, SearchFiltersInput, SearchInput,
+    SymbolsInput,
 };
-use llmx_mcp::{export_llm, export_manifest_json, export_zip};
+use llmx_mcp::{export_llm, export_manifest_json, export_zip, DEFAULT_MAX_FILE_BYTES};
 use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
+
+const DEFAULT_SEARCH_MAX_TOKENS: usize = 8000;
 
 #[derive(Parser)]
 #[command(name = "llmx_mcp", version, about = "Codebase indexing and semantic search")]
@@ -59,8 +62,8 @@ enum Commands {
         #[arg(long, default_value = "4000")]
         chunk_size: usize,
 
-        /// Maximum file size in bytes (default: 10MB)
-        #[arg(long, default_value = "10485760")]
+        /// Maximum file size in bytes (default: 64MB)
+        #[arg(long, default_value_t = DEFAULT_MAX_FILE_BYTES)]
         max_file: usize,
     },
 
@@ -88,8 +91,8 @@ enum Commands {
         #[arg(long)]
         force: bool,
 
-        /// Token budget for inline content (default: 16000)
-        #[arg(long, default_value = "16000")]
+        /// Token budget for inline content (default: 8000)
+        #[arg(long, default_value_t = DEFAULT_SEARCH_MAX_TOKENS)]
         max_tokens: usize,
 
         /// Maximum number of results (default: 10)
@@ -107,6 +110,22 @@ enum Commands {
         /// Use hybrid BM25+embeddings search
         #[arg(long)]
         semantic: bool,
+
+        /// Search strategy: auto, bm25, semantic, or hybrid
+        #[arg(long)]
+        strategy: Option<String>,
+
+        /// Hybrid fusion strategy: rrf or linear
+        #[arg(long)]
+        hybrid_strategy: Option<String>,
+
+        /// Query intent routing: auto, symbol, semantic, or keyword
+        #[arg(long)]
+        intent: Option<String>,
+
+        /// Include human-readable explanations for why each result matched
+        #[arg(long)]
+        explain: bool,
     },
 
     /// List files, outline, or symbols from index
@@ -119,8 +138,66 @@ enum Commands {
         path: Option<String>,
     },
 
+    /// List structural symbols with rich metadata
+    Symbols {
+        /// Symbol name pattern: exact `foo`, prefix `foo*`, or substring `*foo*`
+        #[arg(long)]
+        pattern: Option<String>,
+
+        /// Filter by kind: function, method, class, interface, type, enum, constant, variable, test
+        #[arg(long)]
+        kind: Option<String>,
+
+        /// Filter by file path prefix
+        #[arg(long)]
+        path: Option<String>,
+
+        /// Maximum number of results (default: 50)
+        #[arg(long, default_value = "50")]
+        limit: usize,
+    },
+
+    /// Look up exact or prefix-matched symbols from the structural index
+    Lookup {
+        /// Exact symbol or prefix pattern, for example `parseConfig` or `parse*`
+        symbol: String,
+
+        /// Filter by kind: function, method, class, interface, type, enum, constant, variable, test
+        #[arg(long)]
+        kind: Option<String>,
+
+        /// Filter by file path prefix
+        #[arg(long)]
+        path: Option<String>,
+
+        /// Maximum number of results (default: 20)
+        #[arg(long, default_value = "20")]
+        limit: usize,
+    },
+
+    /// Trace structural references between indexed symbols
+    Refs {
+        /// Symbol to trace references for
+        symbol: String,
+
+        /// Direction: callers, callees, importers, imports, or type_users
+        #[arg(long)]
+        direction: String,
+
+        /// Traversal depth in hops (default: 1)
+        #[arg(long, default_value = "1")]
+        depth: usize,
+
+        /// Maximum number of results (default: 20)
+        #[arg(long, default_value = "20")]
+        limit: usize,
+    },
+
     /// List all persistent indexes
     List,
+
+    /// Show detailed stats for a persistent index
+    Stats,
 
     /// Delete a persistent index
     Delete {
@@ -180,6 +257,10 @@ fn main() -> Result<()> {
             filter_path,
             kind,
             semantic,
+            strategy,
+            hybrid_strategy,
+            intent,
+            explain,
         } => cmd_search(
             &mut store,
             &mut cache,
@@ -194,6 +275,10 @@ fn main() -> Result<()> {
             filter_path,
             kind,
             semantic,
+            strategy,
+            hybrid_strategy,
+            intent,
+            explain,
             cli.json,
         ),
 
@@ -201,7 +286,46 @@ fn main() -> Result<()> {
             cmd_explore(&mut store, &cli.index_id, mode, path, cli.json)
         }
 
+        Commands::Symbols {
+            pattern,
+            kind,
+            path,
+            limit,
+        } => cmd_symbols(
+            &mut store,
+            &cli.index_id,
+            pattern,
+            kind,
+            path,
+            limit,
+            cli.json,
+        ),
+
+        Commands::Lookup {
+            symbol,
+            kind,
+            path,
+            limit,
+        } => cmd_lookup(&mut store, &cli.index_id, symbol, kind, path, limit, cli.json),
+
+        Commands::Refs {
+            symbol,
+            direction,
+            depth,
+            limit,
+        } => cmd_refs(
+            &mut store,
+            &cli.index_id,
+            symbol,
+            direction,
+            depth,
+            limit,
+            cli.json,
+        ),
+
         Commands::List => cmd_list(&mut store, cli.json),
+
+        Commands::Stats => cmd_stats(&mut store, &cli.index_id, cli.json),
 
         Commands::Delete { id } => cmd_delete(&mut store, id, cli.json),
 
@@ -237,6 +361,7 @@ fn cmd_index(
         options: Some(IngestOptionsInput {
             chunk_target_chars: Some(chunk_size),
             max_file_bytes: Some(max_file),
+            max_total_bytes: None,
         }),
     };
 
@@ -283,6 +408,10 @@ fn cmd_search(
     filter_path: Option<String>,
     kind: Option<String>,
     semantic: bool,
+    strategy: Option<String>,
+    hybrid_strategy: Option<String>,
+    intent: Option<String>,
+    explain: bool,
     json_output: bool,
 ) -> Result<()> {
     // If explicit --index-id is provided, use the old search handler
@@ -296,6 +425,10 @@ fn cmd_search(
             filter_path,
             kind,
             semantic,
+            strategy,
+            hybrid_strategy,
+            intent,
+            explain,
             json_output,
         );
     }
@@ -316,6 +449,10 @@ fn cmd_search(
         limit: Some(limit),
         max_tokens: Some(max_tokens),
         use_semantic: Some(semantic),
+        hybrid_strategy,
+        intent,
+        explain: Some(explain),
+        strategy,
     };
 
     let output = llmx_search_dynamic_handler(store, cache, input)?;
@@ -377,6 +514,10 @@ fn cmd_search(
             );
         }
 
+        for notice in &output.notices {
+            println!("Note: {}", notice.message);
+        }
+
         if output.stats.truncated {
             println!(
                 "Warning: Search was truncated due to safety limits (too many files or bytes)"
@@ -398,6 +539,10 @@ fn cmd_search_persistent(
     path: Option<String>,
     kind: Option<String>,
     semantic: bool,
+    strategy: Option<String>,
+    hybrid_strategy: Option<String>,
+    intent: Option<String>,
+    explain: bool,
     json_output: bool,
 ) -> Result<()> {
     let start = Instant::now();
@@ -414,6 +559,10 @@ fn cmd_search_persistent(
         limit: Some(limit),
         max_tokens: Some(max_tokens),
         use_semantic: Some(semantic),
+        hybrid_strategy,
+        intent,
+        explain: Some(explain),
+        strategy,
     };
 
     let output = llmx_search_handler(store, input)?;
@@ -462,6 +611,10 @@ fn cmd_search_persistent(
                 truncated.len()
             );
         }
+
+        for notice in &output.notices {
+            println!("Note: {}", notice.message);
+        }
     }
 
     Ok(())
@@ -496,6 +649,141 @@ fn cmd_explore(
     Ok(())
 }
 
+fn cmd_lookup(
+    store: &mut IndexStore,
+    index_id_override: &Option<String>,
+    symbol: String,
+    kind: Option<String>,
+    path: Option<String>,
+    limit: usize,
+    json_output: bool,
+) -> Result<()> {
+    let index_id = resolve_index_id(store, index_id_override)?;
+    let output = llmx_lookup_handler(
+        store,
+        LookupInput {
+            index_id,
+            symbol,
+            kind,
+            path_prefix: path,
+            limit: Some(limit),
+        },
+    )?;
+
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else {
+        println!("matches (total: {})\n", output.total);
+        for entry in &output.matches {
+            println!(
+                "{} {}:{}-{}",
+                entry.qualified_name, entry.path, entry.start_line, entry.end_line
+            );
+            println!("  kind: {}", entry.ast_kind);
+            if let Some(signature) = &entry.signature {
+                println!("  signature: {}", signature);
+            }
+            if let Some(doc_summary) = &entry.doc_summary {
+                println!("  docs: {}", doc_summary);
+            }
+            println!();
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_symbols(
+    store: &mut IndexStore,
+    index_id_override: &Option<String>,
+    pattern: Option<String>,
+    kind: Option<String>,
+    path: Option<String>,
+    limit: usize,
+    json_output: bool,
+) -> Result<()> {
+    let index_id = resolve_index_id(store, index_id_override)?;
+    let output = llmx_symbols_handler(
+        store,
+        SymbolsInput {
+            index_id,
+            pattern,
+            ast_kind: kind,
+            path_prefix: path,
+            limit: Some(limit),
+        },
+    )?;
+
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else {
+        println!("symbols (total: {})\n", output.total);
+        for entry in &output.symbols {
+            println!(
+                "{} {}:{}-{}",
+                entry.qualified_name, entry.path, entry.start_line, entry.end_line
+            );
+            println!("  kind: {}", entry.ast_kind);
+            if let Some(signature) = &entry.signature {
+                println!("  signature: {}", signature);
+            }
+            if let Some(doc_summary) = &entry.doc_summary {
+                println!("  docs: {}", doc_summary);
+            }
+            if entry.exported {
+                println!("  exported: true");
+            }
+            println!();
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_refs(
+    store: &mut IndexStore,
+    index_id_override: &Option<String>,
+    symbol: String,
+    direction: String,
+    depth: usize,
+    limit: usize,
+    json_output: bool,
+) -> Result<()> {
+    let index_id = resolve_index_id(store, index_id_override)?;
+    let output = llmx_refs_handler(
+        store,
+        RefsInput {
+            index_id,
+            symbol,
+            direction,
+            depth: Some(depth),
+            limit: Some(limit),
+        },
+    )?;
+
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else {
+        println!("refs (total: {})\n", output.total);
+        for entry in &output.refs {
+            println!(
+                "{} -> {} {}:{}-{}",
+                entry.source_symbol, entry.target_symbol, entry.path, entry.start_line, entry.end_line
+            );
+            if let Some(ast_kind) = &entry.ast_kind {
+                println!("  kind: {}", ast_kind);
+            }
+            if let Some(signature) = &entry.signature {
+                println!("  signature: {}", signature);
+            }
+            println!("  context: {}", entry.context);
+            println!();
+        }
+    }
+
+    Ok(())
+}
+
 fn cmd_list(store: &mut IndexStore, json_output: bool) -> Result<()> {
     let input = ManageInput {
         action: "list".to_string(),
@@ -524,6 +812,39 @@ fn cmd_list(store: &mut IndexStore, json_output: bool) -> Result<()> {
                 println!();
             }
         }
+    }
+
+    Ok(())
+}
+
+fn cmd_stats(
+    store: &mut IndexStore,
+    index_id_override: &Option<String>,
+    json_output: bool,
+) -> Result<()> {
+    let index_id = resolve_index_id(store, index_id_override)?;
+    let output = llmx_manage_handler(
+        store,
+        ManageInput {
+            action: "stats".to_string(),
+            index_id: Some(index_id),
+        },
+    )?;
+
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else if let Some(stats) = &output.stats {
+        println!("stats\n");
+        println!("files: {}", stats.total_files);
+        println!("chunks: {}", stats.total_chunks);
+        println!("avg_chunk_tokens: {}", stats.avg_chunk_tokens);
+        println!("symbols: {}", stats.symbol_count);
+        println!("edges: {}", stats.edge_count);
+        println!("languages: {}", stats.language_count);
+        print_breakdown("file kinds", &stats.file_kind_breakdown);
+        print_breakdown("extensions", &stats.extension_breakdown);
+        print_breakdown("ast kinds", &stats.ast_kind_breakdown);
+        print_breakdown("edge kinds", &stats.edge_kind_breakdown);
     }
 
     Ok(())
@@ -739,5 +1060,16 @@ fn format_bytes(bytes: usize) -> String {
         format!("{:.1}KB", bytes as f64 / 1024.0)
     } else {
         format!("{}B", bytes)
+    }
+}
+
+fn print_breakdown(title: &str, breakdown: &std::collections::BTreeMap<String, usize>) {
+    if breakdown.is_empty() {
+        return;
+    }
+
+    println!("\n{}:", title);
+    for (label, count) in breakdown {
+        println!("  {}: {}", label, count);
     }
 }

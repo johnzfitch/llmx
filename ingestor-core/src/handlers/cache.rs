@@ -209,12 +209,12 @@ fn md5_hash(data: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Chunk, ChunkKind, FileMeta, IndexFile, IndexStats};
+    use crate::{Chunk, ChunkKind, EdgeIndex, FileMeta, IndexFile, IndexStats, INDEX_VERSION};
     use std::collections::BTreeMap;
 
     fn make_test_index() -> IndexFile {
         IndexFile {
-            version: 1,
+            version: INDEX_VERSION,
             index_id: "test".to_string(),
             files: vec![FileMeta {
                 path: "/tmp/test.rs".to_string(),
@@ -241,6 +241,15 @@ mod tests {
                 symbol: None,
                 address: None,
                 asset_path: None,
+                ast_kind: None,
+                qualified_name: None,
+                signature: None,
+                parent_symbol: None,
+                imports: Vec::new(),
+                exports: Vec::new(),
+                calls: Vec::new(),
+                type_refs: Vec::new(),
+                doc_summary: None,
             }],
             chunk_refs: BTreeMap::new(),
             inverted_index: BTreeMap::new(),
@@ -253,6 +262,8 @@ mod tests {
             warnings: vec![],
             embeddings: None,
             embedding_model: None,
+            symbols: BTreeMap::new(),
+            edges: EdgeIndex::default(),
         }
     }
 

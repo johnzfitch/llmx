@@ -2,11 +2,13 @@
 
 use llmx_mcp::{
     export_catalog_llm_md, export_chunks, export_chunks_compact, export_llm, export_llm_pointer,
-    export_manifest_json, export_manifest_llm_tsv, export_manifest_min_json, ingest_files, search, update_index,
-    update_index_selective, FileInput, IngestOptions,
-    IndexFile, SearchFilters,
+    export_manifest_json, export_manifest_llm_tsv, export_manifest_min_json, ingest_files, search,
+    search_advanced, update_index, update_index_selective, FileInput, IngestOptions, IndexFile,
+    QueryIntent, SearchFilters,
 };
+use llmx_mcp::query::classify_intent;
 use serde_wasm_bindgen::{from_value, to_value};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::io::{Cursor, Write};
 use wasm_bindgen::prelude::*;
@@ -34,6 +36,23 @@ pub use embeddings_burn::Embedder;
 pub struct Ingestor {
     index: IndexFile,
     assets: BTreeMap<String, Vec<u8>>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct AdvancedSearchOptions {
+    #[serde(default)]
+    explain: Option<bool>,
+    #[serde(default)]
+    intent: Option<String>,
+    #[serde(default)]
+    use_semantic: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+struct AdvancedSearchResponse {
+    results: Vec<llmx_mcp::SearchResult>,
+    resolved_intent: String,
+    used_semantic: bool,
 }
 
 #[wasm_bindgen]
@@ -86,6 +105,49 @@ impl Ingestor {
         to_value(&results).map_err(to_js_error)
     }
 
+    #[wasm_bindgen(js_name = searchAdvanced)]
+    pub fn search_advanced_js(
+        &self,
+        query: String,
+        filters: JsValue,
+        limit: usize,
+        options: JsValue,
+    ) -> Result<JsValue, JsValue> {
+        let filters: SearchFilters = if filters.is_null() || filters.is_undefined() {
+            SearchFilters::default()
+        } else {
+            from_value(filters).map_err(to_js_error)?
+        };
+        let options: AdvancedSearchOptions = if options.is_null() || options.is_undefined() {
+            AdvancedSearchOptions::default()
+        } else {
+            from_value(options).map_err(to_js_error)?
+        };
+
+        let requested_intent = parse_query_intent(options.intent.as_deref())?;
+        let resolved_intent = match requested_intent {
+            QueryIntent::Auto => classify_intent(&query),
+            other => other,
+        };
+        let explain = options.explain.unwrap_or(true);
+        let results = search_advanced(
+            &self.index,
+            &query,
+            filters,
+            limit,
+            options.use_semantic.unwrap_or(false),
+            requested_intent,
+            explain,
+        )
+        .map_err(to_js_error)?;
+        let response = AdvancedSearchResponse {
+            results,
+            resolved_intent: intent_label(resolved_intent).to_string(),
+            used_semantic: false,
+        };
+        to_value(&response).map_err(to_js_error)
+    }
+
     #[wasm_bindgen(js_name = getChunk)]
     pub fn get_chunk(&self, chunk_id: String) -> Result<JsValue, JsValue> {
         let chunk = self.index.chunks.iter().find(|c| c.id == chunk_id);
@@ -129,48 +191,7 @@ impl Ingestor {
 
     #[wasm_bindgen(js_name = exportIndexJson)]
     pub fn export_index_json(&self) -> String {
-        // Serializes index including embeddings if set via setEmbeddings()
-        // This enables embedding persistence for faster reload
         serde_json::to_string(&self.index).unwrap_or_default()
-    }
-
-    /// Set embeddings for semantic search
-    /// embeddings_js: Float32Array flattened as [chunk0_dim0, chunk0_dim1, ..., chunk1_dim0, ...]
-    /// model_id: Embedding model identifier for cache validation
-    /// dimension: Embedding dimension (e.g., 384 for arctic-embed-s)
-    #[wasm_bindgen(js_name = setEmbeddings)]
-    pub fn set_embeddings(
-        &mut self,
-        embeddings_js: js_sys::Float32Array,
-        model_id: String,
-        dimension: usize,
-    ) -> Result<(), JsValue> {
-        let flat: Vec<f32> = embeddings_js.to_vec();
-        let chunk_count = self.index.chunks.len();
-
-        // Validate dimensions
-        if flat.len() != chunk_count * dimension {
-            return Err(JsValue::from_str(&format!(
-                "Embeddings length mismatch: expected {} ({}×{}), got {}",
-                chunk_count * dimension,
-                chunk_count,
-                dimension,
-                flat.len()
-            )));
-        }
-
-        // Convert flat array to Vec<Vec<f32>>
-        let mut embeddings = Vec::with_capacity(chunk_count);
-        for i in 0..chunk_count {
-            let start = i * dimension;
-            let end = start + dimension;
-            embeddings.push(flat[start..end].to_vec());
-        }
-
-        self.index.embeddings = Some(embeddings);
-        self.index.embedding_model = Some(model_id);
-
-        Ok(())
     }
 
     #[wasm_bindgen(js_name = indexId)]
@@ -211,6 +232,28 @@ fn parse_options(value: JsValue) -> Result<IngestOptions, JsValue> {
         Ok(IngestOptions::default())
     } else {
         from_value(value).map_err(to_js_error)
+    }
+}
+
+fn parse_query_intent(value: Option<&str>) -> Result<QueryIntent, JsValue> {
+    match value {
+        None => Ok(QueryIntent::Auto),
+        Some("auto") => Ok(QueryIntent::Auto),
+        Some("symbol") => Ok(QueryIntent::Symbol),
+        Some("semantic") => Ok(QueryIntent::Semantic),
+        Some("keyword") => Ok(QueryIntent::Keyword),
+        Some(other) => Err(JsValue::from_str(&format!(
+            "Invalid intent: {other}. Use 'auto', 'symbol', 'semantic', or 'keyword'."
+        ))),
+    }
+}
+
+fn intent_label(intent: QueryIntent) -> &'static str {
+    match intent {
+        QueryIntent::Auto => "auto",
+        QueryIntent::Symbol => "symbol",
+        QueryIntent::Semantic => "semantic",
+        QueryIntent::Keyword => "keyword",
     }
 }
 

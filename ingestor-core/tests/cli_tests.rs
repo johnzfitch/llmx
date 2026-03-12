@@ -2,15 +2,32 @@
 //!
 //! These tests spawn the actual llmx binary and verify its output.
 
+#![cfg(feature = "cli")]
+
 use assert_cmd::Command;
 use predicates::prelude::*;
 use std::fs;
+use std::path::Path;
 use tempfile::TempDir;
 
 /// Get a Command for the llmx binary.
 fn llmx() -> Command {
     #[allow(deprecated)]
     Command::cargo_bin("llmx").expect("Failed to find llmx binary")
+}
+
+#[cfg(feature = "embeddings")]
+fn rewrite_embedding_model(storage_dir: &Path, index_id: &str, embedding_model: &str) {
+    let index_path = storage_dir.join(format!("{index_id}.json"));
+    let mut index_json: serde_json::Value =
+        serde_json::from_slice(&fs::read(&index_path).expect("Failed to read stored index"))
+            .expect("Failed to parse stored index");
+    index_json["embedding_model"] = serde_json::Value::String(embedding_model.to_string());
+    fs::write(
+        &index_path,
+        serde_json::to_vec(&index_json).expect("Failed to serialize stored index"),
+    )
+    .expect("Failed to rewrite stored index");
 }
 
 /// Create a test project with sample files.
@@ -22,7 +39,7 @@ fn create_test_project() -> TempDir {
     fs::write(
         temp.path().join("src/main.rs"),
         r#"fn main() {
-    println!("Hello, world!");
+    println!("{}", greet("world"));
 }
 "#,
     )
@@ -40,6 +57,28 @@ fn create_test_project() -> TempDir {
     fs::write(
         temp.path().join("README.md"),
         "# Test Project\n\nA simple test.\n",
+    )
+    .unwrap();
+
+    temp
+}
+
+fn create_structural_project() -> TempDir {
+    let temp = TempDir::new().expect("Failed to create temp dir");
+
+    fs::write(
+        temp.path().join("auth.ts"),
+        r#"
+export function verifyToken(token: string): boolean {
+  return token.length > 0;
+}
+
+export class AuthService {
+  login(token: string): boolean {
+    return verifyToken(token);
+  }
+}
+"#,
     )
     .unwrap();
 
@@ -93,8 +132,6 @@ fn test_cli_index_json_output() {
 fn test_cli_index_nonexistent_path() {
     let storage = TempDir::new().unwrap();
 
-    // Note: llmx index succeeds with nonexistent paths but creates empty index
-    // This is the current behavior - it doesn't fail on missing paths
     llmx()
         .args([
             "index",
@@ -103,8 +140,8 @@ fn test_cli_index_nonexistent_path() {
             storage.path().to_str().unwrap(),
         ])
         .assert()
-        .success()
-        .stdout(predicate::str::contains("0 files"));
+        .failure()
+        .stderr(predicate::str::contains("Invalid path"));
 }
 
 #[test]
@@ -142,6 +179,29 @@ fn test_cli_index_with_options() {
         ])
         .assert()
         .success();
+}
+
+#[test]
+fn test_cli_index_help_reports_default_file_cap() {
+    llmx()
+        .args(["index", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("default: 64MB"))
+        .stdout(predicate::str::contains("67108864"));
+}
+
+#[test]
+fn test_cli_search_help_reports_v2_options() {
+    llmx()
+        .args(["search", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--strategy"))
+        .stdout(predicate::str::contains("--hybrid-strategy"))
+        .stdout(predicate::str::contains("--intent"))
+        .stdout(predicate::str::contains("--explain"))
+        .stdout(predicate::str::contains("8000"));
 }
 
 // ============================================================================
@@ -207,6 +267,47 @@ fn test_cli_search_json_output() {
         .success()
         .stdout(predicate::str::contains("\"results\""))
         .stdout(predicate::str::contains("\"total_matches\""));
+}
+
+#[cfg(feature = "embeddings")]
+#[test]
+fn test_cli_search_semantic_reports_reindex_required_on_model_mismatch() {
+    let storage = TempDir::new().unwrap();
+    let project = create_test_project();
+
+    let output = llmx()
+        .env("LLMX_FORCE_CPU", "1")
+        .args([
+            "index",
+            project.path().to_str().unwrap(),
+            "--storage-dir",
+            storage.path().to_str().unwrap(),
+            "--json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    let index_id = json["index_id"].as_str().unwrap();
+
+    rewrite_embedding_model(storage.path(), index_id, env!("LLMX_MODEL_ID_F32"));
+
+    llmx()
+        .env("LLMX_FORCE_CPU", "1")
+        .args([
+            "search",
+            "greet",
+            "--index-id",
+            index_id,
+            "--semantic",
+            "--storage-dir",
+            storage.path().to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Re-index before using semantic search."));
 }
 
 #[test]
@@ -281,8 +382,9 @@ fn test_cli_search_no_index() {
         ])
         .current_dir(empty_dir.path())
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("No index found"));
+        .success()
+        .stdout(predicate::str::contains("[dynamic]"))
+        .stdout(predicate::str::contains("Found 0 results"));
 }
 
 // ============================================================================
@@ -402,6 +504,101 @@ fn test_cli_explore_invalid_mode() {
         .stderr(predicate::str::contains("Invalid mode"));
 }
 
+#[test]
+fn test_cli_symbols_json_output() {
+    let storage = TempDir::new().unwrap();
+    let project = create_structural_project();
+
+    llmx()
+        .args([
+            "index",
+            project.path().to_str().unwrap(),
+            "--storage-dir",
+            storage.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    llmx()
+        .args([
+            "symbols",
+            "--pattern",
+            "verify*",
+            "--storage-dir",
+            storage.path().to_str().unwrap(),
+            "--json",
+        ])
+        .current_dir(project.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"symbols\""))
+        .stdout(predicate::str::contains("\"qualified_name\": \"verifyToken\""))
+        .stdout(predicate::str::contains("\"ast_kind\": \"function\""));
+}
+
+#[test]
+fn test_cli_lookup_json_output() {
+    let storage = TempDir::new().unwrap();
+    let project = create_structural_project();
+
+    llmx()
+        .args([
+            "index",
+            project.path().to_str().unwrap(),
+            "--storage-dir",
+            storage.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    llmx()
+        .args([
+            "lookup",
+            "verifyToken",
+            "--storage-dir",
+            storage.path().to_str().unwrap(),
+            "--json",
+        ])
+        .current_dir(project.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"matches\""))
+        .stdout(predicate::str::contains("\"qualified_name\": \"verifyToken\""));
+}
+
+#[test]
+fn test_cli_refs_json_output() {
+    let storage = TempDir::new().unwrap();
+    let project = create_structural_project();
+
+    llmx()
+        .args([
+            "index",
+            project.path().to_str().unwrap(),
+            "--storage-dir",
+            storage.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    llmx()
+        .args([
+            "refs",
+            "verifyToken",
+            "--direction",
+            "callers",
+            "--storage-dir",
+            storage.path().to_str().unwrap(),
+            "--json",
+        ])
+        .current_dir(project.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"refs\""))
+        .stdout(predicate::str::contains("login"))
+        .stdout(predicate::str::contains("\"target_symbol\": \"verifyToken\""));
+}
+
 // ============================================================================
 // List Command Tests
 // ============================================================================
@@ -414,7 +611,7 @@ fn test_cli_list_empty() {
         .args(["list", "--storage-dir", storage.path().to_str().unwrap()])
         .assert()
         .success()
-        .stdout(predicate::str::contains("No indexes found"));
+        .stdout(predicate::str::contains("No persistent indexes found"));
 }
 
 #[test]
@@ -436,7 +633,7 @@ fn test_cli_list_with_indexes() {
         .args(["list", "--storage-dir", storage.path().to_str().unwrap()])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Indexes:"))
+        .stdout(predicate::str::contains("Persistent indexes:"))
         .stdout(predicate::str::contains("files"))
         .stdout(predicate::str::contains("chunks"));
 }
@@ -467,6 +664,34 @@ fn test_cli_list_json() {
         .success()
         .stdout(predicate::str::contains("["))
         .stdout(predicate::str::contains("\"id\""));
+}
+
+#[test]
+fn test_cli_stats_json() {
+    let storage = TempDir::new().unwrap();
+    let project = create_structural_project();
+
+    llmx()
+        .args([
+            "index",
+            project.path().to_str().unwrap(),
+            "--storage-dir",
+            storage.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    llmx()
+        .args(["stats", "--storage-dir", storage.path().to_str().unwrap(), "--json"])
+        .current_dir(project.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"stats\""))
+        .stdout(predicate::str::contains("\"symbol_count\""))
+        .stdout(predicate::str::contains("\"edge_count\""))
+        .stdout(predicate::str::contains("\"file_kind_breakdown\""))
+        .stdout(predicate::str::contains("\"extension_breakdown\""))
+        .stdout(predicate::str::contains("\"edge_kind_breakdown\""));
 }
 
 // ============================================================================
@@ -511,7 +736,7 @@ fn test_cli_delete() {
         .args(["list", "--storage-dir", storage.path().to_str().unwrap()])
         .assert()
         .success()
-        .stdout(predicate::str::contains("No indexes found"));
+        .stdout(predicate::str::contains("No persistent indexes found"));
 }
 
 // ============================================================================
@@ -723,7 +948,10 @@ fn test_cli_help() {
 
 #[test]
 fn test_cli_subcommand_help() {
-    for subcommand in &["index", "search", "explore", "list", "delete", "export", "get"] {
+    for subcommand in &[
+        "index", "search", "explore", "symbols", "lookup", "refs", "list", "stats", "delete", "export",
+        "get",
+    ] {
         llmx()
             .args([subcommand, "--help"])
             .assert()

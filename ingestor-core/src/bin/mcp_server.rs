@@ -1,6 +1,9 @@
 use llmx_mcp::mcp::{
-    llmx_explore_handler, llmx_manage_handler, llmx_search_handler, run_index_work,
-    ExploreInput, IndexInput, IndexStatsOutput, IndexStore, ManageInput, SearchInput,
+    llmx_explore_handler, llmx_get_chunk_handler, llmx_lookup_handler, llmx_manage_handler, llmx_refs_handler,
+    llmx_search_handler, llmx_symbols_handler,
+    run_index_work,
+    ExploreInput, GetChunkInput, IndexInput, IndexStatsOutput, IndexStore, ManageInput, SearchInput,
+    SymbolsInput, LookupInput, RefsInput,
     JobState, JobStatus, JobStore, new_job_id, new_job_store, active_job_count, MAX_CONCURRENT_JOBS,
 };
 use rmcp::handler::server::{router::tool::ToolRouter, tool::Parameters};
@@ -15,10 +18,12 @@ use tracing_subscriber::EnvFilter;
 
 /// MCP server for codebase indexing and semantic search.
 ///
-/// Provides four tools:
+/// Provides v2 tools for indexing, conceptual search, exact lookup, and graph traversal.
 /// - `llmx_index`: Create/update codebase indexes from file paths
 /// - `llmx_search`: Search with token-budgeted inline content (default 16K tokens)
-/// - `llmx_explore`: List files, outline headings, or symbols in an index
+/// - `llmx_lookup`: Exact or prefix symbol lookup using the persisted symbol table
+/// - `llmx_refs`: Traverse callers/callees/imports/type references using the persisted edge index
+/// - `llmx_get_chunk`: Fetch chunk content by ID/ref after lookup or refs
 /// - `llmx_manage`: List or delete indexes
 ///
 /// # Architecture
@@ -142,8 +147,8 @@ impl LlmxServer {
         Ok(CallToolResult::success(vec![Content::text(content)]))
     }
 
-    /// Explore index structure: files, outline, or symbols
-    #[tool(description = "Explore index structure: files, outline, symbols")]
+    /// Legacy structure exploration tool kept for compatibility.
+    #[tool(description = "Legacy compatibility tool: explore index structure (files, outline, symbols, callers/callees/importers)")]
     async fn llmx_explore(
         &self,
         Parameters(input): Parameters<ExploreInput>,
@@ -166,8 +171,75 @@ impl LlmxServer {
         Ok(CallToolResult::success(vec![Content::text(content)]))
     }
 
-    /// List or delete indexes, or check job status
-    #[tool(description = "List, delete indexes, or check job status (action='job_status', index_id='<job_id>')")]
+    /// Legacy symbol lookup tool kept for compatibility.
+    #[tool(description = "Legacy compatibility tool: symbol table lookup by glob-like pattern.")]
+    async fn llmx_symbols(
+        &self,
+        Parameters(input): Parameters<SymbolsInput>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|e| McpError::internal_error(
+                format!("IndexStore mutex poisoned: {e}"), None,
+            ))?;
+        let output = llmx_symbols_handler(&mut store, input)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let content = serde_json::to_string_pretty(&output)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        Ok(CallToolResult::success(vec![Content::text(content)]))
+    }
+
+    #[tool(description = "Exact or prefix symbol resolution by name. Use this for 'find function parseConfig' and similar symbol lookups.")]
+    async fn llmx_lookup(
+        &self,
+        Parameters(input): Parameters<LookupInput>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|e| McpError::internal_error(format!("IndexStore mutex poisoned: {e}"), None))?;
+        let output = llmx_lookup_handler(&mut store, input)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let content = serde_json::to_string_pretty(&output)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        Ok(CallToolResult::success(vec![Content::text(content)]))
+    }
+
+    #[tool(description = "Graph traversal for code structure: callers, callees, imports, importers, and type users.")]
+    async fn llmx_refs(
+        &self,
+        Parameters(input): Parameters<RefsInput>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|e| McpError::internal_error(format!("IndexStore mutex poisoned: {e}"), None))?;
+        let output = llmx_refs_handler(&mut store, input)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let content = serde_json::to_string_pretty(&output)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        Ok(CallToolResult::success(vec![Content::text(content)]))
+    }
+
+    #[tool(description = "Fetch the full chunk content by chunk ID, chunk ref, or ID prefix.")]
+    async fn llmx_get_chunk(
+        &self,
+        Parameters(input): Parameters<GetChunkInput>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|e| McpError::internal_error(format!("IndexStore mutex poisoned: {e}"), None))?;
+        let output = llmx_get_chunk_handler(&mut store, input)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let content = serde_json::to_string_pretty(&output)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        Ok(CallToolResult::success(vec![Content::text(content)]))
+    }
+
+    /// List, delete, inspect stats for indexes, or check job status
+    #[tool(description = "List indexes, delete an index, inspect index stats, or check job status (action='job_status', index_id='<job_id>')")]
     async fn llmx_manage(
         &self,
         Parameters(input): Parameters<ManageInput>,

@@ -1,4 +1,4 @@
-use crate::{build_inverted_index, compute_stats, FileMeta, IndexFile, IndexStats};
+use crate::{build_inverted_index, compute_stats, embedding_store, graph::build_structural_indexes, FileMeta, IndexFile, IndexStats, INDEX_VERSION, SymbolTable, EdgeIndex};
 use anyhow::{Context, Result};
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 /// Stored index format (without inverted_index)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredIndex {
+    #[serde(default = "default_index_version")]
+    pub version: u32,
     pub id: String,
     pub root_path: String,
     pub created_at: u64,
@@ -20,11 +22,18 @@ struct StoredIndex {
     pub embeddings: Option<Vec<Vec<f32>>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embedding_model: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub symbols: SymbolTable,
+    #[serde(default, skip_serializing_if = "EdgeIndex::is_empty")]
+    pub edges: EdgeIndex,
 }
+
+fn default_index_version() -> u32 { 1 }
 
 impl From<&IndexFile> for StoredIndex {
     fn from(index: &IndexFile) -> Self {
         StoredIndex {
+            version: index.version,
             id: index.index_id.clone(),
             root_path: String::new(), // Will be set by caller
             created_at: std::time::SystemTime::now()
@@ -33,8 +42,10 @@ impl From<&IndexFile> for StoredIndex {
                 .as_secs(),
             files: index.files.clone(),
             chunks: index.chunks.clone(),
-            embeddings: index.embeddings.clone(),
+            embeddings: None,
             embedding_model: index.embedding_model.clone(),
+            symbols: index.symbols.clone(),
+            edges: index.edges.clone(),
         }
     }
 }
@@ -43,7 +54,7 @@ impl From<StoredIndex> for IndexFile {
     fn from(stored: StoredIndex) -> Self {
         // Note: inverted_index will be rebuilt by IndexStore
         IndexFile {
-            version: 1,
+            version: stored.version.max(1),
             index_id: stored.id,
             files: stored.files,
             chunks: stored.chunks,
@@ -58,6 +69,8 @@ impl From<StoredIndex> for IndexFile {
             warnings: vec![],
             embeddings: stored.embeddings,
             embedding_model: stored.embedding_model,
+            symbols: stored.symbols,
+            edges: stored.edges,
         }
     }
 }
@@ -214,6 +227,9 @@ impl IndexStore {
         let temp = self.storage_dir.join(format!("{}.json.tmp", index.index_id));
         let target = self.storage_dir.join(format!("{}.json", index.index_id));
 
+        let embeddings_path = embedding_store::sidecar_path(&self.storage_dir, &index.index_id);
+        embedding_store::write_sidecar(&embeddings_path, index.embeddings.as_deref())?;
+
         let json = serde_json::to_vec(&stored)
             .context("Failed to serialize index")?;
         fs::write(&temp, json)
@@ -230,6 +246,8 @@ impl IndexStore {
             if old_meta.index_id != index.index_id {
                 let old_file = self.storage_dir.join(format!("{}.json", old_meta.index_id));
                 let _ = fs::remove_file(&old_file);
+                let old_embeddings = embedding_store::sidecar_path(&self.storage_dir, &old_meta.index_id);
+                let _ = fs::remove_file(&old_embeddings);
                 self.cache.pop(&old_meta.index_id);
             }
         }
@@ -261,6 +279,11 @@ impl IndexStore {
         if target.exists() {
             fs::remove_file(&target)
                 .context("Failed to delete index file")?;
+        }
+        let embeddings_path = embedding_store::sidecar_path(&self.storage_dir, id);
+        if embeddings_path.exists() {
+            fs::remove_file(&embeddings_path)
+                .context("Failed to delete embedding sidecar")?;
         }
 
         // Remove from cache
@@ -332,26 +355,51 @@ impl IndexStore {
         let data = fs::read(&path)
             .with_context(|| format!("Failed to read index file for {}", id))?;
 
-        serde_json::from_slice(&data)
-            .with_context(|| format!("Failed to parse index file for {}", id))
+        let mut stored: StoredIndex = serde_json::from_slice(&data)
+            .with_context(|| format!("Failed to parse index file for {}", id))?;
+        let embeddings_path = embedding_store::sidecar_path(&self.storage_dir, id);
+        if let Some(embeddings) = embedding_store::read_sidecar(&embeddings_path)? {
+            stored.embeddings = Some(embeddings);
+        }
+        Ok(stored)
     }
 
     fn rebuild_index(&self, stored: StoredIndex) -> Result<IndexFile> {
-        let chunk_refs = crate::util::build_chunk_refs(&stored.chunks);
-        let inverted_index = build_inverted_index(&stored.chunks);
-        let stats = compute_stats(&stored.files, &stored.chunks);
+        let StoredIndex {
+            version,
+            id,
+            root_path: _,
+            created_at: _,
+            files,
+            chunks,
+            embeddings,
+            embedding_model,
+            symbols,
+            edges,
+        } = stored;
+
+        let chunk_refs = crate::util::build_chunk_refs(&chunks);
+        let inverted_index = build_inverted_index(&chunks);
+        let stats = compute_stats(&files, &chunks);
+        let (symbols, edges) = if symbols.is_empty() && edges.is_empty() {
+            build_structural_indexes(&chunks)
+        } else {
+            (symbols, edges)
+        };
 
         Ok(IndexFile {
-            version: 1,
-            index_id: stored.id,
-            files: stored.files,
-            chunks: stored.chunks,
+            version: version.max(INDEX_VERSION),
+            index_id: id,
+            files,
+            chunks,
             chunk_refs,
             inverted_index,
             stats,
             warnings: vec![],
-            embeddings: stored.embeddings,
-            embedding_model: stored.embedding_model,
+            embeddings,
+            embedding_model,
+            symbols,
+            edges,
         })
     }
 
@@ -375,7 +423,7 @@ mod tests {
 
         // Create a minimal index
         let index = IndexFile {
-            version: 1,
+            version: INDEX_VERSION,
             index_id: "test123".to_string(),
             files: vec![],
             chunks: vec![],
@@ -390,6 +438,8 @@ mod tests {
             warnings: vec![],
             embeddings: None,
             embedding_model: None,
+            symbols: BTreeMap::new(),
+            edges: EdgeIndex::default(),
         };
 
         // Save
@@ -409,7 +459,7 @@ mod tests {
         let mut store = IndexStore::new(temp_dir.path().to_path_buf())?;
 
         let index = IndexFile {
-            version: 1,
+            version: INDEX_VERSION,
             index_id: "atomic_test".to_string(),
             files: vec![],
             chunks: vec![],
@@ -424,6 +474,8 @@ mod tests {
             warnings: vec![],
             embeddings: None,
             embedding_model: None,
+            symbols: BTreeMap::new(),
+            edges: EdgeIndex::default(),
         };
 
         store.save(index, "/test".to_string())?;

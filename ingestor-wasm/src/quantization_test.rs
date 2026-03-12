@@ -8,15 +8,43 @@ mod tests {
         Calibration, QTensorPrimitive, QuantLevel, QuantParam, QuantValue,
     };
     use burn::tensor::{Int, Tensor, TensorData};
-    use burn_import::safetensors::{AdapterType, LoadArgs, SafetensorsFileRecorder};
     use burn_ndarray::{NdArray, NdArrayDevice};
+    use burn_store::{ModuleSnapshot, PyTorchToBurnAdapter, SafetensorsStore};
     use std::path::PathBuf;
 
-    const SAFETENSORS_PATH: &str = "models/arctic-embed-s.safetensors";
-    const MODEL_BIN_PATH: &str = "models/arctic-embed-s.bin";
+    const BASE_SAFETENSORS_PATH: &str = "models/mdbr-leaf-ir.safetensors";
+    const DENSE_SAFETENSORS_PATH: &str = "models/mdbr-leaf-ir-dense.safetensors";
+    const MODEL_BIN_PATH: &str = "models/mdbr-leaf-ir.bin";
     const VALIDATE_ENV: &str = "LLMX_VALIDATE_QUANT";
     const MSE_ENV: &str = "LLMX_QUANT_MSE_MAX";
     const BIN_MSE_ENV: &str = "LLMX_BIN_MSE_MAX";
+
+    fn load_model_from_safetensors<B: burn::tensor::backend::Backend>(
+        device: &B::Device,
+    ) -> BertModel<B> {
+        let mut base_store = SafetensorsStore::from_file(PathBuf::from(BASE_SAFETENSORS_PATH))
+            .with_from_adapter(PyTorchToBurnAdapter)
+            .with_key_remapping("^bert\\.(.*)$", "$1")
+            .with_key_remapping("^model\\.(.*)$", "$1")
+            .with_key_remapping("attention\\.self\\.(.*)$", "attention.self_attn.$1")
+            .with_key_remapping("^LayerNorm\\.(.*)$", "layer_norm.$1")
+            .with_key_remapping("\\.LayerNorm\\.", ".layer_norm.")
+            .allow_partial(true);
+
+        let mut dense_store = SafetensorsStore::from_file(PathBuf::from(DENSE_SAFETENSORS_PATH))
+            .with_from_adapter(PyTorchToBurnAdapter)
+            .with_key_remapping("^linear\\.(.*)$", "dense.$1")
+            .allow_partial(true);
+
+        let mut model = BertModel::<B>::new(device);
+        model
+            .load_from(&mut base_store)
+            .expect("Failed to load base safetensors model");
+        model
+            .load_from(&mut dense_store)
+            .expect("Failed to load dense safetensors model");
+        model
+    }
 
     #[test]
     fn quantized_model_mse_smoke() {
@@ -26,8 +54,11 @@ mod tests {
             return;
         }
 
-        if !std::path::Path::new(SAFETENSORS_PATH).exists() {
-            panic!("Missing safetensors at {SAFETENSORS_PATH}");
+        if !std::path::Path::new(BASE_SAFETENSORS_PATH).exists() {
+            panic!("Missing safetensors at {BASE_SAFETENSORS_PATH}");
+        }
+        if !std::path::Path::new(DENSE_SAFETENSORS_PATH).exists() {
+            panic!("Missing dense safetensors at {DENSE_SAFETENSORS_PATH}");
         }
 
         let mse_max = std::env::var(MSE_ENV)
@@ -38,21 +69,7 @@ mod tests {
         type Backend = NdArray<f32>;
         let device = NdArrayDevice::default();
 
-        let build_load_args = || {
-            LoadArgs::new(PathBuf::from(SAFETENSORS_PATH))
-                .with_adapter_type(AdapterType::PyTorch)
-                .with_key_remap("^bert\\.(.*)$", "$1")
-                .with_key_remap("^model\\.(.*)$", "$1")
-                .with_key_remap("attention\\.self\\.(.*)$", "attention.self_attn.$1")
-                .with_key_remap("^LayerNorm\\.(.*)$", "layer_norm.$1")
-                .with_key_remap("\\.LayerNorm\\.", ".layer_norm.")
-        };
-
-        let record_full: <BertModel<Backend> as Module<Backend>>::Record =
-            SafetensorsFileRecorder::<FullPrecisionSettings>::default()
-                .load(build_load_args(), &device)
-                .expect("Failed to load safetensors record");
-        let model_full = BertModel::<Backend>::new(&device).load_record(record_full);
+        let model_full = load_model_from_safetensors::<Backend>(&device);
 
         let scheme =
             <<Backend as BurnBackend>::QuantizedTensorPrimitive as QTensorPrimitive>::default_scheme()
@@ -63,13 +80,8 @@ mod tests {
             calibration: Calibration::MinMax,
             scheme,
         };
-        let record_quant: <BertModel<Backend> as Module<Backend>>::Record =
-            SafetensorsFileRecorder::<FullPrecisionSettings>::default()
-                .load(build_load_args(), &device)
-                .expect("Failed to load safetensors record");
-        let model_quant = BertModel::<Backend>::new(&device)
-            .load_record(record_quant)
-            .quantize_weights(&mut quantizer);
+        let model_quant = load_model_from_safetensors::<Backend>(&device);
+        let model_quant = model_quant.quantize_weights(&mut quantizer);
 
         let mut cases: Vec<(&str, Vec<Vec<i64>>, Vec<Vec<i64>>)> = Vec::new();
         cases.push((
@@ -160,8 +172,11 @@ mod tests {
             return;
         }
 
-        if !std::path::Path::new(SAFETENSORS_PATH).exists() {
-            panic!("Missing safetensors at {SAFETENSORS_PATH}");
+        if !std::path::Path::new(BASE_SAFETENSORS_PATH).exists() {
+            panic!("Missing safetensors at {BASE_SAFETENSORS_PATH}");
+        }
+        if !std::path::Path::new(DENSE_SAFETENSORS_PATH).exists() {
+            panic!("Missing dense safetensors at {DENSE_SAFETENSORS_PATH}");
         }
         if !std::path::Path::new(MODEL_BIN_PATH).exists() {
             panic!("Missing Burn bin at {MODEL_BIN_PATH}");
@@ -175,16 +190,6 @@ mod tests {
         type Backend = NdArray<f32>;
         let device = NdArrayDevice::default();
 
-        let load_args = || {
-            LoadArgs::new(PathBuf::from(SAFETENSORS_PATH))
-                .with_adapter_type(AdapterType::PyTorch)
-                .with_key_remap("^bert\\.(.*)$", "$1")
-                .with_key_remap("^model\\.(.*)$", "$1")
-                .with_key_remap("attention\\.self\\.(.*)$", "attention.self_attn.$1")
-                .with_key_remap("^LayerNorm\\.(.*)$", "layer_norm.$1")
-                .with_key_remap("\\.LayerNorm\\.", ".layer_norm.")
-        };
-
         let scheme =
             <<Backend as BurnBackend>::QuantizedTensorPrimitive as QTensorPrimitive>::default_scheme()
                 .with_value(QuantValue::Q8S)
@@ -195,13 +200,8 @@ mod tests {
             scheme,
         };
 
-        let record: <BertModel<Backend> as Module<Backend>>::Record =
-            SafetensorsFileRecorder::<FullPrecisionSettings>::default()
-                .load(load_args(), &device)
-                .expect("Failed to load safetensors record");
-        let model_quant = BertModel::<Backend>::new(&device)
-            .load_record(record)
-            .quantize_weights(&mut quantizer);
+        let model_quant = load_model_from_safetensors::<Backend>(&device);
+        let model_quant = model_quant.quantize_weights(&mut quantizer);
 
         let record_bin: <BertModel<Backend> as Module<Backend>>::Record =
             BinFileRecorder::<FullPrecisionSettings>::default()

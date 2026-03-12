@@ -296,6 +296,10 @@ fn test_search_empty_query() {
         limit: Some(10),
         max_tokens: Some(16000),
         use_semantic: None,
+        intent: None,
+        explain: None,
+        hybrid_strategy: None,
+        strategy: None,
     };
 
     // Empty query should return results (or empty set, but not error)
@@ -323,6 +327,10 @@ fn test_search_very_long_query() {
         limit: Some(10),
         max_tokens: Some(16000),
         use_semantic: None,
+        intent: None,
+        explain: None,
+        hybrid_strategy: None,
+        strategy: None,
     };
 
     let result = llmx_search_handler(&mut store, search_input);
@@ -350,6 +358,10 @@ fn test_search_special_characters() {
         limit: Some(10),
         max_tokens: Some(16000),
         use_semantic: None,
+        intent: None,
+        explain: None,
+        hybrid_strategy: None,
+        strategy: None,
     };
 
     let result = llmx_search_handler(&mut store, search_input);
@@ -376,6 +388,10 @@ fn test_search_unicode_query() {
         limit: Some(10),
         max_tokens: Some(16000),
         use_semantic: None,
+        intent: None,
+        explain: None,
+        hybrid_strategy: None,
+        strategy: None,
     };
 
     let result = llmx_search_handler(&mut store, search_input);
@@ -402,6 +418,10 @@ fn test_search_token_budget_zero() {
         limit: Some(10),
         max_tokens: Some(0), // Zero budget
         use_semantic: None,
+        intent: None,
+        explain: None,
+        hybrid_strategy: None,
+        strategy: None,
     };
 
     let result = llmx_search_handler(&mut store, search_input);

@@ -1,15 +1,15 @@
 #[cfg(test)]
 mod tests {
-    use crate::bert::{BertModel, BertSelfAttention};
-    use burn::tensor::{backend::Backend, Bool, Int, Tensor, TensorData};
+    use crate::bert::BertSelfAttention;
+    use burn::tensor::{backend::Backend, Bool, Tensor, TensorData};
+    #[cfg(all(feature = "ndarray-backend", feature = "wgpu-backend"))]
+    use burn::tensor::Int;
     #[cfg(feature = "ndarray-backend")]
     use burn_ndarray::{NdArray, NdArrayDevice};
     #[cfg(all(feature = "ndarray-backend", feature = "wgpu-backend"))]
-    use burn::module::Module;
+    use crate::bert::BertModel;
     #[cfg(all(feature = "ndarray-backend", feature = "wgpu-backend"))]
-    use burn::record::{FullPrecisionSettings, Recorder};
-    #[cfg(all(feature = "ndarray-backend", feature = "wgpu-backend"))]
-    use burn_import::safetensors::{AdapterType, LoadArgs, SafetensorsFileRecorder};
+    use burn_store::{ModuleSnapshot, PyTorchToBurnAdapter, SafetensorsStore};
     #[cfg(feature = "wgpu-backend")]
     use burn_wgpu::{Wgpu, WgpuDevice};
     #[cfg(all(feature = "ndarray-backend", feature = "wgpu-backend"))]
@@ -20,7 +20,9 @@ mod tests {
     const HIDDEN_SIZE: usize = 384;
     const NUM_ATTENTION_HEADS: usize = 12;
     #[cfg(all(feature = "ndarray-backend", feature = "wgpu-backend"))]
-    const SAFETENSORS_PATH: &str = "models/arctic-embed-s.safetensors";
+    const BASE_SAFETENSORS_PATH: &str = "models/mdbr-leaf-ir.safetensors";
+    #[cfg(all(feature = "ndarray-backend", feature = "wgpu-backend"))]
+    const DENSE_SAFETENSORS_PATH: &str = "models/mdbr-leaf-ir-dense.safetensors";
     #[cfg(all(feature = "ndarray-backend", feature = "wgpu-backend"))]
     const RUN_WGPU_ENV: &str = "LLMX_RUN_WGPU_TESTS";
     #[cfg(all(feature = "ndarray-backend", feature = "wgpu-backend"))]
@@ -47,6 +49,7 @@ mod tests {
         )
     }
 
+    #[cfg(all(feature = "ndarray-backend", feature = "wgpu-backend"))]
     fn make_ids_mask<B: Backend>(
         device: &B::Device,
         batch: usize,
@@ -89,8 +92,11 @@ mod tests {
             return;
         }
 
-        if !Path::new(SAFETENSORS_PATH).exists() {
-            panic!("Missing safetensors at {SAFETENSORS_PATH}");
+        if !Path::new(BASE_SAFETENSORS_PATH).exists() {
+            panic!("Missing safetensors at {BASE_SAFETENSORS_PATH}");
+        }
+        if !Path::new(DENSE_SAFETENSORS_PATH).exists() {
+            panic!("Missing dense safetensors at {DENSE_SAFETENSORS_PATH}");
         }
 
         let mse_max = std::env::var(BACKEND_MSE_ENV)
@@ -144,19 +150,27 @@ mod tests {
 
     #[cfg(all(feature = "ndarray-backend", feature = "wgpu-backend"))]
     fn load_model_from_safetensors<B: Backend>(device: &B::Device) -> BertModel<B> {
-        let load_args = LoadArgs::new(PathBuf::from(SAFETENSORS_PATH))
-            .with_adapter_type(AdapterType::PyTorch)
-            .with_key_remap("^bert\\.(.*)$", "$1")
-            .with_key_remap("^model\\.(.*)$", "$1")
-            .with_key_remap("attention\\.self\\.(.*)$", "attention.self_attn.$1")
-            .with_key_remap("^LayerNorm\\.(.*)$", "layer_norm.$1")
-            .with_key_remap("\\.LayerNorm\\.", ".layer_norm.");
+        let mut store = SafetensorsStore::from_file(PathBuf::from(BASE_SAFETENSORS_PATH))
+            .with_from_adapter(PyTorchToBurnAdapter)
+            .with_key_remapping("^bert\\.(.*)$", "$1")
+            .with_key_remapping("^model\\.(.*)$", "$1")
+            .with_key_remapping("attention\\.self\\.(.*)$", "attention.self_attn.$1")
+            .with_key_remapping("^LayerNorm\\.(.*)$", "layer_norm.$1")
+            .with_key_remapping("\\.LayerNorm\\.", ".layer_norm.")
+            .allow_partial(true);
 
-        let record: <BertModel<B> as Module<B>>::Record =
-            SafetensorsFileRecorder::<FullPrecisionSettings>::default()
-                .load(load_args, device)
-                .expect("Failed to load safetensors record");
+        let mut dense_store = SafetensorsStore::from_file(PathBuf::from(DENSE_SAFETENSORS_PATH))
+            .with_from_adapter(PyTorchToBurnAdapter)
+            .with_key_remapping("^linear\\.(.*)$", "dense.$1")
+            .allow_partial(true);
 
-        BertModel::new(device).load_record(record)
+        let mut model = BertModel::new(device);
+        model
+            .load_from(&mut store)
+            .expect("Failed to load base safetensors model");
+        model
+            .load_from(&mut dense_store)
+            .expect("Failed to load dense safetensors model");
+        model
     }
 }

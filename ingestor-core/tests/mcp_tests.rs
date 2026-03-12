@@ -5,10 +5,15 @@
 #![cfg(feature = "mcp")]
 
 use llmx_mcp::mcp::tools::{
-    ExploreInput, IndexInput, IndexStatsOutput, IngestOptionsInput, ManageInput,
-    SearchFiltersInput, SearchInput,
+    llmx_index_handler, llmx_manage_handler, llmx_search_handler, ExploreInput, IndexInput,
+    IndexStatsOutput, IngestOptionsInput, ManageInput, SearchFiltersInput, SearchInput,
 };
+use llmx_mcp::mcp::storage::IndexStore;
+use llmx_mcp::{ingest_files, FileInput, IngestOptions, DEFAULT_MAX_FILE_BYTES};
 use llmx_mcp::mcp::jobs::{JobState, JobStatus, new_job_id, new_job_store};
+use llmx_mcp::mcp::run_index_work;
+use std::fs;
+use tempfile::TempDir;
 
 // ============================================================================
 // Index Input Deserialization
@@ -38,6 +43,26 @@ fn test_mcp_index_input_with_options() {
     let options = input.options.expect("Should have options");
     assert_eq!(options.chunk_target_chars, Some(2000));
     assert_eq!(options.max_file_bytes, Some(5000000));
+}
+
+#[test]
+fn test_mcp_run_index_work_defaults_to_large_project_limits() {
+    let project = TempDir::new().expect("Should create temp dir");
+    fs::write(
+        project.path().join("large.txt"),
+        "a".repeat(11 * 1024 * 1024),
+    )
+    .expect("Should write large file");
+
+    let input = IndexInput {
+        paths: vec![project.path().to_string_lossy().to_string()],
+        options: None,
+    };
+
+    let (index, _, options) = run_index_work(&input).expect("Indexing should succeed");
+    assert_eq!(options.max_file_bytes, DEFAULT_MAX_FILE_BYTES);
+    assert_eq!(options.max_total_bytes, usize::MAX);
+    assert_eq!(index.stats.total_files, 1, "Large file should be indexed by default");
 }
 
 #[test]
@@ -170,6 +195,15 @@ fn test_mcp_manage_input_delete() {
     assert_eq!(input.index_id, Some("abc123".to_string()));
 }
 
+#[test]
+fn test_mcp_manage_input_stats() {
+    let json = r#"{"action": "stats", "index_id": "abc123"}"#;
+    let input: ManageInput = serde_json::from_str(json).expect("Should deserialize");
+
+    assert_eq!(input.action, "stats");
+    assert_eq!(input.index_id, Some("abc123".to_string()));
+}
+
 // ============================================================================
 // Struct Literal Construction
 // ============================================================================
@@ -206,11 +240,71 @@ fn test_mcp_search_input_struct_construction() {
         max_tokens: Some(10_000),
         use_semantic: Some(true),
         hybrid_strategy: None,
+        intent: None,
+        explain: None,
+        strategy: None,
     };
 
     assert_eq!(input.index_id, "test-id");
     assert_eq!(input.query, "test query");
     assert_eq!(input.limit, Some(15));
+}
+
+#[test]
+fn test_mcp_search_auto_default_degrades_with_notice_when_embeddings_missing() {
+    let temp_dir = TempDir::new().expect("Should create temp dir");
+    let mut store = IndexStore::new(temp_dir.path().to_path_buf()).expect("Should create store");
+
+    let index = ingest_files(
+        vec![FileInput {
+            path: "src/auth.rs".to_string(),
+            data: b"pub fn validate_token(token: &str) -> bool { !token.is_empty() }".to_vec(),
+            mtime_ms: None,
+            fingerprint_sha256: None,
+        }],
+        IngestOptions::default(),
+    );
+    let index_id = store
+        .save(index, temp_dir.path().to_string_lossy().to_string())
+        .expect("Should save index");
+
+    let output = llmx_search_handler(
+        &mut store,
+        SearchInput {
+            index_id,
+            query: "where do we validate tokens".to_string(),
+            filters: None,
+            limit: Some(5),
+            max_tokens: Some(2000),
+            use_semantic: None,
+            hybrid_strategy: None,
+            intent: None,
+            explain: None,
+            strategy: None,
+        },
+    )
+    .expect("Auto search should degrade instead of failing");
+
+    assert!(!output.results.is_empty(), "Should still return BM25/symbol results");
+    assert_eq!(output.notices.len(), 1, "Should return one downgrade notice");
+    assert_eq!(output.notices[0].code, "semantic_downgrade");
+    assert!(output.notices[0]
+        .message
+        .contains("Auto search downgraded to BM25 + symbol routing"));
+    assert!(output.notices[0].message.contains("rebuild the index with embeddings"));
+}
+
+#[test]
+fn test_mcp_search_input_deserializes_phase7_fields() {
+    let json = r#"{
+        "index_id": "idx-123",
+        "query": "verifyToken",
+        "intent": "symbol",
+        "explain": true
+    }"#;
+    let input: SearchInput = serde_json::from_str(json).expect("Should deserialize");
+    assert_eq!(input.intent.as_deref(), Some("symbol"));
+    assert_eq!(input.explain, Some(true));
 }
 
 // ============================================================================
@@ -245,6 +339,48 @@ fn test_mcp_manage_input_job_status() {
 
     assert_eq!(input.action, "job_status");
     assert_eq!(input.index_id, Some("a1b2c3d4e5f60001".to_string()));
+}
+
+#[test]
+fn test_mcp_manage_stats_returns_index_counts() {
+    let temp_dir = TempDir::new().expect("Should create temp dir");
+    let project = TempDir::new().expect("Should create project dir");
+    fs::write(
+        project.path().join("auth.ts"),
+        r#"
+export function verifyToken(token: string): boolean {
+  return token.length > 0;
+}
+"#,
+    )
+    .expect("Should write source file");
+
+    let mut store = IndexStore::new(temp_dir.path().to_path_buf()).expect("Should create store");
+    let index_output = llmx_index_handler(
+        &mut store,
+        IndexInput {
+            paths: vec![project.path().to_string_lossy().to_string()],
+            options: None,
+        },
+    )
+    .expect("Index should succeed");
+
+    let output = llmx_manage_handler(
+        &mut store,
+        ManageInput {
+            action: "stats".to_string(),
+            index_id: Some(index_output.index_id),
+        },
+    )
+    .expect("Stats should succeed");
+
+    let stats = output.stats.expect("Stats should be present");
+    assert_eq!(stats.total_files, 1);
+    assert!(stats.total_chunks >= 1);
+    assert!(stats.symbol_count >= 1);
+    assert_eq!(stats.file_kind_breakdown.get("javascript"), Some(&1));
+    assert_eq!(stats.extension_breakdown.get("ts"), Some(&1));
+    assert!(stats.ast_kind_breakdown.get("function").copied().unwrap_or(0) >= 1);
 }
 
 // ============================================================================

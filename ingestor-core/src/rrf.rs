@@ -106,6 +106,60 @@ where
         .collect()
 }
 
+/// Phase 7: Weighted RRF fusion across N engines with attribution.
+///
+/// Each engine's contribution is scaled by its weight before accumulation.
+/// This allows intent-based routing: symbol queries weight the symbol engine
+/// higher, semantic queries weight the dense engine higher, etc.
+///
+/// # Arguments
+///
+/// * `engine_results` - Vec of (engine_name, weight, ranked_results)
+/// * `config` - RRF configuration (k constant)
+/// * `limit` - Maximum number of results to return
+pub fn weighted_rrf_fusion(
+    engine_results: Vec<(&str, f32, Vec<RankedResult>)>,
+    config: RrfConfig,
+    limit: usize,
+) -> Vec<WeightedRrfResult> {
+    let mut scores: HashMap<String, f32> = HashMap::new();
+    let mut engine_contributions: HashMap<String, Vec<(String, f32)>> = HashMap::new();
+
+    for (engine_name, weight, results) in &engine_results {
+        for result in results {
+            let rrf_score = weight * (1.0 / (config.k + result.rank + 1) as f32);
+            *scores.entry(result.id.clone()).or_default() += rrf_score;
+            engine_contributions
+                .entry(result.id.clone())
+                .or_default()
+                .push((engine_name.to_string(), rrf_score));
+        }
+    }
+
+    let mut merged: Vec<WeightedRrfResult> = scores
+        .into_iter()
+        .map(|(id, score)| {
+            let engines = engine_contributions.remove(&id).unwrap_or_default();
+            WeightedRrfResult { id, score, engines }
+        })
+        .collect();
+
+    merged.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    merged.truncate(limit);
+    merged
+}
+
+/// Result from weighted RRF fusion with engine attribution.
+#[derive(Debug, Clone)]
+pub struct WeightedRrfResult {
+    /// Chunk ID
+    pub id: String,
+    /// Combined weighted RRF score
+    pub score: f32,
+    /// Which engines contributed: (engine_name, per_engine_rrf_score)
+    pub engines: Vec<(String, f32)>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
