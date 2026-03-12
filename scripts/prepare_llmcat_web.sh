@@ -6,13 +6,13 @@ WEB_DIR="$ROOT/web"
 WASM_DIR="$ROOT/ingestor-wasm"
 TOOLS_BIN="$ROOT/.cargo/bin"
 
-MODEL_SRC="$WASM_DIR/models/arctic-embed-s.bin"
+MODEL_SRC="$WASM_DIR/models/mdbr-leaf-ir.bin"
 TOKENIZER_SRC="$WASM_DIR/models/tokenizer.json"
 
-MODEL_DST="$WEB_DIR/models/arctic-embed-s.bin"
+MODEL_DST="$WEB_DIR/models/mdbr-leaf-ir.bin"
 TOKENIZER_DST="$WEB_DIR/models/tokenizer.json"
 
-MODEL_URL="./models/arctic-embed-s.bin"
+MODEL_URL="./models/mdbr-leaf-ir.bin"
 
 mkdir -p "$WEB_DIR/models"
 
@@ -25,7 +25,7 @@ fi
 if [ ! -f "$TOKENIZER_SRC" ]; then
   echo "Missing tokenizer: $TOKENIZER_SRC" >&2
   echo "Download it with:" >&2
-  echo "  curl -L -o \"$TOKENIZER_SRC\" \"https://huggingface.co/Snowflake/snowflake-arctic-embed-s/resolve/main/tokenizer.json\"" >&2
+  echo "  curl -L -o \"$TOKENIZER_SRC\" \"https://huggingface.co/MongoDB/mdbr-leaf-ir/resolve/main/tokenizer.json\"" >&2
   exit 1
 fi
 
