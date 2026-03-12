@@ -2,7 +2,7 @@
 
 **Local-first codebase indexer with semantic search and chunk exports for agent consumption**
 
-Transform large codebases into searchable, intelligently-chunked datasets with real neural network embeddings running entirely in your browser via WebGPU. No server, no API calls, no data leaving your machine.
+Transform large codebases into searchable, intelligently-chunked datasets with real neural network embeddings running entirely in your browser via WebGPU. No server-side indexing, no code upload, and no data leaving your machine.
 
 [Demo](https://llm.cat)
 
@@ -12,11 +12,11 @@ Transform large codebases into searchable, intelligently-chunked datasets with r
 
 ## ![lightning](.github/assets/icons/lightning-24x24.png) Key Features
 
-- **![search](.github/assets/icons/search-24x24.png) Neural Semantic Search** - Snowflake Arctic embeddings with WebGPU acceleration, same quality as server-side solutions
+- **![search](.github/assets/icons/search-24x24.png) Neural Semantic Search** - Burn-powered `mdbr-leaf-ir` embeddings with WebGPU acceleration and CPU fallback
 - **![lightning](.github/assets/icons/lightning-24x24.png) Hybrid Search** - Combines BM25 + vector search with RRF (Reciprocal Rank Fusion) for best results
 - **![hierarchy](.github/assets/icons/hierarchy-24x24.png) Smart Chunking** - Deterministic chunking by file type (functions, headings, JSON keys)
 - **![document](.github/assets/icons/businessicons-png-24-file-1-business-office-ui-24x24.png) Semantic Exports** - Hierarchical outline format with function names and heading breadcrumbs
-- **![lock](.github/assets/icons/lock-24x24.png) Privacy-First** - Zero network calls, all processing in-browser via WASM
+- **![lock](.github/assets/icons/lock-24x24.png) Privacy-First** - Your code stays local; optional model and tokenizer fetches are public static assets cached in-browser
 - **![lightning](.github/assets/icons/lightning-24x24.png) Fast** - Sub-second indexing, ~50ms embedding inference with GPU acceleration
 - **![download](.github/assets/icons/down-24x24.png) Agent-Ready** - Exports designed for selective retrieval, not bulk ingestion
 
@@ -182,9 +182,9 @@ llmx chunks files **deterministically by type**:
    - Fast lexical matching
 
 2. **Neural Semantic Search**:
-   - Snowflake Arctic Embed (384 dimensions, INT8 quantized)
-   - WebGPU-accelerated inference (~50ms per query)
-   - Falls back to CPU → hash-based → BM25-only
+   - `mdbr-leaf-ir` via Burn (`768` dimensions, browser `Q8S` artifact)
+   - WebGPU-accelerated inference with CPU fallback when GPU is unavailable or disabled
+   - Public model and tokenizer assets are SHA-256 verified and cached in IndexedDB
    - Understands meaning, not just keywords
 
 3. **RRF Fusion**:
@@ -250,8 +250,8 @@ The agent found relevant content spanning **4 decades** using **0.02%** of the t
 
 - **Language**: Rust (core), JavaScript (WASM bindings, web UI)
 - **Architecture**: Client-only, no server required
-- **ML Framework**: Burn 0.20 (compiles to WASM)
-- **Embedding Model**: Snowflake Arctic Embed Small (384-dim, INT8 quantized to ~9MB)
+- **ML Framework**: Burn (Rust-native, compiles to WASM)
+- **Embedding Model**: `mdbr-leaf-ir` (`768`-dim output; browser `q8` artifact plus native `f32` and `q8` artifacts)
 - **Storage**: IndexedDB (persistent) or in-memory
 - **Search**: Hybrid (BM25 + neural embeddings) with RRF fusion
 - **Chunking**: Deterministic, content-hash based IDs
@@ -270,7 +270,6 @@ The agent found relevant content spanning **4 decades** using **0.02%** of the t
 #### Semantic Search
 - **WebGPU** (Chrome 113+, Edge 113+): GPU-accelerated embeddings (~50ms)
 - **CPU Fallback**: All modern browsers with WASM support (~100-200ms)
-- **Hash Fallback**: Universal compatibility (deterministic, instant)
 - **BM25 Only**: Always available as final fallback
 
 Module workers fall back to main thread if unavailable.
@@ -307,7 +306,7 @@ llmx/
 
 ```bash
 # Set model URL (required for WASM builds with embeddings)
-export LLMX_EMBEDDING_MODEL_URL="https://your-cdn.com/arctic-embed-s-q8.bin"
+export LLMX_EMBEDDING_MODEL_URL="https://your-cdn.com/mdbr-leaf-ir.bin"
 
 # Build WASM (includes neural embedding support)
 cd ingestor-wasm
@@ -330,8 +329,8 @@ cargo test
 
 **Build-time Model Download:**
 The build script automatically downloads and converts the model:
-1. Downloads safetensors from HuggingFace (if not cached)
-2. Converts to Burn binary format with INT8 quantization
+1. Downloads `mdbr-leaf-ir` safetensors from HuggingFace (if not cached)
+2. Converts them into a Burn binary with INT8 `Q8S` quantization for the browser path
 3. Stores in `ingestor-wasm/models/` directory
 4. Model is loaded at runtime from the CDN URL specified above
 
@@ -359,16 +358,16 @@ cargo test --features mcp
 - **No external dependencies** for core indexing functionality
 - **Content treated as untrusted** - Prompt injection resistant UI
 - **Deterministic output** - Same input = same index every time
-- **IndexedDB caching** - Model weights cached locally after first download
+- **IndexedDB caching** - Model weights and tokenizer are cached locally after first download
 
 ### Build-Time Security
 - **Model URLs embedded at build time** - URLs are visible in WASM binary
   - Only use **public, non-authenticated URLs** for model sources
   - Current setup uses public HuggingFace model repositories
   - Never embed signed URLs or authentication tokens
-- **Model integrity verification** - SHA-256 validation prevents tampering (planned)
+- **Model integrity verification** - SHA-256 validation prevents tampering
 - **Supply chain security** - Models loaded from trusted sources (HuggingFace)
-- **Quantization** - INT8 quantization reduces model size with minimal quality loss
+- **Quantization** - INT8 `Q8S` browser artifacts reduce transfer and storage cost with minimal quality loss
 
 ### Security Notes
 ⚠️ **WASM binaries are inspectable** - Any URLs or constants in the build are visible to users. This is by design for transparency, but means secrets must never be embedded. Our current architecture uses only public model repositories and is safe for production use.
@@ -453,8 +452,8 @@ Contributions welcome! Please:
 - [x] MCP server for external agent retrieval
 
 ### Phase 7 (Current - Security Hardening)
-- [ ] Implement SHA-256 model integrity verification
-- [ ] Add download size limits and rate limiting
+- [x] Implement SHA-256 model integrity verification
+- [x] Add download size limits and rate limiting
 - [ ] Improve error handling in MCP server (remove panics)
 - [ ] Add cancellation support for async operations
 - [ ] Browser integration testing across all platforms

@@ -10,7 +10,7 @@ Upload the entire `web/` directory to llm.cat, including:
 - `web/app.js`
 - `web/worker.js`
 - `web/pkg/` (WASM output from `wasm-pack`)
-- `web/models/arctic-embed-s.bin` (model weights; cached in IndexedDB at runtime)
+- `web/models/mdbr-leaf-ir.bin` (INT8 `Q8S` model weights; cached in IndexedDB at runtime)
 - `web/models/tokenizer.json` (tokenizer; cached in IndexedDB at runtime)
 
 ## Build command (produces `web/pkg/`)
@@ -18,7 +18,7 @@ Upload the entire `web/` directory to llm.cat, including:
 From `ingestor-wasm/`:
 
 ```bash
-LLMX_EMBEDDING_MODEL_URL="./models/arctic-embed-s.bin" \
+LLMX_EMBEDDING_MODEL_URL="./models/mdbr-leaf-ir.bin" \
 wasm-pack build --target web --out-dir ../web/pkg --mode no-install --release
 ```
 
@@ -30,12 +30,12 @@ Or run:
 
 Important:
 - `LLMX_EMBEDDING_MODEL_URL` is embedded in the WASM at build time and is visible to clients.
-- Using a relative URL like `./models/arctic-embed-s.bin` forces same-origin loading and avoids CORS complexity (and works if llm.cat serves this app from a sub-path).
+- Using a relative URL like `./models/mdbr-leaf-ir.bin` forces same-origin loading and avoids CORS complexity (and works if llm.cat serves this app from a sub-path).
 
 ## Server configuration notes (important)
 
 - Ensure `.wasm` is served with `Content-Type: application/wasm`.
-- Ensure `web/models/arctic-embed-s.bin` is publicly reachable (no auth), otherwise embeddings will fall back.
+- Ensure `web/models/mdbr-leaf-ir.bin` is publicly reachable (no auth), otherwise embeddings will fall back.
 
 ## Browser expectations
 

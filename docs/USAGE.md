@@ -25,7 +25,7 @@ From repo root:
 ```bash
 # Build the WASM package (skip wasm-bindgen/wasm-opt auto-installs)
 cd ingestor-wasm
-LLMX_EMBEDDING_MODEL_URL="./models/arctic-embed-s.bin" \
+LLMX_EMBEDDING_MODEL_URL="./models/mdbr-leaf-ir.bin" \
   wasm-pack build --target web --out-dir ../web/pkg --mode no-install --release
 
 # Run Rust unit tests (native)
@@ -74,7 +74,8 @@ Notes:
 - On Firefox stable/beta, WebGPU is disabled by default due to stability issues; add `&force_webgpu=1` to override (Chromium recommended). Firefox Nightly (`Firefox/<ver>a1`) is allowed by default if `navigator.gpu` is present.
 
 Export notes:
-- The UI "Download export.zip" produces the compact export bundle (recommended) and names it after the selected folder (e.g. `my-repo.llmx-1a2b3c4d.zip`).
+- The UI "Download Searchable ZIP" includes `index.json` for reloadable search.
+- The UI "Download Compact Agent ZIP" produces the compact agent bundle and names it after the selected folder (e.g. `my-repo.llmx-1a2b3c4d.compact.zip`).
 - Use "Download index.json" only if you need the full local index data structure.
 - If you are prompting an LLM directly, prefer `manifest.llm.tsv` over JSON for lower token overhead.
 
