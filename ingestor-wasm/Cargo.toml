@@ -16,14 +16,10 @@ wasm-bindgen-futures = "0.4"
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
 
-# WASM getrandom fix - required for Burn 0.20+ in browser
-# See: https://github.com/rust-random/getrandom/#webassembly-support
-getrandom = { version = "0.3.3", default-features = false, features = ["wasm_js"] }
-
 # Phase 6: Burn framework for WebGPU embeddings
-burn = { git = "https://github.com/tracel-ai/burn", rev = "64871dfffaca8b57cc7ce5bfdc51f9afb84154a9", default-features = false }
-burn-wgpu = { git = "https://github.com/tracel-ai/burn", rev = "64871dfffaca8b57cc7ce5bfdc51f9afb84154a9", optional = true }
-burn-ndarray = { git = "https://github.com/tracel-ai/burn", rev = "64871dfffaca8b57cc7ce5bfdc51f9afb84154a9", optional = true }
+burn = { git = "https://github.com/tracel-ai/burn", rev = "3c6b710dca0319906c1966af3adcfa56176eb3c2", default-features = false }
+burn-wgpu = { git = "https://github.com/tracel-ai/burn", rev = "3c6b710dca0319906c1966af3adcfa56176eb3c2", optional = true }
+burn-ndarray = { git = "https://github.com/tracel-ai/burn", rev = "3c6b710dca0319906c1966af3adcfa56176eb3c2", optional = true }
 # Tokenizers with WASM support (using unstable_wasm feature for pure Rust regex)
 tokenizers = { version = "0.20", default-features = false, features = ["unstable_wasm"] }
 
@@ -54,18 +50,22 @@ features = [
 ]
 
 [features]
-default = ["ndarray-backend"]
-wgpu-backend = ["burn-wgpu"]
+default = ["wgpu-backend"]
+wgpu-backend = ["burn-wgpu", "ndarray-backend"]
 ndarray-backend = ["burn-ndarray"]
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# Enable js-backed entropy for getrandom 0.4 pulled in by Burn/rand on wasm32.
+getrandom = { version = "0.4", features = ["wasm_js"] }
+
 [build-dependencies]
-burn = { git = "https://github.com/tracel-ai/burn", rev = "64871dfffaca8b57cc7ce5bfdc51f9afb84154a9", default-features = false }
-burn-ndarray = { git = "https://github.com/tracel-ai/burn", rev = "64871dfffaca8b57cc7ce5bfdc51f9afb84154a9" }
-burn-import = { git = "https://github.com/tracel-ai/burn", rev = "64871dfffaca8b57cc7ce5bfdc51f9afb84154a9" }
+burn = { git = "https://github.com/tracel-ai/burn", rev = "3c6b710dca0319906c1966af3adcfa56176eb3c2", default-features = false }
+burn-ndarray = { git = "https://github.com/tracel-ai/burn", rev = "3c6b710dca0319906c1966af3adcfa56176eb3c2" }
+burn-store = { git = "https://github.com/tracel-ai/burn", rev = "3c6b710dca0319906c1966af3adcfa56176eb3c2" }
 reqwest = { version = "0.12", features = ["blocking"] }
 
 [dev-dependencies]
-burn-import = { git = "https://github.com/tracel-ai/burn", rev = "64871dfffaca8b57cc7ce5bfdc51f9afb84154a9" }
+burn-store = { git = "https://github.com/tracel-ai/burn", rev = "3c6b710dca0319906c1966af3adcfa56176eb3c2" }
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = false

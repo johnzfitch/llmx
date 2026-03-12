@@ -26,12 +26,12 @@ fn global_scope() -> Result<js_sys::Object, JsValue> {
         .map_err(|_| JsValue::from_str("Could not access global scope"))
 }
 
-pub const MODEL_ID: &str = "arctic-embed-s-q8-ab3e129ef864";
-const MODEL_CACHE_KEY: &str = "arctic-embed-s-q8-ab3e129ef864.bin";
-const MODEL_SHA256: &str = "ab3e129ef864f1cffaef41c6557b171ed610017bc3c3bfc5c6709448df493338";
+pub const MODEL_ID: &str = "mdbr-leaf-ir-q8-c0671aa46f4e";
+const MODEL_CACHE_KEY: &str = "mdbr-leaf-ir-q8-c0671aa46f4e.bin";
+const MODEL_SHA256: &str = "c0671aa46f4eccf25ccacb6a2724c735a7ae1d84384326c496bb16d19dd6501b";
 const MODEL_URL: &str = match option_env!("LLMX_EMBEDDING_MODEL_URL") {
     Some(value) => value,
-    None => "./models/arctic-embed-s.bin", // Default to bundled model
+    None => "./models/mdbr-leaf-ir.bin", // Default to bundled model
 };
 const MAX_MODEL_BYTES: usize = 80 * 1024 * 1024;
 

@@ -1,3 +1,12 @@
+import {
+  buildManageStats,
+  linearFuse,
+  listRichSymbols,
+  lookupSymbols,
+  rrfFuse,
+  traceRefs,
+} from "./index-insights.js";
+
 const state = {
   backend: null,
   workerReady: false,
@@ -7,22 +16,64 @@ const state = {
   indexId: null,
   sourceLabel: null,
   files: [],
+  chunkCount: 0,
   searchSeq: 0,
+  activeTool: "search",
 };
+
+// Progressive disclosure: update body state for CSS
+function updateUIState() {
+  const body = document.body;
+  if (state.indexLoaded) {
+    body.dataset.state = "indexed";
+  } else if (state.busy) {
+    body.dataset.state = "indexing";
+  } else {
+    body.dataset.state = "empty";
+  }
+}
 
 const elements = {
   status: document.getElementById("ingest-status"),
   selectFolder: document.getElementById("select-folder"),
+  loadIndexJson: document.getElementById("load-index-json"),
+  replaceIndex: document.getElementById("replace-index"),
   folderInput: document.getElementById("folder-input"),
   filesInput: document.getElementById("files-input"),
+  indexJsonInput: document.getElementById("index-json-input"),
   dropZone: document.getElementById("drop-zone"),
+  toolTabs: document.getElementById("tool-tabs"),
   query: document.getElementById("query"),
+  searchStrategy: document.getElementById("search-strategy"),
+  hybridStrategy: document.getElementById("hybrid-strategy"),
+  searchIntent: document.getElementById("search-intent"),
+  searchExplain: document.getElementById("search-explain"),
   pathFilter: document.getElementById("path-filter"),
   fileFilter: document.getElementById("file-filter"),
   outlineFilter: document.getElementById("outline-filter"),
   symbolFilter: document.getElementById("symbol-filter"),
   kindFilter: document.getElementById("kind-filter"),
   runSearch: document.getElementById("run-search"),
+  runSymbols: document.getElementById("run-symbols"),
+  symbolsPattern: document.getElementById("symbols-pattern"),
+  symbolsKind: document.getElementById("symbols-kind"),
+  symbolsPath: document.getElementById("symbols-path"),
+  symbolsLimit: document.getElementById("symbols-limit"),
+  symbolsResults: document.getElementById("symbols-results"),
+  runLookup: document.getElementById("run-lookup"),
+  lookupSymbol: document.getElementById("lookup-symbol"),
+  lookupKind: document.getElementById("lookup-kind"),
+  lookupPath: document.getElementById("lookup-path"),
+  lookupLimit: document.getElementById("lookup-limit"),
+  lookupResults: document.getElementById("lookup-results"),
+  runRefs: document.getElementById("run-refs"),
+  refsSymbol: document.getElementById("refs-symbol"),
+  refsDirection: document.getElementById("refs-direction"),
+  refsDepth: document.getElementById("refs-depth"),
+  refsLimit: document.getElementById("refs-limit"),
+  refsResults: document.getElementById("refs-results"),
+  statsSummary: document.getElementById("stats-summary"),
+  statsBreakdowns: document.getElementById("stats-breakdowns"),
   buildEmbeddings: document.getElementById("build-embeddings"),
   embeddingsStatus: document.getElementById("embeddings-status"),
   results: document.getElementById("results"),
@@ -31,6 +82,7 @@ const elements = {
   chunkContent: document.getElementById("chunk-content"),
   closeChunk: document.getElementById("close-chunk"),
   downloadExport: document.getElementById("download-export"),
+  downloadCompactExport: document.getElementById("download-compact-export"),
   downloadIndexJson: document.getElementById("download-index-json"),
   indexId: document.getElementById("index-id"),
   chunkCount: document.getElementById("chunk-count"),
@@ -52,21 +104,20 @@ const urlParams = (() => {
     return new URLSearchParams();
   }
 })();
-const embeddingsRequested = urlParams.get("embeddings") === "1";
+const embeddingsRequested = urlParams.get("embeddings") !== "0";
 const forceCpu = urlParams.get("cpu") === "1";
 const webGpuParam = urlParams.get("webgpu");
-const webGpuRequested = webGpuParam === "1" || (embeddingsRequested && webGpuParam !== "0" && !forceCpu);
-const autoEmbeddingsRequested = urlParams.get("auto_embeddings") === "1";
 const forceWebGpu = urlParams.get("force_webgpu") === "1";
+const autoEmbeddingsRequested = urlParams.get("auto_embeddings") === "1";
 const isFirefox = (() => {
   const ua = window.navigator?.userAgent || "";
   return ua.includes("Firefox/") && !ua.includes("Seamonkey/");
 })();
 const isFirefoxNightly = (() => {
   const ua = window.navigator?.userAgent || "";
-  // Nightly user agents usually look like: "Firefox/123.0a1"
   return /Firefox\/[0-9]+(\.[0-9]+)*a1\b/.test(ua);
 })();
+const webGpuRequested = webGpuParam === "1" || (webGpuParam !== "0" && !forceCpu);
 const webGpuAvailable = Boolean(window.navigator && window.navigator.gpu);
 globalThis.LLMX_ENABLE_WEBGPU = webGpuRequested && webGpuAvailable;
 globalThis.LLMX_ENABLE_EMBEDDINGS = embeddingsRequested;
@@ -75,19 +126,21 @@ if (webGpuRequested && !webGpuAvailable) {
     "WebGPU unavailable (navigator.gpu missing). To use embeddings, either use a WebGPU-capable Chromium browser or add ?cpu=1 to allow slow CPU embeddings."
   );
 }
-if (webGpuRequested && isFirefox && !isFirefoxNightly && !forceWebGpu) {
+if (globalThis.LLMX_ENABLE_WEBGPU && isFirefox && !isFirefoxNightly && !forceWebGpu) {
   globalThis.LLMX_ENABLE_WEBGPU = false;
   console.warn(
-    "WebGPU requested on Firefox, but is disabled by default due to stability issues. Use Chromium, use Firefox Nightly, or add ?force_webgpu=1 to override."
+    "WebGPU requested on Firefox, but is disabled by default due to Burn/WGPU instability. Use Firefox Nightly, Chromium, or add ?force_webgpu=1 to override."
   );
 }
 if (embeddingsRequested && !globalThis.LLMX_ENABLE_WEBGPU && !forceCpu) {
   console.warn(
-    "Embeddings require WebGPU by default. Use a WebGPU-capable Chromium browser, or add ?cpu=1 to allow slow CPU embeddings. On Firefox, add ?force_webgpu=1 to override the default WebGPU disable."
+    "Embeddings are enabled with CPU/WebGPU auto mode. WebGPU is unavailable or disabled, so the browser will fall back to CPU when semantic search is needed."
   );
 }
-const shouldAutoBuildEmbeddings =
-  embeddingsRequested && (globalThis.LLMX_ENABLE_WEBGPU || (autoEmbeddingsRequested && forceCpu));
+const shouldAutoBuildEmbeddings = embeddingsRequested && autoEmbeddingsRequested;
+const SEARCH_LIMIT = 20;
+const EMBEDDINGS_AUTO_BUILD_MAX_CHUNKS = 240;
+const MAX_FILE_GROUPS_PER_SEARCH = 2;
 
 const ALLOWED_EXTENSIONS = [
   ".md",
@@ -109,12 +162,13 @@ const ALLOWED_EXTENSIONS = [
   ".bmp",
 ];
 const SKIP_DIRS = [".git", "node_modules", "target", "dist", "build", ".cache"];
+const LLMX_EXPORT_DIR_PATTERN = /\.llmx-[a-f0-9]{8,}(?:\.[a-z0-9_-]+)?$/i;
 const DEFAULT_LIMITS = {
-  maxFileBytes: 5 * 1024 * 1024,     // 5MB per file (reduced from 10MB)
-  maxTotalBytes: 25 * 1024 * 1024,   // 25MB total (reduced from 50MB)
-  maxFileCount: 500,                  // Maximum 500 files
+  maxFileBytes: 32 * 1024 * 1024,    // 32MB per file
+  maxTotalBytes: 200 * 1024 * 1024,  // 200MB total
+  maxFileCount: null,                 // No file-count cap; enforce byte limits instead
   warnFileBytes: 1 * 1024 * 1024,    // Warn at 1MB per file
-  warnTotalBytes: 10 * 1024 * 1024,  // Warn at 10MB total
+  warnTotalBytes: 100 * 1024 * 1024, // Warn at 100MB total
 };
 
 function setStatus(message) {
@@ -133,7 +187,7 @@ function updateBackendInfo(backendType, capabilities) {
     if (capabilities.embeddings) {
       if (capabilities.webgpu) {
         parts.push("WebGPU");
-      } else if (capabilities.forceCpu) {
+      } else {
         parts.push("CPU");
       }
     }
@@ -142,6 +196,7 @@ function updateBackendInfo(backendType, capabilities) {
     }
   }
   elements.backendInfo.textContent = info;
+  elements.backendInfo.classList.add("ready");
 }
 
 function hasFolderPickerSupport() {
@@ -162,6 +217,181 @@ function formatErrorForUi(error) {
   const message = error instanceof Error ? error.message : String(error || "Unknown error");
   const cleaned = message.replace(/\s+/g, " ").trim();
   return cleaned.length > 240 ? `${cleaned.slice(0, 237)}...` : cleaned;
+}
+
+function refreshEmbeddingsStatus(meta = null) {
+  if (!elements.embeddingsStatus || state.buildingEmbeddings) {
+    return;
+  }
+  elements.embeddingsStatus.classList.remove("building");
+  if (!embeddingsRequested) {
+    elements.embeddingsStatus.textContent = "Disabled";
+    return;
+  }
+  if (meta && typeof meta.count === "number") {
+    elements.embeddingsStatus.textContent = `Ready (${meta.count} chunks)`;
+    return;
+  }
+  if (shouldAutoBuildEmbeddings && state.chunkCount > 0 && state.chunkCount <= EMBEDDINGS_AUTO_BUILD_MAX_CHUNKS) {
+    elements.embeddingsStatus.textContent = "Auto";
+    return;
+  }
+  if (state.chunkCount > EMBEDDINGS_AUTO_BUILD_MAX_CHUNKS) {
+    elements.embeddingsStatus.textContent = `Lazy (> ${EMBEDDINGS_AUTO_BUILD_MAX_CHUNKS} chunks)`;
+    return;
+  }
+  elements.embeddingsStatus.textContent = "Not built";
+}
+
+async function maybeAutoBuildEmbeddings(reason) {
+  refreshEmbeddingsStatus();
+  if (!shouldAutoBuildEmbeddings) {
+    return null;
+  }
+  if (state.chunkCount <= 0 || state.chunkCount > EMBEDDINGS_AUTO_BUILD_MAX_CHUNKS) {
+    return null;
+  }
+  try {
+    return await buildEmbeddingsForSearch({ reason, silent: true });
+  } catch (error) {
+    console.warn("Auto embeddings build failed:", error);
+    return null;
+  }
+}
+
+function shouldUseSemanticIntent(intent) {
+  return intent === "semantic" || intent === "keyword";
+}
+
+function resultHeadingKey(result) {
+  return Array.isArray(result.heading_path) && result.heading_path.length
+    ? result.heading_path.join(" / ")
+    : "";
+}
+
+function mergeMatchedEngines(results) {
+  const seen = new Set();
+  const merged = [];
+  for (const result of results) {
+    for (const engine of result.matched_engines || []) {
+      if (!seen.has(engine)) {
+        seen.add(engine);
+        merged.push(engine);
+      }
+    }
+  }
+  return merged;
+}
+
+function mergeReasons(results) {
+  const seen = new Set();
+  const merged = [];
+  for (const result of results) {
+    const reason = String(result.match_reason || "").trim();
+    if (reason && !seen.has(reason)) {
+      seen.add(reason);
+      merged.push(reason);
+    }
+  }
+  return merged;
+}
+
+function shapeSearchResults(results, limit = SEARCH_LIMIT) {
+  const groups = [];
+  const byKey = new Map();
+
+  for (const result of results) {
+    const sectionKey = resultHeadingKey(result);
+    const key = `${result.path}::${sectionKey}`;
+    const groupList = byKey.get(key) || [];
+    let compatible = null;
+    for (let i = groupList.length - 1; i >= 0; i -= 1) {
+      if (result.start_line <= groupList[i].end_line + 20) {
+        compatible = groupList[i];
+        break;
+      }
+    }
+    if (compatible) {
+      compatible.results.push(result);
+      compatible.score += result.score * 0.2;
+      compatible.start_line = Math.min(compatible.start_line, result.start_line);
+      compatible.end_line = Math.max(compatible.end_line, result.end_line);
+      compatible.chunk_ids.push(result.chunk_id);
+      continue;
+    }
+
+    const group = {
+      key,
+      path: result.path,
+      heading_path: result.heading_path || [],
+      results: [result],
+      start_line: result.start_line,
+      end_line: result.end_line,
+      score: result.score,
+      chunk_ids: [result.chunk_id],
+    };
+    groups.push(group);
+    groupList.push(group);
+    byKey.set(key, groupList);
+  }
+
+  groups.sort((a, b) => b.score - a.score);
+  const selected = [];
+  const perFile = new Map();
+
+  for (const group of groups) {
+    const count = perFile.get(group.path) || 0;
+    if (count >= MAX_FILE_GROUPS_PER_SEARCH && selected.length < limit) {
+      continue;
+    }
+    perFile.set(group.path, count + 1);
+    selected.push(group);
+    if (selected.length >= limit) {
+      break;
+    }
+  }
+
+  if (selected.length < limit) {
+    for (const group of groups) {
+      if (selected.includes(group)) {
+        continue;
+      }
+      selected.push(group);
+      if (selected.length >= limit) {
+        break;
+      }
+    }
+  }
+
+  return selected.map((group) => {
+    const primary = group.results[0];
+    const heading = resultHeadingKey(primary);
+    const reasons = mergeReasons(group.results);
+    const snippets = [];
+    for (const result of group.results) {
+      const snippet = String(result.snippet || "").trim();
+      if (snippet && !snippets.includes(snippet)) {
+        snippets.push(snippet);
+      }
+      if (snippets.length >= 2) {
+        break;
+      }
+    }
+    return {
+      ...primary,
+      path: group.path,
+      heading_path: group.heading_path,
+      start_line: group.start_line,
+      end_line: group.end_line,
+      score: group.score,
+      chunk_ids: group.chunk_ids,
+      title: heading || group.path,
+      subtitle: heading ? group.path : "",
+      snippet: snippets.join("\n\n"),
+      match_reason: reasons.length > 1 ? `${reasons[0]} | ${reasons[1]}` : reasons[0] || primary.match_reason || null,
+      matched_engines: mergeMatchedEngines(group.results),
+    };
+  });
 }
 
 function rejectAllPendingWorkerCalls(message) {
@@ -282,27 +512,7 @@ async function createLocalBackend() {
     return sum;
   }
 
-  function rrfFuse(bm25Results, semanticResults, limit) {
-    const k = 60;
-    const scores = new Map();
-
-    function addList(results) {
-      results.forEach((result, rank) => {
-        const prev = scores.get(result.chunk_id) || 0;
-        scores.set(result.chunk_id, prev + 1 / (k + rank + 1));
-      });
-    }
-
-    addList(bm25Results);
-    addList(semanticResults);
-
-    return Array.from(scores.entries())
-      .map(([chunkId, score]) => ({ chunkId, score }))
-      .sort((a, b) => b.score - a.score)
-      .slice(0, limit);
-  }
-
-  function buildSearchResult(meta, score) {
+  function buildSearchResult(meta, score, extras = {}) {
     return {
       chunk_id: meta.id,
       chunk_ref: meta.ref,
@@ -312,12 +522,24 @@ async function createLocalBackend() {
       end_line: meta.end_line,
       snippet: meta.snippet,
       heading_path: meta.heading_path,
+      match_reason: extras.match_reason || null,
+      matched_engines: extras.matched_engines || [],
     };
   }
 
   async function ensureEmbedder() {
     if (!embedder) {
-      embedder = await WasmEmbedder.create();
+      try {
+        embedder = await WasmEmbedder.create();
+      } catch (error) {
+        if (globalThis.LLMX_ENABLE_WEBGPU) {
+          console.warn(`WebGPU embedder creation failed, falling back to CPU: ${formatErrorForUi(error)}`);
+          globalThis.LLMX_ENABLE_WEBGPU = false;
+          embedder = await WasmEmbedder.create();
+        } else {
+          throw error;
+        }
+      }
     }
     return embedder;
   }
@@ -385,6 +607,119 @@ async function createLocalBackend() {
     return embeddingsMeta;
   }
 
+  function getCurrentIndex() {
+    if (!ingestor) {
+      throw new Error("No index loaded");
+    }
+    return JSON.parse(ingestor.exportIndexJson());
+  }
+
+  async function maybePrepareEmbeddings(filters, query, limit, notices) {
+    if (!embeddingsRequested || !query) {
+      return null;
+    }
+    if (!embeddings || !embeddingsMeta || !chunkMeta) {
+      const index = getCurrentIndex();
+      const totalChunks = Array.isArray(index.chunks) ? index.chunks.length : 0;
+      if (totalChunks > 0 && totalChunks <= EMBEDDINGS_AUTO_BUILD_MAX_CHUNKS) {
+        try {
+          await buildEmbeddingsIndex();
+          notices.push(`Built embeddings lazily for ${totalChunks} chunks.`);
+        } catch (error) {
+          console.warn("Lazy embeddings build failed; continuing without semantic search.", error);
+          notices.push(`Semantic search unavailable: ${formatErrorForUi(error)}`);
+          return null;
+        }
+      }
+    }
+    await ensureEmbedder();
+    if (!shouldUseEmbeddings()) {
+      notices.push("Semantic search unavailable; showing lexical results.");
+      return null;
+    }
+    return buildSemanticResults(query, filters, limit, notices);
+  }
+
+  function buildSemanticResults(query, filters, limit, notices) {
+    const queryEmbedding = embedder.embed(query);
+    const dim = embeddingsMeta.dim;
+    const semantic = [];
+
+    for (let i = 0; i < chunkMeta.length; i += 1) {
+      const meta = chunkMeta[i];
+      if (!passesFilters(meta, filters)) continue;
+      const score = dotProduct(queryEmbedding, embeddings, i * dim, dim);
+      semantic.push({ idx: i, score });
+    }
+
+    semantic.sort((a, b) => b.score - a.score);
+    if (!semantic.length) {
+      notices.push("Semantic search found no matching chunks after filters.");
+      return [];
+    }
+
+    return semantic.slice(0, limit * 2).map(({ idx, score }) => {
+      const meta = chunkMeta[idx];
+      return buildSearchResult(meta, score, {
+        match_reason: `Semantic similarity for "${query}"`,
+        matched_engines: ["dense"],
+      });
+    });
+  }
+
+  function mergeSearchResults(baseResults, semanticResults, strategy, hybridStrategy, limit) {
+    const useHybrid = strategy === "hybrid" || (strategy === "auto" && semanticResults.length && baseResults.length);
+    const useSemanticOnly = strategy === "semantic";
+
+    if (useSemanticOnly) {
+      return semanticResults.slice(0, limit);
+    }
+    if (!semanticResults.length) {
+      return baseResults.slice(0, limit);
+    }
+    if (!baseResults.length) {
+      return semanticResults.slice(0, limit);
+    }
+
+    const mergedIds = hybridStrategy === "linear"
+      ? linearFuse(baseResults, semanticResults, limit * 2)
+      : rrfFuse(baseResults, semanticResults, limit * 2);
+
+    if (!useHybrid && strategy !== "auto") {
+      return baseResults.slice(0, limit);
+    }
+
+    const baseById = new Map(baseResults.map((result) => [result.chunk_id, result]));
+    const semanticById = new Map(semanticResults.map((result) => [result.chunk_id, result]));
+
+    return mergedIds.map(({ chunkId, score }) => {
+      const lexical = baseById.get(chunkId);
+      const dense = semanticById.get(chunkId);
+      if (lexical && dense) {
+        return {
+          ...lexical,
+          score,
+          matched_engines: Array.from(new Set([...(lexical.matched_engines || []), "dense"])),
+        };
+      }
+      if (lexical) {
+        return { ...lexical, score };
+      }
+      if (dense) {
+        return { ...dense, score };
+      }
+      return null;
+    }).filter(Boolean).slice(0, limit);
+  }
+
+  async function runAdvancedSearch(query, filters, limit, options = {}) {
+    return ingestor.searchAdvanced(query, filters, limit * 2, {
+      explain: options.explain !== false,
+      intent: options.intent || "auto",
+      use_semantic: false,
+    });
+  }
+
   return {
     kind: "local",
     async call(op, payload) {
@@ -438,7 +773,7 @@ async function createLocalBackend() {
             });
           }
           const meta = await buildEmbeddingsPromise;
-          return { meta };
+          return { meta, backend: globalThis.LLMX_ENABLE_WEBGPU ? "webgpu" : "cpu" };
         }
         case "getEmbeddings": {
           if (!embeddings || !embeddingsMeta) {
@@ -497,7 +832,7 @@ async function createLocalBackend() {
           return { json: ingestor.exportIndexJson() };
         case "stats":
           if (!ingestor) throw new Error("No index loaded");
-          return { stats: await ingestor.stats() };
+          return { stats: buildManageStats(getCurrentIndex()) };
         case "warnings":
           if (!ingestor) throw new Error("No index loaded");
           return { warnings: await ingestor.warnings() };
@@ -507,60 +842,42 @@ async function createLocalBackend() {
             const query = payload.query || "";
             const filters = payload.filters || null;
             const limit = payload.limit || 20;
+            const strategy = String(payload.strategy || "auto").toLowerCase();
+            const hybridStrategy = String(payload.hybridStrategy || "rrf").toLowerCase();
+            const explain = payload.explain !== false;
+            const requestedIntent = String(payload.intent || "auto").toLowerCase();
+            const notices = [];
 
-            const bm25Results = await ingestor.search(query, filters, limit * 2);
-
-            if (!embeddings || !embeddingsMeta || !chunkMeta) {
-              return { results: bm25Results };
-            }
-
-            await ensureEmbedder();
-            if (!shouldUseEmbeddings()) {
-              return { results: bm25Results };
-            }
-
-            const queryEmbedding = embedder.embed(query);
-            const dim = embeddingsMeta.dim;
-
-            const semantic = [];
-            for (let i = 0; i < chunkMeta.length; i += 1) {
-              const meta = chunkMeta[i];
-              if (!passesFilters(meta, filters)) continue;
-              const score = dotProduct(queryEmbedding, embeddings, i * dim, dim);
-              semantic.push({ idx: i, score });
-            }
-
-            semantic.sort((a, b) => b.score - a.score);
-            const semanticTop = semantic.slice(0, limit * 2).map(({ idx, score }) => {
-              const meta = chunkMeta[idx];
-              return buildSearchResult(meta, score);
+            const base = await runAdvancedSearch(query, filters, limit, {
+              explain,
+              intent: requestedIntent,
             });
+            const baseResults = base?.results || [];
+            const resolvedIntent = base?.resolved_intent || "keyword";
 
-            const merged = rrfFuse(bm25Results, semanticTop, limit);
+            if (strategy === "bm25") {
+              return { results: baseResults, resolvedIntent, usedSemantic: false, notices };
+            }
+            if (!embeddingsRequested && (strategy === "semantic" || strategy === "hybrid")) {
+              notices.push("Embeddings disabled; falling back to lexical search.");
+              return { results: baseResults, resolvedIntent, usedSemantic: false, notices };
+            }
+            if (!shouldUseSemanticIntent(resolvedIntent) && strategy === "auto") {
+              return { results: baseResults, resolvedIntent, usedSemantic: false, notices };
+            }
+            if (strategy === "semantic" && !embeddingsRequested) {
+              notices.push("Semantic search requested, but embeddings are disabled.");
+              return { results: baseResults, resolvedIntent, usedSemantic: false, notices };
+            }
 
-            const bm25ById = new Map(bm25Results.map((r) => [r.chunk_id, r]));
-            const results = merged.map(({ chunkId, score }) => {
-              const existing = bm25ById.get(chunkId);
-              if (existing) {
-                return { ...existing, score };
-              }
-              const idx = chunkMeta.findIndex((m) => m.id === chunkId);
-              if (idx !== -1) {
-                return buildSearchResult(chunkMeta[idx], score);
-              }
-              return {
-                chunk_id: chunkId,
-                chunk_ref: "",
-                score,
-                path: "",
-                start_line: 0,
-                end_line: 0,
-                snippet: "",
-                heading_path: [],
-              };
-            });
-
-            return { results };
+            const semanticResults = await maybePrepareEmbeddings(filters, query, limit, notices) || [];
+            const results = mergeSearchResults(baseResults, semanticResults, strategy, hybridStrategy, limit);
+            return {
+              results,
+              resolvedIntent,
+              usedSemantic: semanticResults.length > 0,
+              notices,
+            };
           }
         case "getChunk":
           if (!ingestor) throw new Error("No index loaded");
@@ -571,6 +888,15 @@ async function createLocalBackend() {
         case "listSymbols":
           if (!ingestor) throw new Error("No index loaded");
           return { symbols: await ingestor.listSymbols(payload.path) };
+        case "symbolsRich":
+          if (!ingestor) throw new Error("No index loaded");
+          return listRichSymbols(getCurrentIndex(), payload || {});
+        case "lookupSymbol":
+          if (!ingestor) throw new Error("No index loaded");
+          return lookupSymbols(getCurrentIndex(), payload || {});
+        case "refsForSymbol":
+          if (!ingestor) throw new Error("No index loaded");
+          return traceRefs(getCurrentIndex(), payload || {});
         case "exportLlm":
           if (!ingestor) throw new Error("No index loaded");
           return { content: ingestor.exportLlm() };
@@ -668,12 +994,23 @@ function isAllowedPath(path) {
   return ALLOWED_EXTENSIONS.some((ext) => lower.endsWith(ext));
 }
 
+function hasMaxFileCountLimit() {
+  return Number.isFinite(DEFAULT_LIMITS.maxFileCount) && DEFAULT_LIMITS.maxFileCount >= 0;
+}
+
+function findLlmxExportDir(path) {
+  return String(path)
+    .split("/")
+    .find((segment) => LLMX_EXPORT_DIR_PATTERN.test(segment)) || null;
+}
+
 async function collectFilesFromInput(fileList) {
   const entries = [];
   let totalBytes = 0;
   let skippedLarge = 0;
   let skippedTotal = 0;
   let skippedCount = 0;
+  const skippedExports = new Set();
   let rootName = null;
   for (const file of fileList) {
     const path = file.webkitRelativePath || file.name;
@@ -686,7 +1023,12 @@ async function collectFilesFromInput(fileList) {
     if (!isAllowedPath(path)) {
       continue;
     }
-    if (entries.length >= DEFAULT_LIMITS.maxFileCount) {
+    const exportDir = findLlmxExportDir(path);
+    if (exportDir) {
+      skippedExports.add(exportDir);
+      continue;
+    }
+    if (hasMaxFileCountLimit() && entries.length >= DEFAULT_LIMITS.maxFileCount) {
       skippedCount += 1;
       continue;
     }
@@ -701,7 +1043,15 @@ async function collectFilesFromInput(fileList) {
     entries.push({ path, file });
     totalBytes += file.size;
   }
-  return { entries, skippedLarge, skippedTotal, skippedCount, totalBytes, rootName };
+  return {
+    entries,
+    skippedLarge,
+    skippedTotal,
+    skippedCount,
+    skippedExports: skippedExports.size,
+    totalBytes,
+    rootName,
+  };
 }
 
 async function collectFilesFromHandle(handle, basePath = "", budget = null, rootName = null) {
@@ -712,10 +1062,15 @@ async function collectFilesFromHandle(handle, basePath = "", budget = null, root
     skippedLarge: 0,
     skippedTotal: 0,
     skippedCount: 0,
+    skippedExports: 0,
   };
   for await (const [name, entry] of handle.entries()) {
     if (entry.kind === "directory") {
       if (SKIP_DIRS.includes(name)) {
+        continue;
+      }
+      if (LLMX_EXPORT_DIR_PATTERN.test(name)) {
+        shared.skippedExports += 1;
         continue;
       }
       const nested = await collectFilesFromHandle(entry, `${basePath}${name}/`, shared, rootName);
@@ -726,7 +1081,7 @@ async function collectFilesFromHandle(handle, basePath = "", budget = null, root
     if (!isAllowedPath(path)) {
       continue;
     }
-    if (shared.fileCount >= DEFAULT_LIMITS.maxFileCount) {
+    if (hasMaxFileCountLimit() && shared.fileCount >= DEFAULT_LIMITS.maxFileCount) {
       shared.skippedCount += 1;
       continue;
     }
@@ -748,6 +1103,7 @@ async function collectFilesFromHandle(handle, basePath = "", budget = null, root
     skippedLarge: shared.skippedLarge,
     skippedTotal: shared.skippedTotal,
     skippedCount: shared.skippedCount,
+    skippedExports: shared.skippedExports,
     totalBytes: shared.totalBytes,
     rootName,
   };
@@ -825,16 +1181,11 @@ function sanitizeFilenameBase(input) {
   return out || "project";
 }
 
-function inferSourceLabel(entries, collectedMeta) {
-  const direct = collectedMeta?.rootName;
-  if (direct && String(direct).trim()) {
-    return String(direct).trim();
-  }
-
+function inferSourceLabelFromPaths(paths) {
   const counts = new Map();
-  for (const entry of entries || []) {
-    const path = entry?.path || "";
-    const first = path.includes("/") ? path.split("/")[0] : "";
+  for (const path of paths || []) {
+    const value = String(path || "");
+    const first = value.includes("/") ? value.split("/")[0] : "";
     if (!first) continue;
     counts.set(first, (counts.get(first) || 0) + 1);
   }
@@ -847,11 +1198,19 @@ function inferSourceLabel(entries, collectedMeta) {
       bestCount = count;
     }
   }
-  const total = (entries || []).length || 1;
+  const total = (paths || []).length || 1;
   if (best && bestCount / total >= 0.6) {
     return best;
   }
   return null;
+}
+
+function inferSourceLabel(entries, collectedMeta) {
+  const direct = collectedMeta?.rootName;
+  if (direct && String(direct).trim()) {
+    return String(direct).trim();
+  }
+  return inferSourceLabelFromPaths((entries || []).map((entry) => entry?.path || ""));
 }
 
 function exportBaseName() {
@@ -864,8 +1223,12 @@ function exportBaseName() {
 function updateExportUiLabels() {
   const base = exportBaseName();
   if (elements.downloadExport) {
-    elements.downloadExport.textContent = `Download ${base}.zip`;
-    elements.downloadExport.title = `Download export bundle: ${base}.zip`;
+    elements.downloadExport.textContent = `Download ${base}.searchable.zip`;
+    elements.downloadExport.title = `Download searchable export bundle: ${base}.searchable.zip`;
+  }
+  if (elements.downloadCompactExport) {
+    elements.downloadCompactExport.textContent = `Download ${base}.compact.zip`;
+    elements.downloadCompactExport.title = `Download compact agent bundle: ${base}.compact.zip`;
   }
   if (elements.downloadIndexJson) {
     elements.downloadIndexJson.textContent = `Download ${base}.index.json`;
@@ -873,32 +1236,369 @@ function updateExportUiLabels() {
   }
 }
 
+async function buildEmbeddingsForSearch({ reason, silent = false } = {}) {
+  if (!state.indexLoaded) {
+    return null;
+  }
+  if (!embeddingsRequested) {
+    return null;
+  }
+  const backendLabel = globalThis.LLMX_ENABLE_WEBGPU ? "webgpu" : "cpu";
+  state.buildingEmbeddings = true;
+  if (elements.buildEmbeddings) elements.buildEmbeddings.disabled = true;
+  if (elements.downloadExport) elements.downloadExport.disabled = true;
+  if (elements.downloadIndexJson) elements.downloadIndexJson.disabled = true;
+  if (elements.embeddingsStatus) {
+    elements.embeddingsStatus.textContent = `Building (${backendLabel})...`;
+    elements.embeddingsStatus.classList.add("building");
+  }
+  if (!silent) {
+    setStatus(`${reason || "Embeddings"}: building (${backendLabel})...`);
+  }
+  try {
+    const result = await callWorker("buildEmbeddings", {});
+    const meta = result?.meta || null;
+    if (result?.backend === "cpu") {
+      globalThis.LLMX_ENABLE_WEBGPU = false;
+    }
+    if (elements.embeddingsStatus) {
+      elements.embeddingsStatus.textContent = meta ? `Ready (${meta.count} chunks)` : "Ready";
+      elements.embeddingsStatus.classList.remove("building");
+    }
+    if (!silent) {
+      if (meta && typeof meta.modelId === "string") {
+        setStatus(`Embeddings ready: model=${meta.modelId}, dim=${meta.dim}, count=${meta.count}`);
+      } else {
+        setStatus("Embeddings ready.");
+      }
+    }
+    updateBackendInfo(state.backend?.kind === "worker" ? "Worker" : "Local", {
+      embeddings: embeddingsRequested,
+      webgpu: globalThis.LLMX_ENABLE_WEBGPU,
+      forceCpu,
+    });
+    return meta;
+  } catch (error) {
+    if (elements.embeddingsStatus) {
+      elements.embeddingsStatus.textContent = "Failed";
+      elements.embeddingsStatus.classList.remove("building");
+    }
+    if (!silent) {
+      setStatus(`Embeddings failed: ${formatErrorForUi(error)}`);
+    }
+    throw error;
+  } finally {
+    state.buildingEmbeddings = false;
+    if (elements.buildEmbeddings) elements.buildEmbeddings.disabled = false;
+    if (elements.downloadExport) elements.downloadExport.disabled = false;
+    if (elements.downloadIndexJson) elements.downloadIndexJson.disabled = false;
+    if (!silent) {
+      refreshEmbeddingsStatus();
+    }
+  }
+}
+
+function clearSearchUi() {
+  elements.results.replaceChildren();
+  elements.symbolsResults?.replaceChildren();
+  elements.lookupResults?.replaceChildren();
+  elements.refsResults?.replaceChildren();
+  elements.statsSummary?.replaceChildren();
+  elements.statsBreakdowns?.replaceChildren();
+  elements.chunkView.hidden = true;
+}
+
+function renderEmptyState(container, message) {
+  if (!container) return;
+  container.replaceChildren();
+  const empty = document.createElement("div");
+  empty.textContent = message;
+  container.appendChild(empty);
+}
+
+function parseBoundedInt(value, fallback, min, max) {
+  const parsed = Number.parseInt(String(value || ""), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(parsed, max));
+}
+
+function formatNotices(notices) {
+  const values = (notices || []).filter(Boolean);
+  if (!values.length) {
+    return "";
+  }
+  return ` ${values.join(" ")}`;
+}
+
+function buildSearchFilters() {
+  return {
+    path_exact: elements.fileFilter.value || null,
+    path_prefix: elements.fileFilter.value ? null : selectPathPrefix(),
+    kind: elements.kindFilter.value || null,
+    heading_prefix: elements.outlineFilter.value || null,
+    symbol_prefix: elements.symbolFilter.value || null,
+  };
+}
+
+function breakdownEntries(breakdown) {
+  return Object.entries(breakdown || {}).sort((a, b) => {
+    return Number(b[1] || 0) - Number(a[1] || 0) || String(a[0]).localeCompare(String(b[0]));
+  });
+}
+
+function renderStats(stats) {
+  if (!elements.statsSummary || !elements.statsBreakdowns) {
+    return;
+  }
+  elements.statsSummary.replaceChildren();
+  elements.statsBreakdowns.replaceChildren();
+
+  const summaryItems = [
+    ["Files", stats.total_files],
+    ["Chunks", stats.total_chunks],
+    ["Avg Tokens", Math.round(Number(stats.avg_chunk_tokens || 0))],
+    ["Symbols", stats.symbol_count],
+    ["Edges", stats.edge_count],
+    ["Languages", stats.language_count],
+  ];
+
+  for (const [label, value] of summaryItems) {
+    const card = document.createElement("div");
+    card.className = "stat-card";
+    const key = document.createElement("div");
+    key.className = "meta";
+    key.textContent = label;
+    const val = document.createElement("strong");
+    val.textContent = String(value ?? 0);
+    card.appendChild(key);
+    card.appendChild(val);
+    elements.statsSummary.appendChild(card);
+  }
+
+  const sections = [
+    ["File Kinds", stats.file_kind_breakdown],
+    ["Extensions", stats.extension_breakdown],
+    ["AST Kinds", stats.ast_kind_breakdown],
+    ["Edge Kinds", stats.edge_kind_breakdown],
+  ];
+
+  for (const [title, breakdown] of sections) {
+    const entries = breakdownEntries(breakdown);
+    if (!entries.length) {
+      continue;
+    }
+    const card = document.createElement("section");
+    card.className = "breakdown-card";
+    const heading = document.createElement("strong");
+    heading.textContent = title;
+    const list = document.createElement("div");
+    list.className = "breakdown-list";
+    for (const [name, count] of entries) {
+      const row = document.createElement("div");
+      row.className = "breakdown-row";
+      const label = document.createElement("span");
+      label.textContent = name;
+      const value = document.createElement("strong");
+      value.textContent = String(count);
+      row.appendChild(label);
+      row.appendChild(value);
+      list.appendChild(row);
+    }
+    card.appendChild(heading);
+    card.appendChild(list);
+    elements.statsBreakdowns.appendChild(card);
+  }
+}
+
+function renderSymbolResults(container, entries, emptyMessage) {
+  if (!container) {
+    return;
+  }
+  container.replaceChildren();
+  if (!entries.length) {
+    renderEmptyState(container, emptyMessage);
+    return;
+  }
+  for (const entry of entries) {
+    const item = document.createElement("div");
+    item.className = "result-item";
+
+    const title = document.createElement("strong");
+    title.className = "title";
+    title.textContent = entry.qualified_name || entry.path || "(unknown)";
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    const exported = entry.exported ? " | exported" : "";
+    meta.textContent = `${entry.ast_kind || "other"} | ${entry.path || ""} | Lines ${entry.start_line || 0}-${entry.end_line || 0}${exported}`;
+
+    item.appendChild(title);
+    item.appendChild(meta);
+
+    if (entry.signature) {
+      const signature = document.createElement("div");
+      signature.className = "snippet";
+      signature.textContent = entry.signature;
+      item.appendChild(signature);
+    }
+
+    if (entry.doc_summary) {
+      const docs = document.createElement("div");
+      docs.className = "meta";
+      docs.textContent = entry.doc_summary;
+      item.appendChild(docs);
+    }
+
+    if (entry.chunk_id) {
+      const actions = document.createElement("div");
+      actions.className = "actions";
+      const button = document.createElement("button");
+      button.textContent = "View section";
+      button.addEventListener("click", async () => {
+        await openResultSection(entry);
+      });
+      actions.appendChild(button);
+      item.appendChild(actions);
+    }
+
+    container.appendChild(item);
+  }
+}
+
+function renderRefResults(container, refs) {
+  if (!container) {
+    return;
+  }
+  container.replaceChildren();
+  if (!refs.length) {
+    renderEmptyState(container, "No references.");
+    return;
+  }
+  for (const ref of refs) {
+    const item = document.createElement("div");
+    item.className = "result-item";
+
+    const title = document.createElement("strong");
+    title.className = "title";
+    title.textContent = `${ref.source_symbol || "(unknown)"} -> ${ref.target_symbol || "(unknown)"}`;
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = `${ref.ast_kind || "other"} | ${ref.path || ""} | Lines ${ref.start_line || 0}-${ref.end_line || 0}`;
+
+    const snippet = document.createElement("div");
+    snippet.className = "snippet";
+    snippet.textContent = ref.context || "";
+
+    item.appendChild(title);
+    item.appendChild(meta);
+    item.appendChild(snippet);
+
+    if (ref.chunk_id) {
+      const actions = document.createElement("div");
+      actions.className = "actions";
+      const button = document.createElement("button");
+      button.textContent = "View section";
+      button.addEventListener("click", async () => {
+        await openResultSection(ref);
+      });
+      actions.appendChild(button);
+      item.appendChild(actions);
+    }
+
+    container.appendChild(item);
+  }
+}
+
+async function loadStats(options = {}) {
+  if (!state.indexLoaded) {
+    setStatus("No index loaded.");
+    return;
+  }
+  try {
+    const { stats } = await callWorker("stats", {});
+    renderStats(stats || {});
+    if (!options.silent) {
+      setStatus(`Index stats loaded for ${stats?.total_files || 0} files and ${stats?.total_chunks || 0} chunks.`);
+    }
+  } catch (error) {
+    setStatus(`Stats failed: ${formatErrorForUi(error)}`);
+  }
+}
+
+function setActiveTool(tool, options = {}) {
+  state.activeTool = tool;
+  const tabButtons = elements.toolTabs?.querySelectorAll("[data-tool]") || [];
+  for (const button of tabButtons) {
+    button.classList.toggle("is-active", button.dataset.tool === tool);
+  }
+  const views = document.querySelectorAll("[data-tool-view]");
+  for (const view of views) {
+    view.classList.toggle("is-active", view.dataset.toolView === tool);
+  }
+  if (state.indexLoaded && options.run !== false) {
+    if (tool === "stats") {
+      void loadStats({ silent: true });
+    } else if (tool === "search" && elements.query?.value?.trim()) {
+      void runSearch();
+    }
+  }
+}
+
+function formatSkipSummary({ skippedLarge, skippedTotal, skippedCount, skippedExports }) {
+  if (!skippedLarge && !skippedTotal && !skippedCount && !skippedExports) {
+    return "";
+  }
+  return ` (skipped: ${skippedLarge} too large, ${skippedTotal} over total limit, ${skippedCount} too many files, ${skippedExports} llmx exports)`;
+}
+
+function buildReadyStatus({ entryCount, replaced, previousLabel, nextLabel, skippedExports }) {
+  const action = replaced
+    ? `Replaced ${previousLabel || "current index"} with ${nextLabel || "new folder"}`
+    : `Indexed ${entryCount} files`;
+  const exportNote = skippedExports
+    ? ` Ignored ${skippedExports} nested .llmx export bundle${skippedExports === 1 ? "" : "s"}.`
+    : "";
+  return `${action}.${exportNote}`;
+}
+
 async function runIngest(entries, collectedMeta) {
   if (!state.workerReady) {
     setStatus("Backend not ready.");
     return;
   }
-  if (!entries.length) {
-    setStatus(`No supported files found. Accepted: ${ALLOWED_EXTENSIONS.join(", ")}`);
-    return;
-  }
   const skippedLarge = collectedMeta?.skippedLarge || 0;
   const skippedTotal = collectedMeta?.skippedTotal || 0;
   const skippedCount = collectedMeta?.skippedCount || 0;
+  const skippedExports = collectedMeta?.skippedExports || 0;
   const totalBytes = collectedMeta?.totalBytes || 0;
-  const skippedNote =
-    skippedLarge || skippedTotal || skippedCount
-      ? ` (skipped: ${skippedLarge} too large, ${skippedTotal} over total limit, ${skippedCount} too many files)`
-      : "";
+  const skippedNote = formatSkipSummary({ skippedLarge, skippedTotal, skippedCount, skippedExports });
+  if (!entries.length) {
+    if (skippedExports) {
+      setStatus(
+        `Ignored ${skippedExports} .llmx export bundle${skippedExports === 1 ? "" : "s"}. Select the original source folder or load an exported index JSON instead.`
+      );
+    } else {
+      setStatus(`No supported files found. Accepted: ${ALLOWED_EXTENSIONS.join(", ")}`);
+    }
+    return;
+  }
 
   // Warn if approaching limits
   if (totalBytes > DEFAULT_LIMITS.warnTotalBytes) {
     console.warn(`Large upload: ${(totalBytes / 1024 / 1024).toFixed(1)}MB. Browser may slow down.`);
   }
-  if (entries.length > DEFAULT_LIMITS.maxFileCount * 0.8) {
+  if (hasMaxFileCountLimit() && entries.length > DEFAULT_LIMITS.maxFileCount * 0.8) {
     console.warn(`Many files: ${entries.length}. Processing may take time.`);
   }
 
+  const incomingSourceLabel = inferSourceLabel(entries, collectedMeta);
+  const previousSourceLabel = state.sourceLabel;
+  const replacingIndex =
+    state.indexLoaded &&
+    Boolean(previousSourceLabel) &&
+    Boolean(incomingSourceLabel) &&
+    previousSourceLabel !== incomingSourceLabel;
   const prevByPath = new Map((state.files || []).map((meta) => [meta.path, meta]));
   const currentPaths = new Set(entries.map((e) => e.path));
   let removedCount = 0;
@@ -912,10 +1612,15 @@ async function runIngest(entries, collectedMeta) {
 
   try {
     state.busy = true;
-    state.sourceLabel = inferSourceLabel(entries, collectedMeta);
+    updateUIState();
+    state.sourceLabel = incomingSourceLabel;
+    clearSearchUi();
 
-    if (!state.indexLoaded) {
-      setStatus(`Ingesting ${entries.length} files${skippedNote}...`);
+    if (!state.indexLoaded || replacingIndex) {
+      const actionLabel = replacingIndex
+        ? `Replacing ${previousSourceLabel || "current index"} with ${incomingSourceLabel || "new folder"}`
+        : `Ingesting ${entries.length} files`;
+      setStatus(`${actionLabel}${skippedNote}...`);
       const files = [];
       for (let i = 0; i < entries.length; i++) {
         const entry = entries[i];
@@ -928,7 +1633,10 @@ async function runIngest(entries, collectedMeta) {
         });
         // Yield to browser every 10 files to prevent freezing
         if (i % 10 === 0 && i > 0) {
-          setStatus(`Ingesting ${entries.length} files (${i}/${entries.length})${skippedNote}...`);
+          const progressLabel = replacingIndex
+            ? `Replacing index (${i}/${entries.length})`
+            : `Ingesting ${entries.length} files (${i}/${entries.length})`;
+          setStatus(`${progressLabel}${skippedNote}...`);
           await new Promise(resolve => setTimeout(resolve, 0));
         }
       }
@@ -1029,64 +1737,45 @@ async function runIngest(entries, collectedMeta) {
     const idResult = await callWorker("indexId", {});
     state.indexId = idResult.indexId || null;
     state.files = filesResult.files || [];
+    state.sourceLabel = inferSourceLabelFromPaths(state.files.map((file) => file.path)) || incomingSourceLabel;
     updateExportUiLabels();
 
     elements.indexId.textContent = state.indexId || "(unknown)";
-    elements.chunkCount.textContent = statsResult.stats.total_chunks;
+    const chunks = statsResult.stats.total_chunks;
+    state.chunkCount = chunks;
+    elements.chunkCount.textContent = `${chunks} chunks`;
+    elements.chunkCount.hidden = false;
     elements.warningCount.textContent = warningsResult.warnings.length;
     renderWarnings(warningsResult.warnings);
     populateFileFilter();
     await updateOutlineSymbols();
     await populateSavedIndexes();
     state.indexLoaded = true;
-    setStatus("Index ready.");
-    if (shouldAutoBuildEmbeddings) {
-      const backendLabel = globalThis.LLMX_ENABLE_WEBGPU ? "webgpu" : "cpu";
-      state.buildingEmbeddings = true;
-      if (elements.buildEmbeddings) elements.buildEmbeddings.disabled = true;
-      if (elements.downloadExport) elements.downloadExport.disabled = true;
-      if (elements.downloadIndexJson) elements.downloadIndexJson.disabled = true;
-      if (elements.embeddingsStatus) {
-        elements.embeddingsStatus.textContent = `Building (${backendLabel})...`;
-        elements.embeddingsStatus.classList.add("building");
-      }
-      setStatus(`Auto-building embeddings (${backendLabel})...`);
-
-      callWorker("buildEmbeddings", {})
-        .then((result) => {
-          const meta = result?.meta;
-          if (meta && typeof meta.modelId === "string") {
-            if (elements.embeddingsStatus) {
-              elements.embeddingsStatus.textContent = `Ready (${meta.count} chunks)`;
-              elements.embeddingsStatus.classList.remove("building");
-            }
-            setStatus(`Embeddings ready: model=${meta.modelId}, dim=${meta.dim}, count=${meta.count}`);
-          } else {
-            if (elements.embeddingsStatus) {
-              elements.embeddingsStatus.textContent = "Ready";
-              elements.embeddingsStatus.classList.remove("building");
-            }
-            setStatus("Embeddings ready.");
-          }
+    updateUIState();
+    refreshEmbeddingsStatus();
+    await maybeAutoBuildEmbeddings("Auto embeddings");
+    if (state.activeTool === "stats") {
+      await loadStats({ silent: true });
+    }
+    if (state.activeTool === "search" && elements.query.value.trim()) {
+      await runSearch();
+    } else {
+      setStatus(
+        buildReadyStatus({
+          entryCount: entries.length,
+          replaced: replacingIndex,
+          previousLabel: previousSourceLabel,
+          nextLabel: state.sourceLabel,
+          skippedExports,
         })
-        .catch((error) => {
-          if (elements.embeddingsStatus) {
-            elements.embeddingsStatus.textContent = "Failed";
-            elements.embeddingsStatus.classList.remove("building");
-          }
-          setStatus(`Embeddings failed: ${formatErrorForUi(error)}`);
-        })
-        .finally(() => {
-          state.buildingEmbeddings = false;
-          if (elements.buildEmbeddings) elements.buildEmbeddings.disabled = false;
-          if (elements.downloadExport) elements.downloadExport.disabled = false;
-          if (elements.downloadIndexJson) elements.downloadIndexJson.disabled = false;
-        });
+      );
     }
   } catch (error) {
+    state.sourceLabel = previousSourceLabel;
     setStatus(`Ingestion failed: ${formatErrorForUi(error)}`);
   } finally {
     state.busy = false;
+    updateUIState();
   }
 }
 
@@ -1102,19 +1791,99 @@ function renderWarnings(warnings) {
   }
 }
 
+async function activateLoadedIndex(statusMessage, restoredEmbeddingsMeta = null) {
+  const idResult = await callWorker("indexId", {});
+  const statsResult = await callWorker("stats", {});
+  const warningsResult = await callWorker("warnings", {});
+  const filesResult = await callWorker("files", {});
+  state.indexId = idResult.indexId || null;
+  state.files = filesResult.files || [];
+  state.sourceLabel = inferSourceLabelFromPaths(state.files.map((file) => file.path));
+  state.indexLoaded = true;
+  updateUIState();
+  updateExportUiLabels();
+  clearSearchUi();
+  elements.indexId.textContent = state.indexId || "(unknown)";
+  const chunks = statsResult.stats.total_chunks;
+  state.chunkCount = chunks;
+  elements.chunkCount.textContent = `${chunks} chunks`;
+  elements.chunkCount.hidden = false;
+  elements.warningCount.textContent = warningsResult.warnings.length;
+  renderWarnings(warningsResult.warnings);
+  populateFileFilter();
+  await updateOutlineSymbols();
+  await populateSavedIndexes();
+  if (restoredEmbeddingsMeta) {
+    refreshEmbeddingsStatus(restoredEmbeddingsMeta);
+  } else {
+    refreshEmbeddingsStatus();
+    await maybeAutoBuildEmbeddings("Auto embeddings");
+  }
+  if (state.activeTool === "stats") {
+    await loadStats({ silent: true });
+  }
+  if (state.activeTool === "search" && elements.query.value.trim()) {
+    await runSearch();
+  } else {
+    setStatus(statusMessage);
+  }
+}
+
+async function loadIndexJsonFile(file) {
+  if (!file) {
+    return;
+  }
+  try {
+    state.busy = true;
+    updateUIState();
+    setStatus(`Loading ${file.name}...`);
+    const json = await file.text();
+    await callWorker("loadIndexJson", { json });
+    await activateLoadedIndex(`Loaded ${file.name}.`);
+  } catch (error) {
+    setStatus(`Failed to load index JSON: ${formatErrorForUi(error)}`);
+  } finally {
+    state.busy = false;
+    updateUIState();
+  }
+}
+
 elements.selectFolder.addEventListener("click", async () => {
-  elements.filesInput.click();
+  elements.folderInput.click();
+});
+
+elements.loadIndexJson?.addEventListener("click", async () => {
+  elements.indexJsonInput?.click();
+});
+
+elements.replaceIndex?.addEventListener("click", async () => {
+  elements.folderInput.click();
+});
+
+elements.indexJsonInput?.addEventListener("change", async (event) => {
+  const file = event.target.files?.[0];
+  await loadIndexJsonFile(file);
+  event.target.value = "";
 });
 
 
 elements.folderInput.addEventListener("change", async (event) => {
   const collected = await collectFilesFromInput(event.target.files || []);
   await runIngest(collected.entries, collected);
+  event.target.value = "";
 });
 
 elements.filesInput.addEventListener("change", async (event) => {
   const collected = await collectFilesFromInput(event.target.files || []);
   await runIngest(collected.entries, collected);
+  event.target.value = "";
+});
+
+elements.dropZone.addEventListener("click", (event) => {
+  if (event.target.closest("button, input, select, a, label")) {
+    return;
+  }
+  elements.folderInput.click();
 });
 
 elements.dropZone.addEventListener("dragover", (event) => {
@@ -1135,6 +1904,14 @@ elements.dropZone.addEventListener("drop", async (event) => {
   await runIngest(collected.entries, collected);
 });
 
+elements.toolTabs?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-tool]");
+  if (!button) {
+    return;
+  }
+  setActiveTool(button.dataset.tool);
+});
+
 elements.fileFilter.addEventListener("change", async () => {
   await updateOutlineSymbols();
   scheduleSearch();
@@ -1147,13 +1924,11 @@ elements.runSearch.addEventListener("click", async () => {
 if (elements.buildEmbeddings) {
   if (!embeddingsRequested) {
     elements.buildEmbeddings.disabled = true;
-    elements.buildEmbeddings.title = "Embeddings are disabled. Add ?embeddings=1 to the URL to enable.";
-  } else if (!globalThis.LLMX_ENABLE_WEBGPU && !forceCpu) {
-    elements.buildEmbeddings.disabled = true;
-    elements.buildEmbeddings.title =
-      "Embeddings require WebGPU by default. Use a WebGPU-capable Chromium browser, or add ?cpu=1 to force CPU.";
+    elements.buildEmbeddings.title = "Embeddings are disabled. Remove ?embeddings=0 to enable them.";
   } else {
-    elements.buildEmbeddings.title = "Build embeddings for semantic search.";
+    elements.buildEmbeddings.title = globalThis.LLMX_ENABLE_WEBGPU
+      ? "Build embeddings for semantic search."
+      : "Build embeddings for semantic search using the CPU fallback.";
   }
 
   elements.buildEmbeddings.addEventListener("click", async () => {
@@ -1162,17 +1937,13 @@ if (elements.buildEmbeddings) {
       return;
     }
     if (!embeddingsRequested) {
-      setStatus("Embeddings disabled. Add ?embeddings=1 to the URL.");
-      return;
-    }
-    if (!globalThis.LLMX_ENABLE_WEBGPU && !forceCpu) {
-      setStatus("Embeddings require WebGPU. Use Chromium with WebGPU, or add ?cpu=1 to force CPU.");
+      setStatus("Embeddings disabled (?embeddings=0).");
       return;
     }
 
     // Warn about CPU embeddings being slow and potentially unstable
     if (forceCpu && !globalThis.LLMX_ENABLE_WEBGPU) {
-      const chunkCount = state.files.reduce((sum, f) => sum + (f.chunks || 0), 0);
+      const chunkCount = state.chunkCount;
       if (chunkCount > 100) {
         const firefoxWarning = isFirefox
           ? `\n\nWARNING: Firefox has strict WASM memory limits. CPU embeddings with ${chunkCount} chunks will be VERY slow (10-20 minutes) and may still crash.\n\n`
@@ -1189,49 +1960,10 @@ if (elements.buildEmbeddings) {
         }
       }
     }
-
-    const backendLabel = globalThis.LLMX_ENABLE_WEBGPU ? "webgpu" : "cpu";
-
-    // Set building state
-    state.buildingEmbeddings = true;
-    elements.buildEmbeddings.disabled = true;
-    elements.downloadExport.disabled = true;
-    elements.downloadIndexJson.disabled = true;
-
-    if (elements.embeddingsStatus) {
-      elements.embeddingsStatus.textContent = `Building (${backendLabel})...`;
-      elements.embeddingsStatus.classList.add("building");
-    }
-    setStatus(`Embeddings: building (${backendLabel})...`);
-
     try {
-      const result = await callWorker("buildEmbeddings", {});
-      const meta = result?.meta;
-      if (meta && typeof meta.modelId === "string") {
-        if (elements.embeddingsStatus) {
-          elements.embeddingsStatus.textContent = `Ready (${meta.count} chunks)`;
-          elements.embeddingsStatus.classList.remove("building");
-        }
-        setStatus(`Embeddings ready: model=${meta.modelId}, dim=${meta.dim}, count=${meta.count}`);
-      } else {
-        if (elements.embeddingsStatus) {
-          elements.embeddingsStatus.textContent = "Ready";
-          elements.embeddingsStatus.classList.remove("building");
-        }
-        setStatus("Embeddings ready.");
-      }
+      await buildEmbeddingsForSearch({ reason: "Embeddings" });
     } catch (error) {
-      if (elements.embeddingsStatus) {
-        elements.embeddingsStatus.textContent = "Failed";
-        elements.embeddingsStatus.classList.remove("building");
-      }
-      setStatus(`Embeddings failed: ${formatErrorForUi(error)}`);
-    } finally {
-      // Re-enable buttons
-      state.buildingEmbeddings = false;
-      elements.buildEmbeddings.disabled = false;
-      elements.downloadExport.disabled = false;
-      elements.downloadIndexJson.disabled = false;
+      console.warn("Manual embeddings build failed:", error);
     }
   });
 }
@@ -1243,6 +1975,22 @@ elements.query.addEventListener("keydown", async (event) => {
 });
 
 elements.query.addEventListener("input", () => {
+  scheduleSearch();
+});
+
+elements.searchStrategy?.addEventListener("change", () => {
+  scheduleSearch();
+});
+
+elements.hybridStrategy?.addEventListener("change", () => {
+  scheduleSearch();
+});
+
+elements.searchIntent?.addEventListener("change", () => {
+  scheduleSearch();
+});
+
+elements.searchExplain?.addEventListener("change", () => {
   scheduleSearch();
 });
 
@@ -1262,6 +2010,57 @@ elements.symbolFilter.addEventListener("change", () => {
   scheduleSearch();
 });
 
+elements.runSymbols?.addEventListener("click", async () => {
+  await runSymbols();
+});
+
+elements.runLookup?.addEventListener("click", async () => {
+  await runLookup();
+});
+
+elements.runRefs?.addEventListener("click", async () => {
+  await runRefs();
+});
+
+for (const input of [
+  elements.symbolsPattern,
+  elements.symbolsPath,
+  elements.symbolsLimit,
+  elements.lookupSymbol,
+  elements.lookupPath,
+  elements.lookupLimit,
+  elements.refsSymbol,
+  elements.refsDepth,
+  elements.refsLimit,
+]) {
+  input?.addEventListener("keydown", async (event) => {
+    if (event.key !== "Enter") {
+      return;
+    }
+    if (input === elements.lookupSymbol || input === elements.lookupPath || input === elements.lookupLimit) {
+      await runLookup();
+      return;
+    }
+    if (input === elements.refsSymbol || input === elements.refsDepth || input === elements.refsLimit) {
+      await runRefs();
+      return;
+    }
+    await runSymbols();
+  });
+}
+
+elements.symbolsKind?.addEventListener("change", () => {
+  void runSymbols();
+});
+
+elements.lookupKind?.addEventListener("change", () => {
+  void runLookup();
+});
+
+elements.refsDirection?.addEventListener("change", () => {
+  void runRefs();
+});
+
 elements.closeChunk.addEventListener("click", () => {
   elements.chunkView.hidden = true;
 });
@@ -1271,12 +2070,25 @@ elements.downloadExport?.addEventListener("click", () => {
     setStatus("No index to export.");
     return;
   }
-  callWorker("exportZipCompact", {})
+  callWorker("exportZip", {})
     .then(({ bytes }) => {
-      const name = `${exportBaseName()}.zip`;
+      const name = `${exportBaseName()}.searchable.zip`;
       downloadFile(name, bytes, "application/zip");
     })
     .catch(() => setStatus("Export failed."));
+});
+
+elements.downloadCompactExport?.addEventListener("click", () => {
+  if (!state.indexLoaded) {
+    setStatus("No index to export.");
+    return;
+  }
+  callWorker("exportZipCompact", {})
+    .then(({ bytes }) => {
+      const name = `${exportBaseName()}.compact.zip`;
+      downloadFile(name, bytes, "application/zip");
+    })
+    .catch(() => setStatus("Compact export failed."));
 });
 
 elements.downloadIndexJson?.addEventListener("click", async () => {
@@ -1295,17 +2107,8 @@ elements.downloadIndexJson?.addEventListener("click", async () => {
         const floatArray = new Float32Array(embResult.embeddings);
         const { dim, count, modelId } = embResult.meta;
 
-        // Convert Float32Array to nested arrays for JSON
-        const embeddingsArray = [];
-        for (let i = 0; i < count; i++) {
-          const start = i * dim;
-          const end = start + dim;
-          embeddingsArray.push(Array.from(floatArray.slice(start, end)));
-        }
-
-        index.embeddings = embeddingsArray;
         index.embeddings_meta = { dim, count, modelId };
-        setStatus("Exporting index with embeddings...");
+        setStatus("Exporting index metadata...");
       }
     } catch (embErr) {
       // No embeddings available, continue without them
@@ -1333,32 +2136,141 @@ async function runSearch() {
     setStatus("Index ready.");
     return;
   }
-  const filters = {
-    path_exact: elements.fileFilter.value || null,
-    path_prefix: elements.fileFilter.value ? null : selectPathPrefix(),
-    kind: elements.kindFilter.value || null,
-    heading_prefix: elements.outlineFilter.value || null,
-    symbol_prefix: elements.symbolFilter.value || null,
-  };
+  const filters = buildSearchFilters();
   const seq = ++state.searchSeq;
   elements.runSearch.disabled = true;
   setStatus("Searching...");
   try {
-    const { results } = await callWorker("search", { query, filters, limit: 20 });
+    const response = await callWorker("search", {
+      query,
+      filters,
+      limit: SEARCH_LIMIT,
+      strategy: elements.searchStrategy?.value || "auto",
+      hybridStrategy: elements.hybridStrategy?.value || "rrf",
+      intent: elements.searchIntent?.value || "auto",
+      explain: elements.searchExplain?.checked !== false,
+    });
     if (seq !== state.searchSeq) {
       return;
     }
-    renderResults(results);
-    setStatus(`Found ${results.length} results.`);
+    const rawResults = response?.results || [];
+    const groupedResults = shapeSearchResults(rawResults, SEARCH_LIMIT);
+    renderResults(groupedResults);
+    const semanticNote = response?.usedSemantic ? " using semantic reranking" : "";
+    const noticeText = formatNotices(response?.notices);
+    setStatus(`Found ${groupedResults.length} sections from ${rawResults.length} hits${semanticNote}.${noticeText}`);
   } catch (error) {
     if (seq === state.searchSeq) {
-      setStatus("Search failed.");
+      setStatus(`Search failed: ${formatErrorForUi(error)}`);
     }
   } finally {
     if (seq === state.searchSeq) {
       elements.runSearch.disabled = false;
     }
   }
+}
+
+async function runSymbols() {
+  if (!state.indexLoaded) {
+    setStatus("No index loaded.");
+    return;
+  }
+  const limit = parseBoundedInt(elements.symbolsLimit?.value, 50, 1, 500);
+  try {
+    const response = await callWorker("symbolsRich", {
+      pattern: elements.symbolsPattern?.value?.trim() || null,
+      ast_kind: elements.symbolsKind?.value || null,
+      path_prefix: elements.symbolsPath?.value?.trim() || null,
+      limit,
+    });
+    renderSymbolResults(elements.symbolsResults, response?.symbols || [], "No symbols.");
+    setStatus(`Listed ${Math.min(response?.symbols?.length || 0, response?.total || 0)} of ${response?.total || 0} symbols.`);
+  } catch (error) {
+    setStatus(`Symbols failed: ${formatErrorForUi(error)}`);
+  }
+}
+
+async function runLookup() {
+  if (!state.indexLoaded) {
+    setStatus("No index loaded.");
+    return;
+  }
+  const symbol = elements.lookupSymbol?.value?.trim() || "";
+  if (!symbol) {
+    renderEmptyState(elements.lookupResults, "Enter a symbol to look up.");
+    setStatus("Enter a symbol to look up.");
+    return;
+  }
+  const limit = parseBoundedInt(elements.lookupLimit?.value, 20, 1, 200);
+  try {
+    const response = await callWorker("lookupSymbol", {
+      symbol,
+      kind: elements.lookupKind?.value || null,
+      path_prefix: elements.lookupPath?.value?.trim() || null,
+      limit,
+    });
+    renderSymbolResults(elements.lookupResults, response?.matches || [], "No symbol matches.");
+    setStatus(`Found ${response?.total || 0} symbol matches.`);
+  } catch (error) {
+    setStatus(`Lookup failed: ${formatErrorForUi(error)}`);
+  }
+}
+
+async function runRefs() {
+  if (!state.indexLoaded) {
+    setStatus("No index loaded.");
+    return;
+  }
+  const symbol = elements.refsSymbol?.value?.trim() || "";
+  if (!symbol) {
+    renderEmptyState(elements.refsResults, "Enter a symbol to trace.");
+    setStatus("Enter a symbol to trace.");
+    return;
+  }
+  try {
+    const response = await callWorker("refsForSymbol", {
+      symbol,
+      direction: elements.refsDirection?.value || "callers",
+      depth: parseBoundedInt(elements.refsDepth?.value, 1, 1, 8),
+      limit: parseBoundedInt(elements.refsLimit?.value, 20, 1, 200),
+    });
+    renderRefResults(elements.refsResults, response?.refs || []);
+    setStatus(`Found ${response?.total || 0} references.`);
+  } catch (error) {
+    setStatus(`Refs failed: ${formatErrorForUi(error)}`);
+  }
+}
+
+async function openResultSection(result) {
+  const chunkIds = Array.from(new Set(result.chunk_ids || [result.chunk_id]));
+  const chunks = [];
+  for (const chunkId of chunkIds) {
+    const { chunk } = await callWorker("getChunk", { chunkId });
+    if (chunk) {
+      chunks.push(chunk);
+    }
+  }
+  if (!chunks.length) {
+    return;
+  }
+
+  chunks.sort((a, b) => a.start_line - b.start_line);
+  const first = chunks[0];
+  const last = chunks[chunks.length - 1];
+  const ref = result.chunk_ref ? ` | Ref: ${result.chunk_ref}` : "";
+  const heading = Array.isArray(result.heading_path) && result.heading_path.length
+    ? ` | ${result.heading_path.join(" / ")}`
+    : "";
+  elements.chunkTitle.textContent = `${result.path} (${first.start_line}-${last.end_line})${ref}${heading}`;
+  elements.chunkContent.textContent = chunks
+    .map((chunk) => {
+      if (chunks.length === 1) {
+        return chunk.content;
+      }
+      return `[${chunk.start_line}-${chunk.end_line}]\n${chunk.content}`;
+    })
+    .join("\n\n");
+  elements.chunkView.hidden = false;
 }
 
 function renderResults(results) {
@@ -1374,34 +2286,36 @@ function renderResults(results) {
     item.className = "result-item";
 
     const title = document.createElement("strong");
-    title.textContent = result.path;
+    title.className = "title";
+    title.textContent = result.title || result.path;
 
     const meta = document.createElement("div");
     meta.className = "meta";
-    const heading = result.heading_path.length ? ` | ${result.heading_path.join("/")}` : "";
+    const subtitle = result.subtitle ? ` | ${result.subtitle}` : "";
     const ref = result.chunk_ref ? ` | ${result.chunk_ref}` : "";
-    meta.textContent = `Lines ${result.start_line}-${result.end_line}${ref}${heading}`;
+    const engines = (result.matched_engines || []).length
+      ? ` | ${result.matched_engines.join(" + ")}`
+      : "";
+    meta.textContent = `Lines ${result.start_line}-${result.end_line}${ref}${subtitle}${engines}`;
 
     const snippet = document.createElement("div");
+    snippet.className = "snippet";
     snippet.textContent = result.snippet;
 
+    const reason = document.createElement("div");
+    reason.className = "meta";
+    reason.textContent = result.match_reason || "Matched by lexical ranking.";
+
     const button = document.createElement("button");
-    button.textContent = "View chunk";
+    button.textContent = "View section";
     button.addEventListener("click", async () => {
-      const { chunk } = await callWorker("getChunk", { chunkId: result.chunk_id });
-      if (!chunk) {
-        return;
-      }
-      const ref = chunk.short_id ? ` | Ref: ${chunk.short_id}` : "";
-      const label = chunk.slug ? ` | ${chunk.slug}` : "";
-      elements.chunkTitle.textContent = `${chunk.path} (${chunk.start_line}-${chunk.end_line})${ref}${label}`;
-      elements.chunkContent.textContent = chunk.content;
-      elements.chunkView.hidden = false;
+      await openResultSection(result);
     });
 
     item.appendChild(title);
     item.appendChild(meta);
     item.appendChild(snippet);
+    item.appendChild(reason);
     item.appendChild(button);
     elements.results.appendChild(item);
   }
@@ -1424,15 +2338,30 @@ function downloadFile(name, content, type) {
 
 function populateFileFilter() {
   elements.fileFilter.replaceChildren();
+  elements.kindFilter.replaceChildren();
   const option = document.createElement("option");
   option.value = "";
   option.textContent = "All files";
   elements.fileFilter.appendChild(option);
+  const kindOption = document.createElement("option");
+  kindOption.value = "";
+  kindOption.textContent = "All kinds";
+  elements.kindFilter.appendChild(kindOption);
+  const kinds = new Set();
   for (const file of state.files || []) {
     const item = document.createElement("option");
     item.value = file.path;
     item.textContent = file.path;
     elements.fileFilter.appendChild(item);
+    if (file.kind) {
+      kinds.add(String(file.kind));
+    }
+  }
+  for (const kind of Array.from(kinds).sort()) {
+    const item = document.createElement("option");
+    item.value = kind;
+    item.textContent = kind;
+    elements.kindFilter.appendChild(item);
   }
 }
 
@@ -1495,7 +2424,7 @@ function openDb() {
 
 let searchTimer = null;
 function scheduleSearch() {
-  if (!state.indexLoaded || state.busy) {
+  if (!state.indexLoaded || state.busy || state.activeTool !== "search") {
     return;
   }
   if (searchTimer) {
@@ -1575,7 +2504,9 @@ elements.loadSavedIndex?.addEventListener("click", async () => {
   }
   try {
     state.busy = true;
+    updateUIState();
     await callWorker("loadIndexJson", { json: record.json });
+    let restoredEmbeddingsMeta = null;
     if (record.embeddings && record.embeddings_meta) {
       try {
         await callWorker(
@@ -1583,69 +2514,15 @@ elements.loadSavedIndex?.addEventListener("click", async () => {
           { embeddings: record.embeddings, meta: record.embeddings_meta },
           state.backend?.kind === "worker" ? [record.embeddings] : undefined
         );
+        restoredEmbeddingsMeta = record.embeddings_meta;
       } catch {}
     }
-    const idResult = await callWorker("indexId", {});
-    const statsResult = await callWorker("stats", {});
-    const warningsResult = await callWorker("warnings", {});
-    const filesResult = await callWorker("files", {});
-    state.indexId = idResult.indexId || null;
-    state.files = filesResult.files || [];
-    state.indexLoaded = true;
-    elements.indexId.textContent = state.indexId || "(unknown)";
-    elements.chunkCount.textContent = statsResult.stats.total_chunks;
-    elements.warningCount.textContent = warningsResult.warnings.length;
-    renderWarnings(warningsResult.warnings);
-    populateFileFilter();
-    await updateOutlineSymbols();
-    setStatus("Loaded saved index.");
-    if (shouldAutoBuildEmbeddings) {
-      const backendLabel = globalThis.LLMX_ENABLE_WEBGPU ? "webgpu" : "cpu";
-      state.buildingEmbeddings = true;
-      if (elements.buildEmbeddings) elements.buildEmbeddings.disabled = true;
-      if (elements.downloadExport) elements.downloadExport.disabled = true;
-      if (elements.downloadIndexJson) elements.downloadIndexJson.disabled = true;
-      if (elements.embeddingsStatus) {
-        elements.embeddingsStatus.textContent = `Building (${backendLabel})...`;
-        elements.embeddingsStatus.classList.add("building");
-      }
-      setStatus(`Auto-building embeddings (${backendLabel})...`);
-
-      callWorker("buildEmbeddings", {})
-        .then((result) => {
-          const meta = result?.meta;
-          if (meta && typeof meta.modelId === "string") {
-            if (elements.embeddingsStatus) {
-              elements.embeddingsStatus.textContent = `Ready (${meta.count} chunks)`;
-              elements.embeddingsStatus.classList.remove("building");
-            }
-            setStatus(`Embeddings ready: model=${meta.modelId}, dim=${meta.dim}, count=${meta.count}`);
-          } else {
-            if (elements.embeddingsStatus) {
-              elements.embeddingsStatus.textContent = "Ready";
-              elements.embeddingsStatus.classList.remove("building");
-            }
-            setStatus("Embeddings ready.");
-          }
-        })
-        .catch((error) => {
-          if (elements.embeddingsStatus) {
-            elements.embeddingsStatus.textContent = "Failed";
-            elements.embeddingsStatus.classList.remove("building");
-          }
-          setStatus(`Embeddings failed: ${formatErrorForUi(error)}`);
-        })
-        .finally(() => {
-          state.buildingEmbeddings = false;
-          if (elements.buildEmbeddings) elements.buildEmbeddings.disabled = false;
-          if (elements.downloadExport) elements.downloadExport.disabled = false;
-          if (elements.downloadIndexJson) elements.downloadIndexJson.disabled = false;
-        });
-    }
-  } catch {
-    setStatus("Failed to load saved index.");
+    await activateLoadedIndex("Loaded saved index.", restoredEmbeddingsMeta);
+  } catch (error) {
+    setStatus(`Failed to load saved index: ${formatErrorForUi(error)}`);
   } finally {
     state.busy = false;
+    updateUIState();
   }
 });
 
@@ -1716,6 +2593,7 @@ elements.resetSettings?.addEventListener("click", resetSettings);
 
 loadSettingsFromUrl();
 configureFolderPickerUi();
+setActiveTool(state.activeTool, { run: false });
 initWorker().catch((error) => {
   setStatus(`Failed to start backend: ${formatErrorForUi(error)}`);
 });

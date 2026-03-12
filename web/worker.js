@@ -1,4 +1,12 @@
 import init, { Embedder, Ingestor } from "./pkg/ingestor_wasm.js";
+import {
+  buildManageStats,
+  linearFuse,
+  listRichSymbols,
+  lookupSymbols,
+  rrfFuse,
+  traceRefs,
+} from "./index-insights.js";
 
 const urlParams = (() => {
   try {
@@ -7,10 +15,9 @@ const urlParams = (() => {
     return new URLSearchParams();
   }
 })();
-const embeddingsRequested = urlParams.get("embeddings") === "1";
+const embeddingsRequested = urlParams.get("embeddings") !== "0";
 const forceCpu = urlParams.get("cpu") === "1";
 const webGpuParam = urlParams.get("webgpu");
-const webGpuRequested = webGpuParam === "1" || (embeddingsRequested && webGpuParam !== "0" && !forceCpu);
 const forceWebGpu = urlParams.get("force_webgpu") === "1";
 const isFirefox = (() => {
   const ua = (self.navigator && self.navigator.userAgent) || "";
@@ -18,9 +25,9 @@ const isFirefox = (() => {
 })();
 const isFirefoxNightly = (() => {
   const ua = (self.navigator && self.navigator.userAgent) || "";
-  // Nightly user agents usually look like: "Firefox/123.0a1"
   return /Firefox\/[0-9]+(\.[0-9]+)*a1\b/.test(ua);
 })();
+const webGpuRequested = webGpuParam === "1" || (webGpuParam !== "0" && !forceCpu);
 const webGpuAvailable = Boolean(self.navigator && self.navigator.gpu);
 self.LLMX_ENABLE_WEBGPU = webGpuRequested && webGpuAvailable;
 self.LLMX_ENABLE_EMBEDDINGS = embeddingsRequested;
@@ -29,15 +36,16 @@ if (webGpuRequested && !webGpuAvailable) {
     "WebGPU unavailable (navigator.gpu missing). To use embeddings, either use a WebGPU-capable Chromium browser or add ?cpu=1 to allow slow CPU embeddings."
   );
 }
-if (webGpuRequested && isFirefox && !isFirefoxNightly && !forceWebGpu) {
+if (self.LLMX_ENABLE_WEBGPU && isFirefox && !isFirefoxNightly && !forceWebGpu) {
   self.LLMX_ENABLE_WEBGPU = false;
   console.warn(
-    "WebGPU requested on Firefox, but is disabled by default due to stability issues. Use Chromium, use Firefox Nightly, or add ?force_webgpu=1 to override."
+    "WebGPU requested on Firefox, but is disabled by default due to Burn/WGPU instability. Use Firefox Nightly, Chromium, or add ?force_webgpu=1 to override."
   );
 }
 if (!embeddingsRequested) {
-  console.log("Embeddings disabled (add ?embeddings=1 to enable).");
+  console.log("Embeddings disabled (?embeddings=0 to keep them off).");
 }
+const EMBEDDINGS_AUTO_BUILD_MAX_CHUNKS = 240;
 
 let ready = false;
 let ingestor = null;
@@ -61,6 +69,10 @@ function toError(error) {
   } catch {
     return "Unknown error";
   }
+}
+
+function shouldUseSemanticIntent(intent) {
+  return intent === "semantic" || intent === "keyword";
 }
 
 function ensureInitStarted() {
@@ -108,7 +120,7 @@ async function ensureReady() {
 
 async function ensureEmbedder() {
   if (!self.LLMX_ENABLE_EMBEDDINGS) {
-    throw new Error("Embeddings disabled (add ?embeddings=1).");
+    throw new Error("Embeddings disabled (?embeddings=0).");
   }
 
   if (!embedder) {
@@ -119,8 +131,7 @@ async function ensureEmbedder() {
       embedder = await Embedder.create();
       console.log(`Embedder init: ready (backend=${requestedBackend})`);
     } catch (error) {
-      // If WebGPU was requested but failed, try falling back to CPU if allowed
-      if (self.LLMX_ENABLE_WEBGPU && forceCpu) {
+      if (self.LLMX_ENABLE_WEBGPU) {
         console.warn(`WebGPU embedder creation failed, falling back to CPU: ${toError(error)}`);
         self.LLMX_ENABLE_WEBGPU = false;
         embedder = await Embedder.create();
@@ -161,29 +172,7 @@ function shouldUseEmbeddings() {
   return true;
 }
 
-function rrfFuse(bm25Results, semanticResults, limit) {
-  const k = 60;
-  const scores = new Map();
-
-  function addList(results) {
-    results.forEach((result, rank) => {
-      const prev = scores.get(result.chunk_id) || 0;
-      scores.set(result.chunk_id, prev + 1 / (k + rank + 1));
-    });
-  }
-
-  addList(bm25Results);
-  addList(semanticResults);
-
-  const merged = Array.from(scores.entries())
-    .map(([chunkId, score]) => ({ chunkId, score }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit);
-
-  return merged;
-}
-
-function buildSearchResult(meta, score) {
+function buildSearchResult(meta, score, extras = {}) {
   return {
     chunk_id: meta.id,
     chunk_ref: meta.ref,
@@ -193,6 +182,8 @@ function buildSearchResult(meta, score) {
     end_line: meta.end_line,
     snippet: meta.snippet,
     heading_path: meta.heading_path,
+    match_reason: extras.match_reason || null,
+    matched_engines: extras.matched_engines || [],
   };
 }
 
@@ -206,7 +197,7 @@ function dotProduct(a, b, bOffset, dim) {
 
 async function buildEmbeddingsIndex() {
   if (!self.LLMX_ENABLE_EMBEDDINGS) {
-    throw new Error("Embeddings disabled (add ?embeddings=1).");
+    throw new Error("Embeddings disabled (?embeddings=0).");
   }
   if (!ingestor) {
     throw new Error("No index loaded");
@@ -244,34 +235,13 @@ async function buildEmbeddingsIndex() {
     };
   });
 
-  if (index.embeddings && index.embedding_model === modelId) {
-    const fromJson = index.embeddings;
-    const count = chunkMeta.length;
-    if (!Array.isArray(fromJson) || fromJson.length !== count) {
-      throw new Error("Saved embeddings shape mismatch");
-    }
-    const view = new Float32Array(count * dim);
-    for (let i = 0; i < count; i += 1) {
-      const row = fromJson[i];
-      if (!Array.isArray(row) || row.length !== dim) {
-        throw new Error("Saved embeddings dimension mismatch");
-      }
-      view.set(row, i * dim);
-    }
-    embeddings = view;
-    embeddingsMeta = { dim, count, modelId };
-    for (const meta of chunkMeta) {
-      delete meta.content;
-    }
-    return embeddingsMeta;
-  }
-
   const view = new Float32Array(count * dim);
-  // Detect Firefox for extra-conservative batching (stricter WASM memory limits)
   const isFirefox = typeof navigator !== 'undefined' && /Firefox/.test(navigator.userAgent);
-  // Reduce batch size for CPU to prevent browser crashes
-  // Firefox needs batch size 1 due to stricter WASM memory limits
-  const batchSize = isFirefox ? 1 : 2;
+  const batchSize = self.LLMX_ENABLE_WEBGPU
+    ? 32
+    : isFirefox
+      ? 4
+      : 8;
   const totalBatches = Math.ceil(count / batchSize);
 
   for (let offset = 0; offset < count; offset += batchSize) {
@@ -307,16 +277,108 @@ async function buildEmbeddingsIndex() {
     delete meta.content;
   }
 
-  // Store embeddings in the index for persistence via exportIndexJson
-  try {
-    ingestor.setEmbeddings(embeddings, modelId, dim);
-    console.log("Embeddings stored in index for persistence");
-  } catch (error) {
-    console.warn("Failed to store embeddings in index:", error);
-    // Non-fatal: embeddings are still available in memory
+  return embeddingsMeta;
+}
+
+async function runAdvancedSearch(query, filters, limit) {
+  return ingestor.searchAdvanced(query, filters, limit * 2, {
+    explain: true,
+    intent: "auto",
+    use_semantic: false,
+  });
+}
+
+function getCurrentIndex() {
+  return JSON.parse(ingestor.exportIndexJson());
+}
+
+async function maybePrepareEmbeddings(filters, query, limit, notices) {
+  if (!embeddingsRequested) {
+    return false;
+  }
+  if (!embeddings || !embeddingsMeta || !chunkMeta) {
+    const index = getCurrentIndex();
+    const totalChunks = Array.isArray(index.chunks) ? index.chunks.length : 0;
+    if (totalChunks > 0 && totalChunks <= EMBEDDINGS_AUTO_BUILD_MAX_CHUNKS) {
+      try {
+        await buildEmbeddingsIndex();
+      } catch (error) {
+        console.warn("Lazy embeddings build failed; continuing with lexical search.", error);
+      }
+    }
+  }
+  if (!embeddings || !embeddingsMeta || !chunkMeta) {
+    notices.push({
+      code: "semantic_unavailable",
+      message: "Embeddings are unavailable for this index, so results were downgraded to lexical search.",
+    });
+    return false;
   }
 
-  return embeddingsMeta;
+  await ensureEmbedder();
+  if (!shouldUseEmbeddings()) {
+    notices.push({
+      code: "semantic_unavailable",
+      message: "Embeddings are unavailable for this index, so results were downgraded to lexical search.",
+    });
+    return false;
+  }
+
+  return true;
+}
+
+function buildSemanticResults(query, filters, limit, explain) {
+  const queryEmbedding = embedder.embed(query);
+  const dim = embeddingsMeta.dim;
+  const semantic = [];
+
+  for (let i = 0; i < chunkMeta.length; i += 1) {
+    const meta = chunkMeta[i];
+    if (!passesFilters(meta, filters)) continue;
+    const score = dotProduct(queryEmbedding, embeddings, i * dim, dim);
+    semantic.push({ idx: i, score });
+  }
+
+  semantic.sort((a, b) => b.score - a.score);
+  return semantic.slice(0, limit * 2).map(({ idx, score }) => {
+    const meta = chunkMeta[idx];
+    return buildSearchResult(meta, score, {
+      match_reason: explain ? `Semantic similarity for "${query}"` : null,
+      matched_engines: ["dense"],
+    });
+  });
+}
+
+function mergeSearchResults(baseResults, semanticResults, strategy, hybridStrategy, limit) {
+  if (strategy === "semantic") {
+    return semanticResults.slice(0, limit);
+  }
+
+  if (strategy === "hybrid" || strategy === "auto") {
+    const fused = hybridStrategy === "linear"
+      ? linearFuse(baseResults, semanticResults, limit * 2)
+      : rrfFuse(baseResults, semanticResults, limit * 2);
+    const baseById = new Map(baseResults.map((result) => [result.chunk_id, result]));
+    const semanticById = new Map(semanticResults.map((result) => [result.chunk_id, result]));
+
+    return fused.map(({ chunkId, score }) => {
+      const lexical = baseById.get(chunkId);
+      const dense = semanticById.get(chunkId);
+      if (lexical && dense) {
+        return {
+          ...lexical,
+          score,
+          matched_engines: Array.from(new Set([...(lexical.matched_engines || []), "dense"])),
+        };
+      }
+      if (dense) {
+        return { ...dense, score };
+      }
+      return { ...lexical, score };
+    });
+  }
+
+  return baseResults.slice(0, limit);
 }
 
 self.onmessage = async (event) => {
@@ -362,7 +424,7 @@ self.onmessage = async (event) => {
       }
       case "initEmbedder": {
         if (!self.LLMX_ENABLE_EMBEDDINGS) {
-          throw new Error("Embeddings disabled (add ?embeddings=1).");
+          throw new Error("Embeddings disabled (?embeddings=0).");
         }
 
         await ensureEmbedder();
@@ -380,7 +442,11 @@ self.onmessage = async (event) => {
           });
         }
         const meta = await buildEmbeddingsPromise;
-        self.postMessage({ id, ok: true, data: { meta } });
+        self.postMessage({
+          id,
+          ok: true,
+          data: { meta, backend: self.LLMX_ENABLE_WEBGPU ? "webgpu" : "cpu" },
+        });
         return;
       }
       case "getEmbeddings": {
@@ -483,7 +549,7 @@ self.onmessage = async (event) => {
         if (!ingestor) {
           throw new Error("No index loaded");
         }
-        const stats = await ingestor.stats();
+        const stats = buildManageStats(getCurrentIndex());
         self.postMessage({ id, ok: true, data: { stats } });
         return;
       }
@@ -517,54 +583,76 @@ self.onmessage = async (event) => {
         const query = payload.query || "";
         const filters = payload.filters || null;
         const limit = payload.limit || 20;
+        const explain = payload.explain !== false;
+        const requestedIntent = payload.intent || "auto";
+        const strategy = payload.strategy || "auto";
+        const hybridStrategy = payload.hybridStrategy || "rrf";
+        const notices = [];
+        const base = await ingestor.searchAdvanced(query, filters, limit * 2, {
+          explain,
+          intent: requestedIntent,
+          use_semantic: false,
+        });
+        const baseResults = base?.results || [];
+        const resolvedIntent = base?.resolved_intent || "keyword";
+        const wantsSemantic = strategy === "semantic"
+          || strategy === "hybrid"
+          || (strategy === "auto" && shouldUseSemanticIntent(resolvedIntent));
 
-        const bm25Results = await ingestor.search(query, filters, limit * 2);
-
-        if (!embeddings || !embeddingsMeta || !chunkMeta) {
-          self.postMessage({ id, ok: true, data: { results: bm25Results } });
+        if (!wantsSemantic) {
+          self.postMessage({
+            id,
+            ok: true,
+            data: { results: baseResults, resolvedIntent, usedSemantic: false, notices },
+          });
           return;
         }
 
-        await ensureEmbedder();
-
-        if (!shouldUseEmbeddings()) {
-          self.postMessage({ id, ok: true, data: { results: bm25Results } });
+        const semanticReady = await maybePrepareEmbeddings(filters, query, limit, notices);
+        if (!semanticReady) {
+          self.postMessage({
+            id,
+            ok: true,
+            data: { results: baseResults, resolvedIntent, usedSemantic: false, notices },
+          });
           return;
         }
 
-        const queryEmbedding = embedder.embed(query);
-        const dim = embeddingsMeta.dim;
+        const semanticResults = buildSemanticResults(query, filters, limit, explain);
+        const results = mergeSearchResults(
+          baseResults,
+          semanticResults,
+          strategy,
+          hybridStrategy,
+          limit * 2
+        );
 
-        const semantic = [];
-        for (let i = 0; i < chunkMeta.length; i += 1) {
-          const meta = chunkMeta[i];
-          if (!passesFilters(meta, filters)) continue;
-          const score = dotProduct(queryEmbedding, embeddings, i * dim, dim);
-          semantic.push({ idx: i, score });
+        self.postMessage({
+          id,
+          ok: true,
+          data: { results, resolvedIntent, usedSemantic: true, notices },
+        });
+        return;
+      }
+      case "symbolsRich": {
+        if (!ingestor) {
+          throw new Error("No index loaded");
         }
-
-        semantic.sort((a, b) => b.score - a.score);
-        const semanticTop = semantic.slice(0, limit * 2).map(({ idx, score }) => {
-          const meta = chunkMeta[idx];
-          return buildSearchResult(meta, score);
-        });
-
-        const merged = rrfFuse(bm25Results, semanticTop, limit);
-
-        const bm25ById = new Map(bm25Results.map((r) => [r.chunk_id, r]));
-        const results = merged.map(({ chunkId, score }) => {
-          const existing = bm25ById.get(chunkId);
-          if (existing) {
-            return { ...existing, score };
-          }
-          const idx = chunkMeta.findIndex((m) => m.id === chunkId);
-          if (idx !== -1) {
-            return buildSearchResult(chunkMeta[idx], score);
-          }
-          return { chunk_id: chunkId, chunk_ref: "", score, path: "", start_line: 0, end_line: 0, snippet: "", heading_path: [] };
-        });
-
-        self.postMessage({ id, ok: true, data: { results } });
+        self.postMessage({ id, ok: true, data: listRichSymbols(getCurrentIndex(), payload || {}) });
+        return;
+      }
+      case "lookupSymbol": {
+        if (!ingestor) {
+          throw new Error("No index loaded");
+        }
+        self.postMessage({ id, ok: true, data: lookupSymbols(getCurrentIndex(), payload || {}) });
+        return;
+      }
+      case "refsForSymbol": {
+        if (!ingestor) {
+          throw new Error("No index loaded");
+        }
+        self.postMessage({ id, ok: true, data: traceRefs(getCurrentIndex(), payload || {}) });
         return;
       }
       case "getChunk": {

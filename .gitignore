@@ -12,6 +12,7 @@
 /ingestor-core/models/
 /ingestor-wasm/models/*
 !/ingestor-wasm/models/arctic-embed-s.bin
+/ingestor-core/target/
 /ingestor-wasm/target/
 /ingestor-wasm/test_burn_import.rs
 

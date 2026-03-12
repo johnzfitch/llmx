@@ -1,13 +1,17 @@
-use crate::{build_inverted_index, compute_stats, FileMeta, IndexFile, IndexStats};
+use crate::{build_inverted_index, compute_stats, embedding_store, graph::build_structural_indexes, FileMeta, IndexFile, IndexStats, INDEX_VERSION, SymbolTable, EdgeIndex};
 use anyhow::{Context, Result};
+use lru::LruCache;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
 /// Stored index format (without inverted_index)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredIndex {
+    #[serde(default = "default_index_version")]
+    pub version: u32,
     pub id: String,
     pub root_path: String,
     pub created_at: u64,
@@ -18,11 +22,18 @@ struct StoredIndex {
     pub embeddings: Option<Vec<Vec<f32>>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embedding_model: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub symbols: SymbolTable,
+    #[serde(default, skip_serializing_if = "EdgeIndex::is_empty")]
+    pub edges: EdgeIndex,
 }
+
+fn default_index_version() -> u32 { 1 }
 
 impl From<&IndexFile> for StoredIndex {
     fn from(index: &IndexFile) -> Self {
         StoredIndex {
+            version: index.version,
             id: index.index_id.clone(),
             root_path: String::new(), // Will be set by caller
             created_at: std::time::SystemTime::now()
@@ -31,8 +42,10 @@ impl From<&IndexFile> for StoredIndex {
                 .as_secs(),
             files: index.files.clone(),
             chunks: index.chunks.clone(),
-            embeddings: index.embeddings.clone(),
+            embeddings: None,
             embedding_model: index.embedding_model.clone(),
+            symbols: index.symbols.clone(),
+            edges: index.edges.clone(),
         }
     }
 }
@@ -41,7 +54,7 @@ impl From<StoredIndex> for IndexFile {
     fn from(stored: StoredIndex) -> Self {
         // Note: inverted_index will be rebuilt by IndexStore
         IndexFile {
-            version: 1,
+            version: stored.version.max(1),
             index_id: stored.id,
             files: stored.files,
             chunks: stored.chunks,
@@ -56,6 +69,8 @@ impl From<StoredIndex> for IndexFile {
             warnings: vec![],
             embeddings: stored.embeddings,
             embedding_model: stored.embedding_model,
+            symbols: stored.symbols,
+            edges: stored.edges,
         }
     }
 }
@@ -69,11 +84,32 @@ pub struct Registry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexMetadata {
-    pub id: String,
+    #[serde(alias = "id")]
+    pub index_id: String,
     pub root_path: String,
     pub created_at: u64,
     pub file_count: usize,
     pub chunk_count: usize,
+}
+
+/// Maximum size of an index file we will read from disk before deserialization.
+const MAX_INDEX_FILE_BYTES: u64 = 512 * 1024 * 1024; // 512 MB
+
+/// Number of deserialized indexes kept in the in-memory LRU cache.
+const CACHE_CAPACITY: usize = 20;
+
+/// Validate that an index_id is safe to use in file paths.
+///
+/// Index IDs must be non-empty, ≤128 chars, and contain only ASCII
+/// alphanumerics, hyphens, and underscores to prevent path traversal.
+fn validate_index_id(id: &str) -> Result<()> {
+    if id.is_empty() || id.len() > 128 {
+        anyhow::bail!("Invalid index_id length");
+    }
+    if !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        anyhow::bail!("Invalid index_id: must contain only alphanumerics, hyphens, and underscores");
+    }
+    Ok(())
 }
 
 /// Index storage with in-memory cache and persistent disk backing.
@@ -82,24 +118,25 @@ pub struct IndexMetadata {
 ///
 /// `IndexStore` manages codebase indexes with a two-tier architecture:
 /// 1. **Disk Storage**: Atomic writes with temp-file-and-rename pattern
-/// 2. **Memory Cache**: Lazy-loaded indexes for fast repeated access
+/// 2. **Memory Cache**: LRU-evicting cache for fast repeated access
 ///
 /// # Storage Format
 ///
 /// - Indexes: `{storage_dir}/{index_id}.json` (without inverted index for size)
 /// - Registry: `{storage_dir}/registry.json` (path → index_id mapping)
 ///
-/// # Performance Characteristics
+/// # Note on index_id
 ///
-/// - Save: O(n) where n = index size, includes atomic write
-/// - Load: O(n) first access (rebuild inverted index), O(1) cached
-/// - Search: O(1) cache lookup + O(m) search where m = matching chunks
+/// `index_id` is content-addressed (sha256 of chunk content). Two codebases
+/// with identical content share an index entry; the registry disambiguates by
+/// `root_path` for `list` and `find_by_path`, but `load`/`delete` work on the
+/// raw ID.
 ///
 /// # Thread Safety
 ///
 /// Not thread-safe internally. Use `Arc<Mutex<IndexStore>>` for concurrent access.
 pub struct IndexStore {
-    cache: HashMap<String, IndexFile>,
+    cache: LruCache<String, IndexFile>,
     storage_dir: PathBuf,
     registry: Registry,
 }
@@ -129,7 +166,7 @@ impl IndexStore {
         let registry = Self::load_registry(&storage_dir)?;
 
         Ok(IndexStore {
-            cache: HashMap::new(),
+            cache: LruCache::new(NonZeroUsize::new(CACHE_CAPACITY).unwrap()),
             storage_dir,
             registry,
         })
@@ -151,10 +188,11 @@ impl IndexStore {
     ///
     /// Returns error if index file doesn't exist or is corrupted.
     pub fn load(&mut self, id: &str) -> Result<&IndexFile> {
-        if !self.cache.contains_key(id) {
+        validate_index_id(id)?;
+        if !self.cache.contains(id) {
             let stored = self.load_from_disk(id)?;
             let index = self.rebuild_index(stored)?;
-            self.cache.insert(id.to_string(), index);
+            self.cache.put(id.to_string(), index);
         }
         Ok(self.cache.get(id).unwrap())
     }
@@ -181,12 +219,16 @@ impl IndexStore {
     ///
     /// Returns error if unable to write to disk or update registry.
     pub fn save(&mut self, index: IndexFile, root_path: String) -> Result<String> {
+        validate_index_id(&index.index_id)?;
         let mut stored = StoredIndex::from(&index);
         stored.root_path = root_path.clone();
 
         // Atomic write: temp file + rename
         let temp = self.storage_dir.join(format!("{}.json.tmp", index.index_id));
         let target = self.storage_dir.join(format!("{}.json", index.index_id));
+
+        let embeddings_path = embedding_store::sidecar_path(&self.storage_dir, &index.index_id);
+        embedding_store::write_sidecar(&embeddings_path, index.embeddings.as_deref())?;
 
         let json = serde_json::to_vec(&stored)
             .context("Failed to serialize index")?;
@@ -196,21 +238,23 @@ impl IndexStore {
             .context("Failed to rename temp index file")?;
 
         // Update cache
-        self.cache.insert(index.index_id.clone(), index.clone());
+        self.cache.put(index.index_id.clone(), index.clone());
 
         // Update registry, cleaning up any orphaned index file from a previous ID
         let path_hash = Self::hash_path(&root_path);
         if let Some(old_meta) = self.registry.indexes.get(&path_hash) {
-            if old_meta.id != index.index_id {
-                let old_file = self.storage_dir.join(format!("{}.json", old_meta.id));
+            if old_meta.index_id != index.index_id {
+                let old_file = self.storage_dir.join(format!("{}.json", old_meta.index_id));
                 let _ = fs::remove_file(&old_file);
-                self.cache.remove(&old_meta.id);
+                let old_embeddings = embedding_store::sidecar_path(&self.storage_dir, &old_meta.index_id);
+                let _ = fs::remove_file(&old_embeddings);
+                self.cache.pop(&old_meta.index_id);
             }
         }
         self.registry.indexes.insert(
             path_hash,
             IndexMetadata {
-                id: index.index_id.clone(),
+                index_id: index.index_id.clone(),
                 root_path,
                 created_at: stored.created_at,
                 file_count: index.files.len(),
@@ -229,18 +273,24 @@ impl IndexStore {
 
     /// Delete index by ID
     pub fn delete(&mut self, id: &str) -> Result<()> {
+        validate_index_id(id)?;
         // Remove from disk
         let target = self.storage_dir.join(format!("{}.json", id));
         if target.exists() {
             fs::remove_file(&target)
                 .context("Failed to delete index file")?;
         }
+        let embeddings_path = embedding_store::sidecar_path(&self.storage_dir, id);
+        if embeddings_path.exists() {
+            fs::remove_file(&embeddings_path)
+                .context("Failed to delete embedding sidecar")?;
+        }
 
         // Remove from cache
-        self.cache.remove(id);
+        self.cache.pop(id);
 
         // Remove from registry
-        self.registry.indexes.retain(|_, meta| meta.id != id);
+        self.registry.indexes.retain(|_, meta| meta.index_id != id);
         self.save_registry()?;
 
         Ok(())
@@ -250,7 +300,7 @@ impl IndexStore {
     pub fn find_by_path(&self, root: &Path) -> Option<String> {
         let path_hash = Self::hash_path(&root.to_string_lossy());
         self.registry.indexes.get(&path_hash)
-            .map(|meta| meta.id.clone())
+            .map(|meta| meta.index_id.clone())
     }
 
     /// Get mutable reference to cached index
@@ -294,30 +344,62 @@ impl IndexStore {
     }
 
     fn load_from_disk(&self, id: &str) -> Result<StoredIndex> {
+        validate_index_id(id)?;
         let path = self.storage_dir.join(format!("{}.json", id));
+        let file_size = fs::metadata(&path)
+            .with_context(|| format!("Index not found: {}", id))?
+            .len();
+        if file_size > MAX_INDEX_FILE_BYTES {
+            anyhow::bail!("Index file too large ({} bytes)", file_size);
+        }
         let data = fs::read(&path)
             .with_context(|| format!("Failed to read index file for {}", id))?;
 
-        serde_json::from_slice(&data)
-            .with_context(|| format!("Failed to parse index file for {}", id))
+        let mut stored: StoredIndex = serde_json::from_slice(&data)
+            .with_context(|| format!("Failed to parse index file for {}", id))?;
+        let embeddings_path = embedding_store::sidecar_path(&self.storage_dir, id);
+        if let Some(embeddings) = embedding_store::read_sidecar(&embeddings_path)? {
+            stored.embeddings = Some(embeddings);
+        }
+        Ok(stored)
     }
 
     fn rebuild_index(&self, stored: StoredIndex) -> Result<IndexFile> {
-        let chunk_refs = crate::util::build_chunk_refs(&stored.chunks);
-        let inverted_index = build_inverted_index(&stored.chunks);
-        let stats = compute_stats(&stored.files, &stored.chunks);
+        let StoredIndex {
+            version,
+            id,
+            root_path: _,
+            created_at: _,
+            files,
+            chunks,
+            embeddings,
+            embedding_model,
+            symbols,
+            edges,
+        } = stored;
+
+        let chunk_refs = crate::util::build_chunk_refs(&chunks);
+        let inverted_index = build_inverted_index(&chunks);
+        let stats = compute_stats(&files, &chunks);
+        let (symbols, edges) = if symbols.is_empty() && edges.is_empty() {
+            build_structural_indexes(&chunks)
+        } else {
+            (symbols, edges)
+        };
 
         Ok(IndexFile {
-            version: 1,
-            index_id: stored.id,
-            files: stored.files,
-            chunks: stored.chunks,
+            version: version.max(INDEX_VERSION),
+            index_id: id,
+            files,
+            chunks,
             chunk_refs,
             inverted_index,
             stats,
             warnings: vec![],
-            embeddings: stored.embeddings,
-            embedding_model: stored.embedding_model,
+            embeddings,
+            embedding_model,
+            symbols,
+            edges,
         })
     }
 
@@ -341,7 +423,7 @@ mod tests {
 
         // Create a minimal index
         let index = IndexFile {
-            version: 1,
+            version: INDEX_VERSION,
             index_id: "test123".to_string(),
             files: vec![],
             chunks: vec![],
@@ -356,6 +438,8 @@ mod tests {
             warnings: vec![],
             embeddings: None,
             embedding_model: None,
+            symbols: BTreeMap::new(),
+            edges: EdgeIndex::default(),
         };
 
         // Save
@@ -375,7 +459,7 @@ mod tests {
         let mut store = IndexStore::new(temp_dir.path().to_path_buf())?;
 
         let index = IndexFile {
-            version: 1,
+            version: INDEX_VERSION,
             index_id: "atomic_test".to_string(),
             files: vec![],
             chunks: vec![],
@@ -390,6 +474,8 @@ mod tests {
             warnings: vec![],
             embeddings: None,
             embedding_model: None,
+            symbols: BTreeMap::new(),
+            edges: EdgeIndex::default(),
         };
 
         store.save(index, "/test".to_string())?;

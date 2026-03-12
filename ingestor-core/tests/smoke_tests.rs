@@ -68,6 +68,10 @@ fn smoke_index_search_export() {
         limit: Some(10),
         max_tokens: Some(16000),
         use_semantic: None,
+        intent: None,
+        explain: None,
+        hybrid_strategy: None,
+        strategy: None,
     };
     let search_output = llmx_search_handler(&mut store, search_input).expect("Search should succeed");
 
@@ -114,6 +118,10 @@ fn smoke_full_workflow() {
         limit: Some(5),
         max_tokens: Some(8000),
         use_semantic: None,
+        intent: None,
+        explain: None,
+        hybrid_strategy: None,
+        strategy: None,
     };
     let search_output = llmx_search_handler(&mut store, search_input).expect("3. Search should succeed");
     assert!(search_output.total_matches > 0);
@@ -187,8 +195,7 @@ fn smoke_explore_all_modes() {
         let output = llmx_explore_handler(&mut store, input)
             .unwrap_or_else(|e| panic!("Explore {} mode failed: {}", mode, e));
 
-        // All modes should return valid output
-        assert!(output.total >= 0, "Mode {} should have valid total", mode);
+        assert_eq!(output.total, output.items.len(), "Mode {} should report accurate total", mode);
     }
 }
 
@@ -223,6 +230,10 @@ fn smoke_search_with_filters() {
             limit: Some(10),
             max_tokens: Some(8000),
             use_semantic: None,
+            intent: None,
+            explain: None,
+            hybrid_strategy: None,
+            strategy: None,
         };
 
         let _output = llmx_search_handler(&mut store, input)
@@ -291,6 +302,10 @@ fn smoke_token_budget_respected() {
         limit: Some(100),
         max_tokens: Some(500), // Very small
         use_semantic: None,
+        intent: None,
+        explain: None,
+        hybrid_strategy: None,
+        strategy: None,
     };
     let search_output = llmx_search_handler(&mut store, search_input).unwrap();
 

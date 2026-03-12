@@ -169,20 +169,20 @@ fn bench_embedding_generation(c: &mut Criterion) {
     let long_text = format!("{}\n{}", medium_text.repeat(5), short_text.repeat(10));
 
     group.bench_function("generate_single_short", |b| {
-        b.iter(|| black_box(generate_embedding(short_text)));
+        b.iter(|| black_box(generate_embedding(short_text).unwrap()));
     });
 
     group.bench_function("generate_single_medium", |b| {
-        b.iter(|| black_box(generate_embedding(medium_text)));
+        b.iter(|| black_box(generate_embedding(medium_text).unwrap()));
     });
 
     group.bench_function("generate_single_long", |b| {
-        b.iter(|| black_box(generate_embedding(&long_text)));
+        b.iter(|| black_box(generate_embedding(&long_text).unwrap()));
     });
 
     let chunk_texts: Vec<&str> = (0..100).map(|_| short_text).collect();
     group.bench_function("generate_batch_100", |b| {
-        b.iter(|| black_box(generate_embeddings(&chunk_texts)));
+        b.iter(|| black_box(generate_embeddings(&chunk_texts).unwrap()));
     });
 
     group.finish();
@@ -197,8 +197,8 @@ fn bench_vector_search(c: &mut Criterion) {
 
     // Generate embeddings
     let chunk_texts: Vec<&str> = index.chunks.iter().map(|c| c.content.as_str()).collect();
-    let embeddings = generate_embeddings(&chunk_texts);
-    let query_embedding = generate_embedding("function test");
+    let embeddings = generate_embeddings(&chunk_texts).unwrap();
+    let query_embedding = generate_embedding("function test").unwrap();
 
     group.bench_function("vector_search_50chunks", |b| {
         b.iter(|| {
@@ -225,10 +225,10 @@ fn bench_hybrid_search(c: &mut Criterion) {
 
     // Generate embeddings
     let chunk_texts: Vec<&str> = index.chunks.iter().map(|c| c.content.as_str()).collect();
-    let embeddings = generate_embeddings(&chunk_texts);
+    let embeddings = generate_embeddings(&chunk_texts).unwrap();
 
     for query in ["function", "test println", "error handling"] {
-        let query_embedding = generate_embedding(query);
+        let query_embedding = generate_embedding(query).unwrap();
         group.bench_with_input(
             BenchmarkId::from_parameter(query),
             &(query, &query_embedding),
@@ -257,8 +257,8 @@ fn bench_hybrid_search(c: &mut Criterion) {
 fn bench_cosine_similarity(c: &mut Criterion) {
     let mut group = c.benchmark_group("cosine_similarity");
 
-    let embedding1 = generate_embedding("function test");
-    let embedding2 = generate_embedding("function hello");
+    let embedding1 = generate_embedding("function test").unwrap();
+    let embedding2 = generate_embedding("function hello").unwrap();
 
     group.bench_function("cosine_similarity_384dim", |b| {
         b.iter(|| black_box(cosine_similarity(&embedding1, &embedding2)));

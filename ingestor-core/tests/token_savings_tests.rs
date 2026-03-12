@@ -98,6 +98,10 @@ fn test_token_savings_simple_codebase() {
         limit: Some(5),
         max_tokens: Some(4000),
         use_semantic: None,
+        intent: None,
+        explain: None,
+        hybrid_strategy: None,
+        strategy: None,
     };
     let search_output = llmx_search_handler(&mut store, search_input).unwrap();
     let search_tokens: usize = search_output
@@ -179,6 +183,10 @@ fn test_token_savings_medium_codebase() {
         limit: Some(10),
         max_tokens: Some(8000),
         use_semantic: None,
+        intent: None,
+        explain: None,
+        hybrid_strategy: None,
+        strategy: None,
     };
     let search_output = llmx_search_handler(&mut store, search_input).unwrap();
     let search_tokens: usize = search_output
@@ -270,6 +278,10 @@ fn format_output(data: Data) -> String {
         limit: Some(5),
         max_tokens: Some(4000),
         use_semantic: None,
+        intent: None,
+        explain: None,
+        hybrid_strategy: None,
+        strategy: None,
     };
     let search_output = llmx_search_handler(&mut store, search_input).unwrap();
     let search_tokens: usize = search_output
@@ -331,6 +343,10 @@ pub fn important_function() {
         limit: Some(1),
         max_tokens: Some(16000),
         use_semantic: None,
+        intent: None,
+        explain: None,
+        hybrid_strategy: None,
+        strategy: None,
     };
     let search_output = llmx_search_handler(&mut store, search_input).unwrap();
 
@@ -455,6 +471,10 @@ fn test_token_budget_strictly_enforced() {
         limit: Some(100),
         max_tokens: Some(budget),
         use_semantic: None,
+        intent: None,
+        explain: None,
+        hybrid_strategy: None,
+        strategy: None,
     };
     let search_output = llmx_search_handler(&mut store, search_input).unwrap();
 

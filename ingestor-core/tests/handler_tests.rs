@@ -148,6 +148,7 @@ fn test_handler_index_with_custom_options() {
         options: Some(IngestOptionsInput {
             chunk_target_chars: Some(1000),
             max_file_bytes: Some(1024 * 1024),
+            max_total_bytes: None,
         }),
     };
 
@@ -168,6 +169,28 @@ fn test_handler_index_empty_directory() {
     let output = llmx_index_handler(&mut store, input).expect("Index should succeed");
     assert_eq!(output.stats.total_files, 0);
     assert_eq!(output.stats.total_chunks, 0);
+}
+
+#[test]
+fn test_handler_index_default_limits_allow_large_files() {
+    use std::fs;
+
+    let (_storage, mut store) = create_store();
+    let project = TempDir::new().expect("Failed to create temp dir");
+    let large_file = project.path().join("large.txt");
+    fs::write(&large_file, "a".repeat(11 * 1024 * 1024)).expect("Failed to write large file");
+
+    let input = IndexInput {
+        paths: vec![project.path().to_string_lossy().to_string()],
+        options: None,
+    };
+
+    let output = llmx_index_handler(&mut store, input).expect("Index should succeed");
+    assert_eq!(output.stats.total_files, 1, "Large file should be indexed by default");
+    assert!(
+        output.warnings.iter().all(|w| w.code != "max_file_bytes"),
+        "Default handler index path should not emit max_file_bytes warnings"
+    );
 }
 
 // ============================================================================
@@ -194,6 +217,10 @@ fn test_handler_search_finds_results() {
         limit: Some(10),
         max_tokens: Some(16000),
         use_semantic: None,
+        intent: None,
+        explain: None,
+        hybrid_strategy: None,
+        strategy: None,
     };
 
     let output = llmx_search_handler(&mut store, search_input).expect("Search should succeed");
@@ -225,6 +252,10 @@ fn test_handler_search_with_path_filter() {
         limit: Some(10),
         max_tokens: Some(16000),
         use_semantic: None,
+        intent: None,
+        explain: None,
+        hybrid_strategy: None,
+        strategy: None,
     };
 
     let output = llmx_search_handler(&mut store, search_input).expect("Search should succeed");
@@ -257,6 +288,10 @@ fn test_handler_search_token_budget_enforced() {
         limit: Some(100),
         max_tokens: Some(100), // Very small budget
         use_semantic: None,
+        intent: None,
+        explain: None,
+        hybrid_strategy: None,
+        strategy: None,
     };
 
     let output = llmx_search_handler(&mut store, search_input).expect("Search should succeed");
@@ -288,11 +323,71 @@ fn test_handler_search_no_results() {
         limit: Some(10),
         max_tokens: Some(16000),
         use_semantic: None,
+        intent: None,
+        explain: None,
+        hybrid_strategy: None,
+        strategy: None,
     };
 
     let output = llmx_search_handler(&mut store, search_input).expect("Search should succeed");
     assert_eq!(output.total_matches, 0);
     assert!(output.results.is_empty());
+}
+
+#[test]
+fn test_handler_search_symbol_intent_with_explanations() {
+    use std::fs;
+
+    let (_storage, mut store) = create_store();
+    let project = TempDir::new().expect("Failed to create temp dir");
+    fs::write(
+        project.path().join("auth.js"),
+        r#"function verifyToken(token) {
+  return token && token.length > 0;
+}
+
+function loadConfig() {
+  return { env: "test" };
+}
+"#,
+    )
+    .expect("Failed to write JS fixture");
+
+    let idx_input = IndexInput {
+        paths: vec![project.path().to_string_lossy().to_string()],
+        options: None,
+    };
+    let idx_output = llmx_index_handler(&mut store, idx_input).unwrap();
+
+    let search_input = SearchInput {
+        index_id: idx_output.index_id,
+        query: "verifyToken".to_string(),
+        filters: None,
+        limit: Some(5),
+        max_tokens: Some(16000),
+        use_semantic: None,
+        intent: Some("symbol".to_string()),
+        explain: Some(true),
+        hybrid_strategy: None,
+        strategy: None,
+    };
+
+    let output = llmx_search_handler(&mut store, search_input).expect("Search should succeed");
+    let first = output.results.first().expect("Should return a symbol result");
+    assert_eq!(first.symbol.as_deref(), Some("verifyToken"));
+    assert!(
+        first
+            .match_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("Symbol match")),
+        "Expected symbol explanation, got {:?}",
+        first.match_reason
+    );
+    assert!(
+        first.matched_engines.iter().any(|engine| engine == "symbol"),
+        "Expected symbol engine attribution, got {:?}",
+        first.matched_engines
+    );
 }
 
 #[test]
@@ -306,6 +401,10 @@ fn test_handler_search_invalid_index() {
         limit: None,
         max_tokens: None,
         use_semantic: None,
+        intent: None,
+        explain: None,
+        hybrid_strategy: None,
+        strategy: None,
     };
 
     let result = llmx_search_handler(&mut store, search_input);
@@ -384,8 +483,7 @@ fn test_handler_explore_outline_mode() {
     };
 
     let output = llmx_explore_handler(&mut store, explore_input).expect("Explore should succeed");
-    // May or may not have headings depending on content
-    assert!(output.total >= 0);
+    assert_eq!(output.total, output.items.len());
 }
 
 #[test]
@@ -556,6 +654,10 @@ fn test_handler_get_chunk_by_full_id() {
         limit: Some(1),
         max_tokens: Some(16000),
         use_semantic: None,
+        intent: None,
+        explain: None,
+        hybrid_strategy: None,
+        strategy: None,
     };
     let search_output = llmx_search_handler(&mut store, search_input).unwrap();
 
@@ -588,6 +690,10 @@ fn test_handler_get_chunk_by_prefix() {
         limit: Some(1),
         max_tokens: Some(16000),
         use_semantic: None,
+        intent: None,
+        explain: None,
+        hybrid_strategy: None,
+        strategy: None,
     };
     let search_output = llmx_search_handler(&mut store, search_input).unwrap();
 
@@ -669,6 +775,10 @@ fn test_handler_search_with_kind_filter() {
         limit: Some(10),
         max_tokens: Some(16000),
         use_semantic: None,
+        intent: None,
+        explain: None,
+        hybrid_strategy: None,
+        strategy: None,
     };
 
     let output = llmx_search_handler(&mut store, search_input).expect("Search should succeed");

@@ -30,6 +30,28 @@ struct ChunkDraft {
     heading_path: Vec<String>,
     symbol: Option<String>,
     address: Option<String>,
+    // Phase 7: structural enrichment (populated by tree-sitter)
+    ast_kind: Option<crate::model::AstNodeKind>,
+    qualified_name: Option<String>,
+    signature: Option<String>,
+    parent_symbol: Option<String>,
+    imports: Vec<String>,
+    exports: Vec<String>,
+    calls: Vec<String>,
+    type_refs: Vec<String>,
+    doc_summary: Option<String>,
+}
+
+impl ChunkDraft {
+    /// Create a plain draft with no structural enrichment (non-code content).
+    fn plain(kind: ChunkKind, start_line: usize, end_line: usize, content: String, heading_path: Vec<String>, symbol: Option<String>, address: Option<String>) -> Self {
+        Self {
+            kind, start_line, end_line, content, heading_path, symbol, address,
+            ast_kind: None, qualified_name: None, signature: None, parent_symbol: None,
+            imports: Vec::new(), exports: Vec::new(), calls: Vec::new(), type_refs: Vec::new(),
+            doc_summary: None,
+        }
+    }
 }
 
 pub fn chunk_file(path: &str, text: &str, kind: ChunkKind, options: &IngestOptions) -> Vec<Chunk> {
@@ -82,6 +104,16 @@ fn finalize_chunks(path: &str, drafts: Vec<ChunkDraft>) -> Vec<Chunk> {
             symbol: draft.symbol,
             address: draft.address,
             asset_path: None,
+            // Phase 7: structural metadata from tree-sitter enrichment
+            ast_kind: draft.ast_kind,
+            qualified_name: draft.qualified_name,
+            signature: draft.signature,
+            parent_symbol: draft.parent_symbol,
+            imports: draft.imports,
+            exports: draft.exports,
+            calls: draft.calls,
+            type_refs: draft.type_refs,
+            doc_summary: draft.doc_summary,
         });
     }
     chunks
@@ -94,15 +126,11 @@ fn chunk_image(path: &str) -> Vec<ChunkDraft> {
         .unwrap_or(path)
         .trim()
         .to_string();
-    vec![ChunkDraft {
-        kind: ChunkKind::Image,
-        start_line: 1,
-        end_line: 1,
-        content: format!("Image: {name}\nSource: {path}"),
-        heading_path: Vec::new(),
-        symbol: None,
-        address: None,
-    }]
+    vec![ChunkDraft::plain(
+        ChunkKind::Image, 1, 1,
+        format!("Image: {name}\nSource: {path}"),
+        Vec::new(), None, None,
+    )]
 }
 
 fn chunk_markdown(text: &str, options: &IngestOptions) -> Vec<ChunkDraft> {
@@ -181,15 +209,11 @@ fn chunk_text(text: &str, options: &IngestOptions) -> Vec<ChunkDraft> {
             });
 
             for slice in split_string_by_chars(line, options.chunk_max_chars) {
-                drafts.push(ChunkDraft {
-                    kind: ChunkKind::Text,
-                    start_line: line_no,
-                    end_line: line_no,
-                    content: slice.trim().to_string(),
-                    heading_path: Vec::new(),
-                    symbol: None,
-                    address: None,
-                });
+                drafts.push(ChunkDraft::plain(
+                    ChunkKind::Text, line_no, line_no,
+                    slice.trim().to_string(),
+                    Vec::new(), None, None,
+                ));
             }
 
             start_line = line_no + 1;
@@ -467,26 +491,16 @@ fn chunk_json(text: &str, options: &IngestOptions) -> Vec<ChunkDraft> {
                 let address = format!("$.{}", key);
                 let content = serde_json::to_string(&value).unwrap_or_default();
                 if content.len() <= options.chunk_max_chars {
-                    drafts.push(ChunkDraft {
-                        kind: ChunkKind::Json,
-                        start_line: 1,
-                        end_line: line_count,
-                        content,
-                        heading_path: vec![key.clone()],
-                        symbol: Some(key),
-                        address: Some(address),
-                    });
+                    drafts.push(ChunkDraft::plain(
+                        ChunkKind::Json, 1, line_count, content,
+                        vec![key.clone()], Some(key), Some(address),
+                    ));
                 } else {
                     for (idx, slice) in split_string_by_chars(&content, options.chunk_max_chars).into_iter().enumerate() {
-                        drafts.push(ChunkDraft {
-                            kind: ChunkKind::Json,
-                            start_line: 1,
-                            end_line: line_count,
-                            content: slice,
-                            heading_path: vec![key.clone()],
-                            symbol: Some(key.clone()),
-                            address: Some(format!("{address}#{}", idx + 1)),
-                        });
+                        drafts.push(ChunkDraft::plain(
+                            ChunkKind::Json, 1, line_count, slice,
+                            vec![key.clone()], Some(key.clone()), Some(format!("{address}#{}", idx + 1)),
+                        ));
                     }
                 }
             }
@@ -508,26 +522,16 @@ fn chunk_json(text: &str, options: &IngestOptions) -> Vec<ChunkDraft> {
                 let address = format!("$[{}:{}]", start, end);
                 let content = serde_json::to_string(&slice).unwrap_or_default();
                 if content.len() <= options.chunk_max_chars {
-                    drafts.push(ChunkDraft {
-                        kind: ChunkKind::Json,
-                        start_line: 1,
-                        end_line: line_count,
-                        content,
-                        heading_path: Vec::new(),
-                        symbol: None,
-                        address: Some(address),
-                    });
+                    drafts.push(ChunkDraft::plain(
+                        ChunkKind::Json, 1, line_count, content,
+                        Vec::new(), None, Some(address),
+                    ));
                 } else {
                     for (idx, slice) in split_string_by_chars(&content, options.chunk_max_chars).into_iter().enumerate() {
-                        drafts.push(ChunkDraft {
-                            kind: ChunkKind::Json,
-                            start_line: 1,
-                            end_line: line_count,
-                            content: slice,
-                            heading_path: Vec::new(),
-                            symbol: None,
-                            address: Some(format!("{address}#{}", idx + 1)),
-                        });
+                        drafts.push(ChunkDraft::plain(
+                            ChunkKind::Json, 1, line_count, slice,
+                            Vec::new(), None, Some(format!("{address}#{}", idx + 1)),
+                        ));
                     }
                 }
                 start = end;
@@ -536,26 +540,16 @@ fn chunk_json(text: &str, options: &IngestOptions) -> Vec<ChunkDraft> {
         _ => {
             let content = serde_json::to_string(&value).unwrap_or_default();
             if content.len() <= options.chunk_max_chars {
-                drafts.push(ChunkDraft {
-                    kind: ChunkKind::Json,
-                    start_line: 1,
-                    end_line: line_count,
-                    content,
-                    heading_path: Vec::new(),
-                    symbol: None,
-                    address: Some("$".to_string()),
-                });
+                drafts.push(ChunkDraft::plain(
+                    ChunkKind::Json, 1, line_count, content,
+                    Vec::new(), None, Some("$".to_string()),
+                ));
             } else {
                 for (idx, slice) in split_string_by_chars(&content, options.chunk_max_chars).into_iter().enumerate() {
-                    drafts.push(ChunkDraft {
-                        kind: ChunkKind::Json,
-                        start_line: 1,
-                        end_line: line_count,
-                        content: slice,
-                        heading_path: Vec::new(),
-                        symbol: None,
-                        address: Some(format!("$#{}", idx + 1)),
-                    });
+                    drafts.push(ChunkDraft::plain(
+                        ChunkKind::Json, 1, line_count, slice,
+                        Vec::new(), None, Some(format!("$#{}", idx + 1)),
+                    ));
                 }
             }
         }
@@ -593,15 +587,18 @@ fn chunk_javascript(path: &str, text: &str, options: &IngestOptions) -> Vec<Chun
         }
     };
 
-    let mut cursor = tree.root_node().walk();
+    let root = tree.root_node();
+
+    // Collect file-level imports (not chunked separately, but tracked for cross-ref)
+    let file_imports = collect_file_imports(root, text);
+
     let mut drafts = Vec::new();
-    for child in tree.root_node().children(&mut cursor) {
-        if !is_js_symbol_node(child) {
-            continue;
-        }
-        if let Some(draft) = draft_from_node(text, child, ChunkKind::JavaScript) {
+    let mut cursor = root.walk();
+    for child in root.children(&mut cursor) {
+        if let Some(draft) = enriched_draft_from_node(text, child, None, &file_imports) {
             drafts.push(draft);
         }
+        collect_class_member_drafts(child, text, &file_imports, &mut drafts);
     }
 
     if drafts.is_empty() {
@@ -615,35 +612,560 @@ fn chunk_javascript(path: &str, text: &str, options: &IngestOptions) -> Vec<Chun
     }
 }
 
+/// Classify a tree-sitter node kind string into our AstNodeKind enum.
 #[cfg(feature = "treesitter")]
-fn draft_from_node(text: &str, node: Node, kind: ChunkKind) -> Option<ChunkDraft> {
-    let start = node.start_byte();
+fn classify_node_kind(node: Node, text: &str) -> Option<crate::model::AstNodeKind> {
+    use crate::model::AstNodeKind;
+    match node.kind() {
+        "function_declaration" | "function" | "generator_function_declaration" => {
+            // Check for test patterns: function name starts with test/it/describe
+            let name = node_name_text(node, text).unwrap_or_default();
+            if is_test_name(&name) { Some(AstNodeKind::Test) } else { Some(AstNodeKind::Function) }
+        }
+        "arrow_function" => Some(AstNodeKind::Function),
+        "class_declaration" | "class" | "abstract_class_declaration" => Some(AstNodeKind::Class),
+        "method_definition" => Some(AstNodeKind::Method),
+        "interface_declaration" => Some(AstNodeKind::Interface),
+        "type_alias_declaration" => Some(AstNodeKind::Type),
+        "enum_declaration" => Some(AstNodeKind::Enum),
+        "import_statement" => Some(AstNodeKind::Import),
+        "export_statement" => {
+            // Unwrap: classify the inner declaration if present
+            let mut child_cursor = node.walk();
+            for child in node.children(&mut child_cursor) {
+                if let Some(inner) = classify_node_kind(child, text) {
+                    return Some(inner);
+                }
+            }
+            Some(AstNodeKind::Export)
+        }
+        "lexical_declaration" | "variable_declaration" => {
+            // Check if the value is an arrow function → Function, else Variable/Constant
+            if has_arrow_function_value(node) {
+                let name = lexical_name(node, text).unwrap_or_default();
+                if is_test_name(&name) { Some(AstNodeKind::Test) } else { Some(AstNodeKind::Function) }
+            } else if node.kind() == "lexical_declaration" {
+                // const → Constant, let/var → Variable
+                let first_text = node.child(0)
+                    .and_then(|c| text.get(c.start_byte()..c.end_byte()))
+                    .unwrap_or("");
+                if first_text == "const" { Some(AstNodeKind::Constant) } else { Some(AstNodeKind::Variable) }
+            } else {
+                Some(AstNodeKind::Variable)
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Check if a node should produce a chunk (top-level or class member).
+#[cfg(feature = "treesitter")]
+fn is_chunkable_node(node: Node) -> bool {
+    matches!(
+        node.kind(),
+        "function_declaration" | "class_declaration" | "method_definition"
+        | "generator_function_declaration" | "abstract_class_declaration"
+        | "interface_declaration" | "type_alias_declaration" | "enum_declaration"
+        | "export_statement" | "lexical_declaration" | "variable_declaration"
+    )
+}
+
+/// Build an enriched ChunkDraft from a tree-sitter node with full structural metadata.
+#[cfg(feature = "treesitter")]
+fn enriched_draft_from_node(
+    text: &str,
+    node: Node,
+    parent_name: Option<&str>,
+    file_imports: &[String],
+) -> Option<ChunkDraft> {
+    use crate::model::AstNodeKind;
+
+    // For export statements, try to unwrap to the inner declaration
+    let (effective_node, is_exported) = if node.kind() == "export_statement" {
+        let inner = find_inner_declaration(node);
+        match inner {
+            Some(inner) => (inner, true),
+            None => (node, true), // bare export
+        }
+    } else {
+        (node, false)
+    };
+
+    let ast_kind = classify_node_kind(effective_node, text)?;
+
+    // Skip import statements — they don't get their own chunk, just tracked at file level
+    if ast_kind == AstNodeKind::Import {
+        return None;
+    }
+
+    let start = node.start_byte(); // use outer node (includes export keyword)
     let end = node.end_byte();
     let slice = text.get(start..end)?;
     let start_line = node.start_position().row + 1;
     let end_line = node.end_position().row + 1;
-    let symbol = node
-        .child_by_field_name("name")
-        .and_then(|n| text.get(n.start_byte()..n.end_byte()))
-        .map(|s| s.to_string());
+
+    // Extract symbol name
+    let symbol = extract_symbol_name(effective_node, text);
+
+    // Build qualified name
+    let qualified_name = match (&symbol, parent_name) {
+        (Some(sym), Some(parent)) => Some(format!("{}.{}", parent, sym)),
+        (Some(sym), None) => Some(sym.clone()),
+        _ => None,
+    };
+
+    // Extract signature (first meaningful line for functions, full declaration for types)
+    let signature = extract_signature(effective_node, text);
+
+    // Extract calls within this node
+    let calls = extract_calls(effective_node, text);
+
+    // Extract type references (TS type annotations, generic params)
+    let type_refs = extract_type_refs(effective_node, text);
+
+    // Extract doc comment from preceding sibling
+    let doc_summary = extract_doc_comment(node, text);
+
+    // Exports list
+    let exports = if is_exported {
+        symbol.iter().cloned().collect()
+    } else {
+        Vec::new()
+    };
+
+    // Filter file-level imports to identifiers actually referenced in this AST node.
+    let referenced_identifiers = extract_identifier_refs(effective_node, text);
+    let imports: Vec<String> = file_imports
+        .iter()
+        .filter(|imp| referenced_identifiers.contains(imp.as_str()))
+        .cloned()
+        .collect();
+
+    // For classes, recurse into members
+    if matches!(ast_kind, AstNodeKind::Class | AstNodeKind::Interface) {
+        // We still emit the class as a single chunk (not splitting members)
+        // but we do collect method-level calls/type_refs into the class chunk
+    }
 
     Some(ChunkDraft {
-        kind,
+        kind: ChunkKind::JavaScript,
         start_line,
         end_line,
         content: slice.trim().to_string(),
         heading_path: Vec::new(),
         symbol,
         address: None,
+        ast_kind: Some(ast_kind),
+        qualified_name,
+        signature,
+        parent_symbol: parent_name.map(|s| s.to_string()),
+        imports,
+        exports,
+        calls,
+        type_refs,
+        doc_summary,
     })
 }
 
+/// Collect method chunks from class bodies so methods become first-class searchable units.
 #[cfg(feature = "treesitter")]
-fn is_js_symbol_node(node: Node) -> bool {
-    matches!(
-        node.kind(),
-        "function_declaration" | "class_declaration" | "method_definition"
-    )
+fn collect_class_member_drafts(
+    node: Node,
+    text: &str,
+    file_imports: &[String],
+    drafts: &mut Vec<ChunkDraft>,
+) {
+    let effective_node = if node.kind() == "export_statement" {
+        find_inner_declaration(node).unwrap_or(node)
+    } else {
+        node
+    };
+
+    if !matches!(
+        effective_node.kind(),
+        "class_declaration" | "abstract_class_declaration"
+    ) {
+        return;
+    }
+
+    let Some(parent_name) = extract_symbol_name(effective_node, text) else {
+        return;
+    };
+    let Some(body) = effective_node.child_by_field_name("body") else {
+        return;
+    };
+
+    let mut cursor = body.walk();
+    for child in body.children(&mut cursor) {
+        if child.kind() != "method_definition" {
+            continue;
+        }
+        if let Some(draft) = enriched_draft_from_node(text, child, Some(parent_name.as_str()), file_imports) {
+            drafts.push(draft);
+        }
+    }
+}
+
+// ── Tree-sitter extraction helpers ──────────────────────────────────────────
+
+/// Get the text of a node's "name" field.
+#[cfg(feature = "treesitter")]
+fn node_name_text<'a>(node: Node<'a>, text: &'a str) -> Option<String> {
+    node.child_by_field_name("name")
+        .and_then(|n| text.get(n.start_byte()..n.end_byte()))
+        .map(|s| s.to_string())
+}
+
+/// Extract the symbol name from various node structures.
+#[cfg(feature = "treesitter")]
+fn extract_symbol_name(node: Node, text: &str) -> Option<String> {
+    // Direct name field (function_declaration, class_declaration, etc.)
+    if let Some(name) = node_name_text(node, text) {
+        return Some(name);
+    }
+    // For lexical_declaration: const foo = ...
+    if let Some(name) = lexical_name(node, text) {
+        return Some(name);
+    }
+    // For variable_declaration: var foo = ...
+    if matches!(node.kind(), "variable_declaration") {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() == "variable_declarator" {
+                return node_name_text(child, text);
+            }
+        }
+    }
+    None
+}
+
+/// Get variable name from a lexical_declaration (const/let).
+#[cfg(feature = "treesitter")]
+fn lexical_name(node: Node, text: &str) -> Option<String> {
+    if !matches!(node.kind(), "lexical_declaration" | "variable_declaration") {
+        return None;
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "variable_declarator" {
+            return node_name_text(child, text);
+        }
+    }
+    None
+}
+
+/// Check if a lexical_declaration's value is an arrow function.
+#[cfg(feature = "treesitter")]
+fn has_arrow_function_value(node: Node) -> bool {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "variable_declarator" {
+            if let Some(value) = child.child_by_field_name("value") {
+                return matches!(value.kind(), "arrow_function" | "function");
+            }
+        }
+    }
+    false
+}
+
+/// Find the inner declaration inside an export_statement.
+#[cfg(feature = "treesitter")]
+fn find_inner_declaration(export_node: Node) -> Option<Node> {
+    let mut cursor = export_node.walk();
+    for child in export_node.children(&mut cursor) {
+        if is_chunkable_node(child) && child.kind() != "export_statement" {
+            return Some(child);
+        }
+        // Also check for direct function/class/interface etc.
+        if matches!(child.kind(),
+            "function_declaration" | "class_declaration" | "interface_declaration"
+            | "type_alias_declaration" | "enum_declaration" | "lexical_declaration"
+            | "variable_declaration" | "abstract_class_declaration"
+        ) {
+            return Some(child);
+        }
+    }
+    None
+}
+
+/// Extract function/method signature (params + return type annotation).
+#[cfg(feature = "treesitter")]
+fn extract_signature(node: Node, text: &str) -> Option<String> {
+    match node.kind() {
+        "function_declaration" | "generator_function_declaration" | "method_definition" => {
+            // name(params): return_type
+            let name = node_name_text(node, text).unwrap_or_else(|| "anonymous".to_string());
+            let params = node.child_by_field_name("parameters")
+                .and_then(|n| text.get(n.start_byte()..n.end_byte()))
+                .unwrap_or("()");
+            let return_type = node.child_by_field_name("return_type")
+                .and_then(|n| text.get(n.start_byte()..n.end_byte()))
+                .map(|rt| rt.trim_start_matches(':').trim());
+            match return_type {
+                Some(rt) => Some(format!("{}{}: {}", name, params, rt)),
+                None => Some(format!("{}{}", name, params)),
+            }
+        }
+        "lexical_declaration" | "variable_declaration" => {
+            // For arrow functions: name = (params) => ...
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if child.kind() == "variable_declarator" {
+                    let name = node_name_text(child, text)?;
+                    if let Some(value) = child.child_by_field_name("value") {
+                        if matches!(value.kind(), "arrow_function" | "function") {
+                            let params = value.child_by_field_name("parameters")
+                                .and_then(|n| text.get(n.start_byte()..n.end_byte()))
+                                .unwrap_or("()");
+                            let return_type = value.child_by_field_name("return_type")
+                                .and_then(|n| text.get(n.start_byte()..n.end_byte()))
+                                .map(|rt| rt.trim_start_matches(':').trim());
+                            return match return_type {
+                                Some(rt) => Some(format!("{}{}: {}", name, params, rt)),
+                                None => Some(format!("{}{}", name, params)),
+                            };
+                        }
+                    }
+                }
+            }
+            None
+        }
+        "interface_declaration" | "type_alias_declaration" => {
+            // First line of the declaration
+            let slice = text.get(node.start_byte()..node.end_byte())?;
+            let first_line = slice.lines().next()?;
+            Some(first_line.trim().to_string())
+        }
+        _ => None,
+    }
+}
+
+/// Walk a node tree and collect all call_expression callee names.
+#[cfg(feature = "treesitter")]
+fn extract_calls(node: Node, text: &str) -> Vec<String> {
+    let mut calls = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    collect_calls_recursive(node, text, &mut calls, &mut seen);
+    calls
+}
+
+#[cfg(feature = "treesitter")]
+fn collect_calls_recursive(
+    node: Node,
+    text: &str,
+    calls: &mut Vec<String>,
+    seen: &mut std::collections::HashSet<String>,
+) {
+    if node.kind() == "call_expression" {
+        if let Some(callee) = node.child_by_field_name("function") {
+            let callee_text = text.get(callee.start_byte()..callee.end_byte())
+                .unwrap_or("")
+                .trim();
+            // Normalize: take the last segment for member expressions
+            let name = callee_text.rsplit('.').next().unwrap_or(callee_text);
+            if !name.is_empty() && name.len() < 100 && seen.insert(name.to_string()) {
+                calls.push(name.to_string());
+            }
+        }
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_calls_recursive(child, text, calls, seen);
+    }
+}
+
+/// Collect identifier references from a node for exact import attribution.
+#[cfg(feature = "treesitter")]
+fn extract_identifier_refs(node: Node, text: &str) -> std::collections::HashSet<String> {
+    let mut refs = std::collections::HashSet::new();
+    collect_identifier_refs_recursive(node, text, &mut refs);
+    refs
+}
+
+#[cfg(feature = "treesitter")]
+fn collect_identifier_refs_recursive(
+    node: Node,
+    text: &str,
+    refs: &mut std::collections::HashSet<String>,
+) {
+    if node.kind() == "identifier" {
+        if let Some(name) = text.get(node.start_byte()..node.end_byte()) {
+            if !name.is_empty() {
+                refs.insert(name.to_string());
+            }
+        }
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_identifier_refs_recursive(child, text, refs);
+    }
+}
+
+/// Walk a node tree and collect TypeScript type references.
+#[cfg(feature = "treesitter")]
+fn extract_type_refs(node: Node, text: &str) -> Vec<String> {
+    let mut refs = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    collect_type_refs_recursive(node, text, &mut refs, &mut seen);
+    refs
+}
+
+#[cfg(feature = "treesitter")]
+fn collect_type_refs_recursive(
+    node: Node,
+    text: &str,
+    refs: &mut Vec<String>,
+    seen: &mut std::collections::HashSet<String>,
+) {
+    // type_identifier is used in TS for type references: `foo: MyType`
+    // generic_type wraps parameterized types: `Promise<Foo>`
+    if matches!(node.kind(), "type_identifier" | "predefined_type") {
+        let type_text = text.get(node.start_byte()..node.end_byte())
+            .unwrap_or("")
+            .trim();
+        // Skip built-in primitives
+        if !matches!(type_text, "string" | "number" | "boolean" | "void" | "null"
+            | "undefined" | "any" | "never" | "unknown" | "object" | "symbol" | "bigint")
+            && !type_text.is_empty()
+            && type_text.len() < 100
+            && seen.insert(type_text.to_string())
+        {
+            refs.push(type_text.to_string());
+        }
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_type_refs_recursive(child, text, refs, seen);
+    }
+}
+
+/// Extract doc comment from the node's preceding sibling (JSDoc or line comments).
+#[cfg(feature = "treesitter")]
+fn extract_doc_comment(node: Node, text: &str) -> Option<String> {
+    let prev = node.prev_sibling()?;
+    if !matches!(prev.kind(), "comment") {
+        return None;
+    }
+    let comment_text = text.get(prev.start_byte()..prev.end_byte())?;
+
+    // JSDoc: /** ... */
+    if comment_text.starts_with("/**") {
+        let inner = comment_text
+            .trim_start_matches("/**")
+            .trim_end_matches("*/")
+            .lines()
+            .map(|l| l.trim().trim_start_matches('*').trim())
+            .filter(|l| !l.is_empty() && !l.starts_with('@'))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let first_sentence = inner.split(". ").next().unwrap_or(&inner);
+        if first_sentence.is_empty() {
+            None
+        } else {
+            Some(truncate_doc(first_sentence, 200))
+        }
+    }
+    // Single line: // ...
+    else if comment_text.starts_with("//") {
+        let content = comment_text.trim_start_matches("//").trim();
+        if content.is_empty() { None } else { Some(truncate_doc(content, 200)) }
+    } else {
+        None
+    }
+}
+
+/// Collect all import specifiers at file scope.
+#[cfg(feature = "treesitter")]
+fn collect_file_imports(root: Node, text: &str) -> Vec<String> {
+    let mut imports = Vec::new();
+    let mut cursor = root.walk();
+    for child in root.children(&mut cursor) {
+        if child.kind() == "import_statement" {
+            collect_import_names(child, text, &mut imports);
+        }
+        // export { x } from '...' also imports
+        if child.kind() == "export_statement" {
+            let mut inner_cursor = child.walk();
+            for inner in child.children(&mut inner_cursor) {
+                if inner.kind() == "import_statement" {
+                    collect_import_names(inner, text, &mut imports);
+                }
+            }
+        }
+    }
+    imports
+}
+
+/// Extract imported names from an import statement node.
+#[cfg(feature = "treesitter")]
+fn collect_import_names(node: Node, text: &str, imports: &mut Vec<String>) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        match child.kind() {
+            "import_clause" => {
+                let mut clause_cursor = child.walk();
+                for cc in child.children(&mut clause_cursor) {
+                    match cc.kind() {
+                        "identifier" => {
+                            if let Some(name) = text.get(cc.start_byte()..cc.end_byte()) {
+                                imports.push(name.to_string());
+                            }
+                        }
+                        "named_imports" => {
+                            let mut named_cursor = cc.walk();
+                            for spec in cc.children(&mut named_cursor) {
+                                if spec.kind() == "import_specifier" {
+                                    // Use alias if present, otherwise the name
+                                    let alias = spec.child_by_field_name("alias")
+                                        .or_else(|| spec.child_by_field_name("name"));
+                                    if let Some(name_node) = alias {
+                                        if let Some(name) = text.get(name_node.start_byte()..name_node.end_byte()) {
+                                            imports.push(name.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        "namespace_import" => {
+                            // import * as Foo
+                            if let Some(name_node) = cc.child_by_field_name("name") {
+                                if let Some(name) = text.get(name_node.start_byte()..name_node.end_byte()) {
+                                    imports.push(name.to_string());
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Check if a function name looks like a test.
+#[cfg(feature = "treesitter")]
+fn is_test_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.starts_with("test")
+        || lower.starts_with("it_")
+        || lower == "it"
+        || lower == "describe"
+        || lower.starts_with("describe_")
+        || lower.starts_with("spec_")
+}
+
+/// Truncate a doc string to max chars on a word boundary.
+#[cfg(feature = "treesitter")]
+fn truncate_doc(s: &str, max: usize) -> String {
+    if s.len() <= max { return s.to_string(); }
+    let truncated: String = s.chars().take(max).collect();
+    // Find last space for clean break
+    match truncated.rfind(' ') {
+        Some(pos) if pos > max / 2 => format!("{}...", &truncated[..pos]),
+        _ => format!("{}...", truncated),
+    }
 }
 
 #[cfg(feature = "treesitter")]
@@ -675,15 +1197,11 @@ fn flush_chunk(
         return;
     }
     let content = buf.join("\n");
-    drafts.push(ChunkDraft {
-        kind: params.kind,
-        start_line: params.start_line,
-        end_line: params.end_line,
-        content: content.trim().to_string(),
-        heading_path: heading_path.to_vec(),
-        symbol: params.symbol,
-        address: params.address,
-    });
+    drafts.push(ChunkDraft::plain(
+        params.kind, params.start_line, params.end_line,
+        content.trim().to_string(),
+        heading_path.to_vec(), params.symbol, params.address,
+    ));
     buf.clear();
 }
 
@@ -764,4 +1282,196 @@ fn strip_redundant_prefix(context: &str, base: &str) -> String {
         }
     }
     ctx
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{AstNodeKind, IngestOptions};
+
+    #[test]
+    fn test_js_function_enrichment() {
+        let code = r#"
+import { Router } from 'express';
+import jwt from 'jsonwebtoken';
+
+/** Verify a JWT token and return the decoded claims. */
+function verifyToken(token, secret) {
+    const decoded = jwt.verify(token, secret);
+    console.log('verified');
+    return decoded;
+}
+"#;
+        let chunks = chunk_file("auth.js", code, ChunkKind::JavaScript, &IngestOptions::default());
+        assert!(!chunks.is_empty(), "Should produce at least one chunk");
+
+        let func_chunk = chunks.iter().find(|c| c.symbol.as_deref() == Some("verifyToken"))
+            .expect("Should find verifyToken chunk");
+
+        assert_eq!(func_chunk.ast_kind, Some(AstNodeKind::Function));
+        assert!(func_chunk.signature.as_ref().unwrap().contains("verifyToken"));
+        assert!(func_chunk.signature.as_ref().unwrap().contains("token"));
+        assert!(func_chunk.doc_summary.as_ref().unwrap().contains("Verify a JWT token"));
+
+        // Calls: should find verify, log
+        assert!(func_chunk.calls.iter().any(|c| c == "verify"), "Should detect jwt.verify call: {:?}", func_chunk.calls);
+        assert!(func_chunk.calls.iter().any(|c| c == "log"), "Should detect console.log call: {:?}", func_chunk.calls);
+    }
+
+    #[test]
+    fn test_ts_arrow_function_enrichment() {
+        let code = r#"
+import { Request, Response } from 'express';
+
+export const handleRequest = (req: Request, res: Response): void => {
+    const data = parseBody(req);
+    sendResponse(res, data);
+};
+"#;
+        let chunks = chunk_file("handler.ts", code, ChunkKind::JavaScript, &IngestOptions::default());
+        assert!(!chunks.is_empty(), "Should produce at least one chunk");
+
+        let arrow_chunk = chunks.iter().find(|c| c.symbol.as_deref() == Some("handleRequest"))
+            .expect("Should find handleRequest chunk");
+
+        assert_eq!(arrow_chunk.ast_kind, Some(AstNodeKind::Function));
+        assert!(!arrow_chunk.exports.is_empty(), "Should be marked as export");
+        assert!(arrow_chunk.exports.contains(&"handleRequest".to_string()));
+
+        // Calls
+        assert!(arrow_chunk.calls.iter().any(|c| c == "parseBody"), "Should detect parseBody call: {:?}", arrow_chunk.calls);
+        assert!(arrow_chunk.calls.iter().any(|c| c == "sendResponse"), "Should detect sendResponse call: {:?}", arrow_chunk.calls);
+    }
+
+    #[test]
+    fn test_ts_interface_enrichment() {
+        let code = r#"
+export interface UserProfile {
+    id: string;
+    name: string;
+    email: string;
+    role: UserRole;
+    createdAt: Date;
+}
+"#;
+        let chunks = chunk_file("types.ts", code, ChunkKind::JavaScript, &IngestOptions::default());
+        let iface = chunks.iter().find(|c| c.symbol.as_deref() == Some("UserProfile"))
+            .expect("Should find UserProfile chunk");
+
+        assert_eq!(iface.ast_kind, Some(AstNodeKind::Interface));
+        assert!(!iface.exports.is_empty());
+
+        // Type refs: should find UserRole, Date but not string
+        assert!(iface.type_refs.iter().any(|t| t == "UserRole"), "Should find UserRole type ref: {:?}", iface.type_refs);
+        assert!(iface.type_refs.iter().any(|t| t == "Date"), "Should find Date type ref: {:?}", iface.type_refs);
+        assert!(!iface.type_refs.iter().any(|t| t == "string"), "Should not include primitive 'string': {:?}", iface.type_refs);
+    }
+
+    #[test]
+    fn test_class_enrichment() {
+        let code = r#"
+/** User authentication service. */
+export class AuthService {
+    constructor(private db: Database) {}
+
+    async login(email: string, password: string): Promise<Token> {
+        const user = await this.db.findUser(email);
+        const valid = await bcrypt.compare(password, user.hash);
+        if (!valid) throw new Error('Invalid credentials');
+        return generateToken(user);
+    }
+}
+"#;
+        let chunks = chunk_file("auth.ts", code, ChunkKind::JavaScript, &IngestOptions::default());
+        let class_chunk = chunks.iter().find(|c| c.symbol.as_deref() == Some("AuthService"))
+            .expect("Should find AuthService chunk");
+
+        assert_eq!(class_chunk.ast_kind, Some(AstNodeKind::Class));
+        assert!(class_chunk.doc_summary.as_ref().unwrap().contains("authentication service"));
+
+        // Type refs from TS annotations
+        assert!(class_chunk.type_refs.iter().any(|t| t == "Database"), "Should find Database type ref: {:?}", class_chunk.type_refs);
+        assert!(class_chunk.type_refs.iter().any(|t| t == "Token" || t == "Promise"), "Should find Token or Promise type ref: {:?}", class_chunk.type_refs);
+    }
+
+    #[test]
+    fn test_class_method_chunks_have_parent_qualified_names() {
+        let code = r#"
+export class AuthService {
+    async login(email: string, password: string): Promise<Token> {
+        return generateToken(email + password);
+    }
+}
+"#;
+        let chunks = chunk_file("auth.ts", code, ChunkKind::JavaScript, &IngestOptions::default());
+        let method_chunk = chunks
+            .iter()
+            .find(|c| c.symbol.as_deref() == Some("login"))
+            .expect("Should find class method chunk");
+
+        assert_eq!(method_chunk.ast_kind, Some(AstNodeKind::Method));
+        assert_eq!(method_chunk.parent_symbol.as_deref(), Some("AuthService"));
+        assert_eq!(method_chunk.qualified_name.as_deref(), Some("AuthService.login"));
+        assert!(
+            method_chunk.calls.iter().any(|call| call == "generateToken"),
+            "Should retain method call extraction: {:?}",
+            method_chunk.calls
+        );
+    }
+
+    #[test]
+    fn test_import_attribution_uses_identifiers_not_substrings() {
+        let code = r#"
+import { it, parseBody } from "./helpers";
+
+export const handleRequest = (req: Request) => {
+    const title = "split";
+    return parseBody(req.body);
+};
+"#;
+        let chunks = chunk_file("handler.ts", code, ChunkKind::JavaScript, &IngestOptions::default());
+        let handler_chunk = chunks
+            .iter()
+            .find(|c| c.symbol.as_deref() == Some("handleRequest"))
+            .expect("Should find handleRequest chunk");
+
+        assert!(
+            handler_chunk.imports.iter().any(|name| name == "parseBody"),
+            "Should attribute exact imported identifier: {:?}",
+            handler_chunk.imports
+        );
+        assert!(
+            !handler_chunk.imports.iter().any(|name| name == "it"),
+            "Should not attribute substring-only import matches: {:?}",
+            handler_chunk.imports
+        );
+    }
+
+    #[test]
+    fn test_plain_text_no_enrichment() {
+        let text = "This is a plain text document.\nIt has no code structure.\n";
+        let chunks = chunk_file("readme.txt", text, ChunkKind::Text, &IngestOptions::default());
+        assert!(!chunks.is_empty());
+        assert!(chunks[0].ast_kind.is_none());
+        assert!(chunks[0].imports.is_empty());
+        assert!(chunks[0].calls.is_empty());
+    }
+
+    #[test]
+    fn test_markdown_no_enrichment() {
+        let text = "# Hello\n\nSome markdown content.\n";
+        let chunks = chunk_file("doc.md", text, ChunkKind::Markdown, &IngestOptions::default());
+        assert!(!chunks.is_empty());
+        assert!(chunks[0].ast_kind.is_none());
+    }
+
+    #[test]
+    fn test_backward_compat_no_treesitter() {
+        // Verify that JSON chunking still works correctly with new ChunkDraft fields
+        let json = r#"{"name": "test", "value": 42}"#;
+        let chunks = chunk_file("data.json", json, ChunkKind::Json, &IngestOptions::default());
+        assert!(!chunks.is_empty());
+        assert!(chunks[0].ast_kind.is_none());
+        assert!(chunks[0].imports.is_empty());
+    }
 }
