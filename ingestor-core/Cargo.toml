@@ -34,7 +34,7 @@ burn-wgpu = { version = "0.21.0-pre.2", optional = true }
 tokenizers = { version = "0.20", default-features = false, features = ["unstable_wasm"], optional = true }
 
 [features]
-default = ["treesitter", "mcp"]
+default = ["treesitter", "mcp", "wgpu-backend"]
 treesitter = ["tree-sitter", "tree-sitter-javascript", "tree-sitter-typescript"]
 mcp = ["dep:rmcp", "dep:schemars", "dep:tokio", "dep:tracing", "dep:tracing-subscriber", "dep:getrandom"]
 cli = ["dep:clap"]

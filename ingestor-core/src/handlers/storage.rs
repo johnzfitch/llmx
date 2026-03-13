@@ -147,7 +147,7 @@ impl IndexStore {
         })
     }
 
-    /// Create IndexStore with default storage directory (XDG data dir).
+    /// Create IndexStore with default storage directory (platform data directory).
     pub fn default_store() -> Result<Self> {
         Self::new(crate::default_storage_dir())
     }

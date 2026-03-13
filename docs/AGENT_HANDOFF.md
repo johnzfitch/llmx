@@ -102,7 +102,7 @@ User (Claude Code)
 LlmxServer (mcp_server.rs)
     ↓ Arc<Mutex<IndexStore>>
 IndexStore (storage.rs)
-    ├─→ Disk: ~/.llmx/indexes/{id}.json
+    ├─→ Disk: ~/.local/share/llmx/indexes/{id}.json
     └─→ Cache: HashMap<String, IndexFile>
         ↓
     IndexFile (model.rs)
@@ -283,7 +283,7 @@ target/release/llmx-mcp  # 12MB, optimized
 
 ### Storage Location
 ```bash
-~/.llmx/indexes/          # Default (configurable via LLMX_STORAGE_DIR)
+~/.local/share/llmx/indexes/          # Default (configurable via LLMX_STORAGE_DIR)
 ├── registry.json         # Index metadata
 ├── {index_id}.json       # Index data (no inverted index)
 └── {index_id}.json.tmp   # Temp files (should be auto-cleaned)
@@ -319,7 +319,7 @@ cargo build --release --features mcp --bin llmx-mcp
       "command": "/home/zack/dev/llmx/target/release/llmx-mcp",
       "args": [],
       "env": {
-        "LLMX_STORAGE_DIR": "/home/zack/.llmx/indexes"
+        "LLMX_STORAGE_DIR": "/home/zack/.local/share/llmx/indexes"
       }
     }
   }

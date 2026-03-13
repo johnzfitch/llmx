@@ -39,28 +39,37 @@ use crate::symbol_search::symbol_search;
 use crate::util::{build_chunk_refs, detect_kind, sha256_hex};
 use crate::graph::build_structural_indexes;
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Return the default storage directory for llmx indexes.
 ///
-/// Follows XDG Base Directory Specification on Linux (`$XDG_DATA_HOME/llmx/indexes`),
-/// `~/Library/Application Support/llmx/indexes` on macOS, and the local app data
-/// directory on Windows.
+/// Follows the platform data directory convention: XDG Base Directory Specification on
+/// Linux (`$XDG_DATA_HOME/llmx/indexes`), `~/Library/Application Support/llmx/indexes`
+/// on macOS, and the local app data directory on Windows.
 ///
-/// On first run, migrates indexes from legacy paths (`~/.llmx_mcp/indexes`,
-/// `~/.llmx/indexes`) if the new location does not yet contain a registry.
+/// Falls back to `~/.local/share/llmx/indexes` (or `~/.llmx/indexes` as last resort)
+/// if the platform data directory cannot be determined.
+///
+/// On first run, migrates indexes from all legacy paths (`~/.llmx_mcp/indexes`,
+/// `~/.llmx/indexes`) by merging their registries into the new location.
 pub fn default_storage_dir() -> PathBuf {
     let new_dir = dirs::data_dir()
-        .expect("Could not determine platform data directory")
+        .or_else(|| dirs::home_dir().map(|h| h.join(".local").join("share")))
+        .unwrap_or_else(|| {
+            // Absolute last resort when neither data_dir nor home_dir resolve
+            dirs::home_dir()
+                .map(|h| h.join(".llmx"))
+                .unwrap_or_else(|| PathBuf::from(".llmx"))
+        })
         .join("llmx")
         .join("indexes");
 
-    // If the new path already has a registry, use it directly
-    if new_dir.join("registry.json").exists() {
-        return new_dir;
+    // Ensure the target directory structure exists
+    if let Some(parent) = new_dir.parent() {
+        let _ = std::fs::create_dir_all(parent);
     }
 
-    // Check legacy paths and migrate the first one found
+    // Collect legacy paths that contain a registry
     let legacy_paths: Vec<PathBuf> = dirs::home_dir()
         .into_iter()
         .flat_map(|h| {
@@ -69,35 +78,152 @@ pub fn default_storage_dir() -> PathBuf {
                 h.join(".llmx").join("indexes"),
             ]
         })
+        .filter(|p| p.join("registry.json").exists() && *p != new_dir)
         .collect();
 
+    if legacy_paths.is_empty() {
+        return new_dir;
+    }
+
+    // Migrate all legacy stores into new_dir
     for legacy in &legacy_paths {
-        if legacy.join("registry.json").exists() {
-            if let Some(parent) = new_dir.parent() {
-                let _ = std::fs::create_dir_all(parent);
+        migrate_legacy_store(legacy, &new_dir);
+    }
+
+    new_dir
+}
+
+/// Migrate a single legacy index store into `dest`, merging registries and copying
+/// index files. Uses rename when possible, falling back to copy+delete for cross-fs.
+fn migrate_legacy_store(src: &Path, dest: &Path) {
+    let src_registry_path = src.join("registry.json");
+    let dest_registry_path = dest.join("registry.json");
+
+    // Load source registry
+    let src_registry: serde_json::Value = match std::fs::read_to_string(&src_registry_path) {
+        Ok(data) => match serde_json::from_str(&data) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("llmx: skipping {}: invalid registry: {e}", src.display());
+                return;
             }
-            match std::fs::rename(legacy, &new_dir) {
-                Ok(()) => {
-                    eprintln!(
-                        "llmx: migrated indexes from {} to {}",
-                        legacy.display(),
-                        new_dir.display(),
-                    );
-                    return new_dir;
+        },
+        Err(e) => {
+            eprintln!("llmx: skipping {}: cannot read registry: {e}", src.display());
+            return;
+        }
+    };
+
+    // Load or create dest registry
+    let mut dest_registry: serde_json::Value = std::fs::read_to_string(&dest_registry_path)
+        .ok()
+        .and_then(|data| serde_json::from_str(&data).ok())
+        .unwrap_or_else(|| serde_json::json!({"indexes": {}}));
+
+    // Merge: copy each index file from src to dest, then merge registry entries
+    if let Some(src_indexes) = src_registry.get("indexes").and_then(|v| v.as_object()) {
+        let dest_indexes = dest_registry
+            .as_object_mut()
+            .and_then(|o| o.get_mut("indexes"))
+            .and_then(|v| v.as_object_mut());
+
+        let dest_indexes = match dest_indexes {
+            Some(m) => m,
+            None => {
+                eprintln!("llmx: skipping {}: cannot parse dest registry", src.display());
+                return;
+            }
+        };
+
+        for (key, meta) in src_indexes {
+            // Get the index id to find the corresponding .json file
+            let index_id = meta.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            if index_id.is_empty() {
+                continue;
+            }
+
+            let src_file = src.join(format!("{index_id}.json"));
+            let dest_file = dest.join(format!("{index_id}.json"));
+
+            if src_file.exists() && !dest_file.exists() {
+                // Try rename first (fast, same filesystem)
+                if std::fs::rename(&src_file, &dest_file).is_err() {
+                    // Cross-filesystem: copy then delete
+                    match std::fs::copy(&src_file, &dest_file) {
+                        Ok(_) => { let _ = std::fs::remove_file(&src_file); }
+                        Err(e) => {
+                            eprintln!(
+                                "llmx: failed to migrate index {index_id} from {}: {e}",
+                                src.display(),
+                            );
+                            continue;
+                        }
+                    }
                 }
-                Err(_) => {
-                    // rename fails across filesystems; fall back to legacy path
-                    eprintln!(
-                        "llmx: unable to migrate {}, using legacy path",
-                        legacy.display(),
-                    );
-                    return legacy.clone();
+
+                // Also migrate embeddings file if present
+                let src_emb = src.join(format!("{index_id}.embeddings"));
+                let dest_emb = dest.join(format!("{index_id}.embeddings"));
+                if src_emb.exists() && !dest_emb.exists() {
+                    if std::fs::rename(&src_emb, &dest_emb).is_err() {
+                        match std::fs::copy(&src_emb, &dest_emb) {
+                            Ok(_) => { let _ = std::fs::remove_file(&src_emb); }
+                            Err(e) => {
+                                eprintln!("llmx: failed to migrate embeddings for {index_id}: {e}");
+                            }
+                        }
+                    }
                 }
+            }
+
+            // Merge registry entry (don't overwrite existing entries in dest)
+            if !dest_indexes.contains_key(key) {
+                dest_indexes.insert(key.clone(), meta.clone());
             }
         }
     }
 
-    new_dir
+    // Write merged registry
+    match serde_json::to_string_pretty(&dest_registry) {
+        Ok(data) => {
+            // Atomic write: write to temp then rename
+            let tmp_path = dest.join(".registry.json.tmp");
+            if std::fs::write(&tmp_path, &data).is_ok() {
+                if let Err(e) = std::fs::rename(&tmp_path, &dest_registry_path) {
+                    eprintln!("llmx: failed to write merged registry: {e}");
+                    let _ = std::fs::remove_file(&tmp_path);
+                    return;
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("llmx: failed to serialize merged registry: {e}");
+            return;
+        }
+    }
+
+    // Clean up source: remove registry and try to remove empty directory
+    let _ = std::fs::remove_file(&src_registry_path);
+    // Only remove the directory if it's now empty
+    if is_dir_empty(src) {
+        let _ = std::fs::remove_dir(src);
+        // Try to remove parent too (e.g. ~/.llmx_mcp/) if empty
+        if let Some(parent) = src.parent() {
+            let _ = std::fs::remove_dir(parent);
+        }
+    }
+
+    eprintln!(
+        "llmx: migrated indexes from {} to {}",
+        src.display(),
+        dest.display(),
+    );
+}
+
+fn is_dir_empty(path: &Path) -> bool {
+    std::fs::read_dir(path)
+        .map(|mut entries| entries.next().is_none())
+        .unwrap_or(true)
 }
 
 pub fn ingest_files(mut files: Vec<FileInput>, options: IngestOptions) -> IndexFile {
@@ -474,6 +600,10 @@ pub fn search_advanced(
         Vec::new()
     };
 
+    #[cfg(not(feature = "embeddings"))]
+    if _use_semantic && resolved_intent != QueryIntent::Symbol {
+        anyhow::bail!("No embedding backend compiled; embeddings support is not compiled into this build");
+    }
     #[cfg(not(feature = "embeddings"))]
     let dense_results: Vec<SearchResult> = Vec::new();
 

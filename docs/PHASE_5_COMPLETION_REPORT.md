@@ -480,7 +480,7 @@ cargo build --release --features mcp --bin llmx-mcp
       "command": "/home/zack/dev/llmx/target/release/llmx-mcp",
       "args": [],
       "env": {
-        "LLMX_STORAGE_DIR": "/home/zack/.llmx/indexes"
+        "LLMX_STORAGE_DIR": "/home/zack/.local/share/llmx/indexes"
       }
     }
   }

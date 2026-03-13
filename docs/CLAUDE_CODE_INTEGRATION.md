@@ -136,7 +136,7 @@ Add to `~/.claude/mcp.json`:
       "command": "/home/zack/dev/llmx/target/release/mcp_server",
       "args": [],
       "env": {
-        "LLMX_STORAGE_DIR": "/home/zack/.llmx/indexes"
+        "LLMX_STORAGE_DIR": "/home/zack/.local/share/llmx/indexes"
       }
     }
   }
@@ -303,7 +303,7 @@ ingestor-wasm/models/
 - [x] `llmx_search` - Token-budgeted search (16K default)
 - [x] `llmx_explore` - List files/outline/symbols
 - [x] `llmx_manage` - List/delete indexes
-- [x] Index persistence in ~/.llmx/indexes/
+- [x] Index persistence in ~/.local/share/llmx/indexes/
 - [x] In-memory cache for performance
 
 ### Phase 2: Claude Code Hooks ✅ COMPLETE
@@ -378,7 +378,7 @@ cd ~/dev/llmx
 cargo build --release --features mcp -p ingestor-core
 
 # 2. Create storage directory
-mkdir -p ~/.llmx/indexes
+mkdir -p ~/.local/share/llmx/indexes
 
 # 3. Add MCP server to Claude Code
 # Edit ~/.claude/mcp.json (create if doesn't exist):
@@ -389,7 +389,7 @@ mkdir -p ~/.llmx/indexes
       "command": "/home/zack/dev/llmx/target/release/mcp_server",
       "args": [],
       "env": {
-        "LLMX_STORAGE_DIR": "/home/zack/.llmx/indexes"
+        "LLMX_STORAGE_DIR": "/home/zack/.local/share/llmx/indexes"
       }
     }
   }
