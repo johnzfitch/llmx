@@ -1131,7 +1131,7 @@ fn perform_search(
     limit: Option<usize>,
     max_tokens: Option<usize>,
     use_semantic: Option<bool>,
-    _hybrid_strategy: Option<&str>,
+    hybrid_strategy: Option<&str>,
     intent: Option<&str>,
     explain: Option<bool>,
     strategy: Option<&str>,
@@ -1219,6 +1219,7 @@ fn perform_search(
         }
         #[cfg(not(feature = "embeddings"))]
         {
+            let _ = hybrid_strategy;
             anyhow::bail!("Semantic search requested, but embeddings support is not compiled into this build")
         }
     } else {

@@ -147,13 +147,9 @@ impl IndexStore {
         })
     }
 
-    /// Create IndexStore with default storage directory (~/.llmx/indexes).
+    /// Create IndexStore with default storage directory (XDG data dir).
     pub fn default_store() -> Result<Self> {
-        let storage_dir = dirs::home_dir()
-            .context("Could not find home directory")?
-            .join(".llmx")
-            .join("indexes");
-        Self::new(storage_dir)
+        Self::new(crate::default_storage_dir())
     }
 
     /// Load index by ID with lazy loading and automatic inverted index rebuild.

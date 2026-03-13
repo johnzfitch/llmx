@@ -39,6 +39,66 @@ use crate::symbol_search::symbol_search;
 use crate::util::{build_chunk_refs, detect_kind, sha256_hex};
 use crate::graph::build_structural_indexes;
 use std::collections::{BTreeMap, HashMap};
+use std::path::PathBuf;
+
+/// Return the default storage directory for llmx indexes.
+///
+/// Follows XDG Base Directory Specification on Linux (`$XDG_DATA_HOME/llmx/indexes`),
+/// `~/Library/Application Support/llmx/indexes` on macOS, and the local app data
+/// directory on Windows.
+///
+/// On first run, migrates indexes from legacy paths (`~/.llmx_mcp/indexes`,
+/// `~/.llmx/indexes`) if the new location does not yet contain a registry.
+pub fn default_storage_dir() -> PathBuf {
+    let new_dir = dirs::data_dir()
+        .expect("Could not determine platform data directory")
+        .join("llmx")
+        .join("indexes");
+
+    // If the new path already has a registry, use it directly
+    if new_dir.join("registry.json").exists() {
+        return new_dir;
+    }
+
+    // Check legacy paths and migrate the first one found
+    let legacy_paths: Vec<PathBuf> = dirs::home_dir()
+        .into_iter()
+        .flat_map(|h| {
+            vec![
+                h.join(".llmx_mcp").join("indexes"),
+                h.join(".llmx").join("indexes"),
+            ]
+        })
+        .collect();
+
+    for legacy in &legacy_paths {
+        if legacy.join("registry.json").exists() {
+            if let Some(parent) = new_dir.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            match std::fs::rename(legacy, &new_dir) {
+                Ok(()) => {
+                    eprintln!(
+                        "llmx: migrated indexes from {} to {}",
+                        legacy.display(),
+                        new_dir.display(),
+                    );
+                    return new_dir;
+                }
+                Err(_) => {
+                    // rename fails across filesystems; fall back to legacy path
+                    eprintln!(
+                        "llmx: unable to migrate {}, using legacy path",
+                        legacy.display(),
+                    );
+                    return legacy.clone();
+                }
+            }
+        }
+    }
+
+    new_dir
+}
 
 pub fn ingest_files(mut files: Vec<FileInput>, options: IngestOptions) -> IndexFile {
     files.sort_by(|a, b| a.path.cmp(&b.path));

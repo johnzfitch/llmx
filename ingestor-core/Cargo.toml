@@ -28,13 +28,13 @@ ignore = "0.4"  # .gitignore-aware file walking (same as ripgrep)
 lru = "0.16"    # LRU cache for dynamic index caching
 
 # Phase 6: Burn-based semantic embeddings (pure Rust, no C++ runtime)
-burn = { git = "https://github.com/tracel-ai/burn", rev = "3c6b710dca0319906c1966af3adcfa56176eb3c2", default-features = false, features = ["std"], optional = true }
-burn-ndarray = { git = "https://github.com/tracel-ai/burn", rev = "3c6b710dca0319906c1966af3adcfa56176eb3c2", optional = true }
-burn-wgpu = { git = "https://github.com/tracel-ai/burn", rev = "3c6b710dca0319906c1966af3adcfa56176eb3c2", optional = true }
+burn = { version = "0.21.0-pre.2", default-features = false, features = ["std"], optional = true }
+burn-ndarray = { version = "0.21.0-pre.2", optional = true }
+burn-wgpu = { version = "0.21.0-pre.2", optional = true }
 tokenizers = { version = "0.20", default-features = false, features = ["unstable_wasm"], optional = true }
 
 [features]
-default = ["treesitter", "mcp", "wgpu-backend"]
+default = ["treesitter", "mcp"]
 treesitter = ["tree-sitter", "tree-sitter-javascript", "tree-sitter-typescript"]
 mcp = ["dep:rmcp", "dep:schemars", "dep:tokio", "dep:tracing", "dep:tracing-subscriber", "dep:getrandom"]
 cli = ["dep:clap"]
@@ -67,7 +67,7 @@ optional = true
 features = ["rt-multi-thread", "macros", "fs"]
 
 [dependencies.dirs]
-version = "5"
+version = "6"
 
 [dependencies.tracing]
 version = "0.1"
@@ -99,9 +99,9 @@ assert_cmd = "2"
 predicates = "3"
 
 [build-dependencies]
-burn = { git = "https://github.com/tracel-ai/burn", rev = "3c6b710dca0319906c1966af3adcfa56176eb3c2", default-features = false }
-burn-ndarray = { git = "https://github.com/tracel-ai/burn", rev = "3c6b710dca0319906c1966af3adcfa56176eb3c2" }
-burn-store = { git = "https://github.com/tracel-ai/burn", rev = "3c6b710dca0319906c1966af3adcfa56176eb3c2" }
+burn = { version = "0.21.0-pre.2", default-features = false }
+burn-ndarray = { version = "0.21.0-pre.2" }
+burn-store = { version = "0.21.0-pre.2" }
 sha2 = "0.10"
 
 [[bench]]
