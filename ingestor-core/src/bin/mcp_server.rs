@@ -29,8 +29,8 @@ use tracing_subscriber::EnvFilter;
 /// # Architecture
 ///
 /// The server uses an `IndexStore` to manage persistent indexes on disk with an
-/// in-memory cache for performance. All indexes are stored in `~/.llmx_mcp/indexes/`
-/// by default (configurable via `LLMX_STORAGE_DIR`).
+/// in-memory cache for performance. Indexes are stored in the XDG data directory
+/// (`~/.local/share/llmx/indexes/` on Linux) by default, configurable via `LLMX_STORAGE_DIR`.
 ///
 /// # Thread Safety
 ///
@@ -304,7 +304,7 @@ async fn main() -> anyhow::Result<()> {
     // Get storage directory from env or default
     let storage_dir = env::var("LLMX_STORAGE_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| dirs::home_dir().unwrap().join(".llmx_mcp/indexes"));
+        .unwrap_or_else(|_| llmx_mcp::default_storage_dir());
 
     tracing::info!("Starting LLMX MCP server, storage: {:?}", storage_dir);
 

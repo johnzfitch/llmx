@@ -45,7 +45,7 @@ struct Cli {
     #[arg(long, global = true)]
     index_id: Option<String>,
 
-    /// Override storage directory (default: ~/.llmx_mcp/indexes)
+    /// Override storage directory (default: ~/.local/share/llmx/indexes)
     #[arg(long, global = true)]
     storage_dir: Option<PathBuf>,
 }
@@ -229,12 +229,8 @@ enum Commands {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let storage_dir = cli.storage_dir.unwrap_or_else(|| {
-        dirs::home_dir()
-            .expect("Could not find home directory")
-            .join(".llmx_mcp")
-            .join("indexes")
-    });
+    let storage_dir = cli.storage_dir
+        .unwrap_or_else(llmx_mcp::default_storage_dir);
 
     let mut store = IndexStore::new(storage_dir)?;
     let mut cache = DynamicCache::default_size();

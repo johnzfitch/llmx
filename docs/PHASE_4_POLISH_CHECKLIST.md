@@ -150,7 +150,7 @@ cat > ~/.claude/mcp.json << 'EOF'
       "command": "/home/zack/dev/llmx/target/release/mcp_server",
       "args": [],
       "env": {
-        "LLMX_STORAGE_DIR": "/home/zack/.llmx/indexes"
+        "LLMX_STORAGE_DIR": "/home/zack/.local/share/llmx/indexes"
       }
     }
   }
