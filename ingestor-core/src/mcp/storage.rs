@@ -30,6 +30,15 @@ struct StoredIndex {
 
 fn default_index_version() -> u32 { 1 }
 
+fn ensure_supported_index_version(version: u32, id: &str) -> Result<()> {
+    if version != INDEX_VERSION {
+        anyhow::bail!(
+            "Index {id} uses schema version {version}, but llmx expects version {INDEX_VERSION}. Reindex the project to refresh structural metadata."
+        );
+    }
+    Ok(())
+}
+
 impl From<&IndexFile> for StoredIndex {
     fn from(index: &IndexFile) -> Self {
         StoredIndex {
@@ -357,6 +366,7 @@ impl IndexStore {
 
         let mut stored: StoredIndex = serde_json::from_slice(&data)
             .with_context(|| format!("Failed to parse index file for {}", id))?;
+        ensure_supported_index_version(stored.version, id)?;
         let embeddings_path = embedding_store::sidecar_path(&self.storage_dir, id);
         if let Some(embeddings) = embedding_store::read_sidecar(&embeddings_path)? {
             stored.embeddings = Some(embeddings);
@@ -388,7 +398,7 @@ impl IndexStore {
         };
 
         Ok(IndexFile {
-            version: version.max(INDEX_VERSION),
+            version,
             index_id: id,
             files,
             chunks,
@@ -488,6 +498,29 @@ mod tests {
 
         assert_eq!(temp_files.len(), 0, "Temp files should be cleaned up");
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_rejects_old_schema_versions() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let mut store = IndexStore::new(temp_dir.path().to_path_buf())?;
+        fs::write(
+            temp_dir.path().join("legacy.json"),
+            r#"{
+                "version": 2,
+                "id": "legacy",
+                "root_path": "/tmp/project",
+                "created_at": 0,
+                "files": [],
+                "chunks": []
+            }"#,
+        )?;
+
+        let err = store.load("legacy").expect_err("v2 index should be rejected");
+        let message = err.to_string();
+        assert!(message.contains("schema version 2"), "{message}");
+        assert!(message.contains("Reindex"), "{message}");
         Ok(())
     }
 }

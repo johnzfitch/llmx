@@ -1,7 +1,9 @@
 use crate::graph::{ast_kind_label, canonical_symbol_key, normalize_symbol_key, raw_symbol_key, CodeGraph};
-use crate::handlers::{read_file, walk_directory, MAX_SEARCH_LIMIT};
+use crate::handlers::MAX_SEARCH_LIMIT;
+use crate::mcp::jobs::{JobStatus, JobStore};
 use crate::mcp::storage::{IndexStore, IndexMetadata};
-use crate::{ingest_files, search, search_advanced, Edge, EdgeKind, IngestOptions, QueryIntent, SearchFilters, SymbolIndexEntry, DEFAULT_MAX_FILE_BYTES};
+use crate::walk::{collect_input_files, WalkConfig};
+use crate::{ingest_files_with_root, search, search_advanced, Edge, EdgeKind, IngestOptions, QueryIntent, SearchFilters, SymbolIndexEntry, DEFAULT_MAX_FILE_BYTES};
 use crate::query::classify_intent;
 #[cfg(feature = "embeddings")]
 use crate::query::explain_match;
@@ -15,10 +17,27 @@ use serde::{Deserialize, Serialize};
 use schemars::JsonSchema;
 use std::collections::BTreeMap;
 use std::collections::HashSet;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 const DEFAULT_MAX_TOKENS: usize = 8000;
+
+#[derive(Debug, Serialize)]
+pub struct BackgroundTaskOutput {
+    pub job_id: String,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StatusOutput {
+    pub readiness_tier: u8,
+    pub files_indexed: usize,
+    pub files_total: usize,
+    pub symbols_indexed: usize,
+    pub embeddings_ready: bool,
+    pub languages: Vec<String>,
+    pub stale_files: usize,
+    pub background_tasks: Vec<BackgroundTaskOutput>,
+}
 
 // Input/Output types for MCP tools
 
@@ -138,6 +157,7 @@ pub struct ManageInput {
 #[derive(Debug, Serialize)]
 pub struct SearchOutput {
     pub results: Vec<SearchResultOutput>,
+    pub readiness_tier: u8,
     /// Number of matches excluded from results due to token budget.
     #[serde(skip_serializing_if = "is_zero")]
     pub truncated_count: usize,
@@ -177,11 +197,13 @@ pub struct SearchNoticeOutput {
 pub struct ExploreOutput {
     pub items: Vec<String>,
     pub total: usize,
+    pub readiness_tier: u8,
 }
 
 #[derive(Debug, Serialize)]
 pub struct ManageOutput {
     pub success: bool,
+    pub readiness_tier: u8,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub indexes: Option<Vec<IndexMetadata>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -261,6 +283,7 @@ fn is_false(b: &bool) -> bool { !b }
 pub struct SymbolsOutput {
     pub symbols: Vec<SymbolEntry>,
     pub total: usize,
+    pub readiness_tier: u8,
 }
 
 #[derive(Debug, Deserialize)]
@@ -285,6 +308,7 @@ pub struct LookupInput {
 pub struct LookupOutput {
     pub matches: Vec<SymbolEntry>,
     pub total: usize,
+    pub readiness_tier: u8,
 }
 
 #[derive(Debug, Deserialize)]
@@ -325,6 +349,7 @@ pub struct RefResult {
 pub struct RefsOutput {
     pub refs: Vec<RefResult>,
     pub total: usize,
+    pub readiness_tier: u8,
 }
 
 #[derive(Debug, Deserialize)]
@@ -347,6 +372,7 @@ pub struct GetChunkOutput {
     pub symbol: Option<String>,
     pub heading_path: Vec<String>,
     pub token_estimate: usize,
+    pub readiness_tier: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -367,33 +393,147 @@ enum SearchStrategyPlan {
     },
 }
 
+fn readiness_tier_for_index(index: &crate::IndexFile) -> u8 {
+    let has_files = !index.files.is_empty();
+    let has_symbols = !index.symbols.is_empty()
+        || index
+            .chunks
+            .iter()
+            .any(|chunk| chunk.symbol.is_some() || chunk.qualified_name.is_some() || chunk.ast_kind.is_some());
+    let embeddings_ready = index
+        .embeddings
+        .as_ref()
+        .map(|embeddings| !embeddings.is_empty())
+        .unwrap_or(false);
+
+    match (has_files, has_symbols, embeddings_ready) {
+        (false, _, _) => 0,
+        (true, false, _) => 1,
+        (true, true, false) => 2,
+        (true, true, true) => 3,
+    }
+}
+
+fn symbol_count(index: &crate::IndexFile) -> usize {
+    index.symbols.values().map(Vec::len).sum()
+}
+
+fn language_labels(index: &crate::IndexFile) -> Vec<String> {
+    let mut labels: Vec<String> = index
+        .files
+        .iter()
+        .filter_map(|file| file.language.as_ref())
+        .map(|language| match language {
+            crate::LanguageId::Rust => "rust".to_string(),
+            crate::LanguageId::Python => "python".to_string(),
+            crate::LanguageId::TypeScript => "typescript".to_string(),
+            crate::LanguageId::JavaScript => "javascript".to_string(),
+            crate::LanguageId::Go => "go".to_string(),
+            crate::LanguageId::Java => "java".to_string(),
+            crate::LanguageId::C => "c".to_string(),
+            crate::LanguageId::Cpp => "cpp".to_string(),
+            crate::LanguageId::CSharp => "csharp".to_string(),
+            crate::LanguageId::Ruby => "ruby".to_string(),
+            crate::LanguageId::Php => "php".to_string(),
+            crate::LanguageId::Swift => "swift".to_string(),
+            crate::LanguageId::Shell => "shell".to_string(),
+            crate::LanguageId::Sql => "sql".to_string(),
+            crate::LanguageId::Html => "html".to_string(),
+            crate::LanguageId::Css => "css".to_string(),
+            crate::LanguageId::Json => "json".to_string(),
+            crate::LanguageId::Markdown => "markdown".to_string(),
+            crate::LanguageId::Toml => "toml".to_string(),
+            crate::LanguageId::Yaml => "yaml".to_string(),
+            crate::LanguageId::Other(other) => other.clone(),
+        })
+        .collect();
+    labels.sort();
+    labels.dedup();
+    labels
+}
+
+fn readiness_tier_for_store(store: &mut IndexStore) -> Result<u8> {
+    let indexes = store.list()?;
+    let mut readiness_tier = 0u8;
+    for metadata in indexes {
+        let index = store.load(&metadata.index_id)?;
+        readiness_tier = readiness_tier.max(readiness_tier_for_index(index));
+    }
+    Ok(readiness_tier)
+}
+
+pub fn llmx_status_handler(store: &mut IndexStore, jobs: &JobStore) -> Result<StatusOutput> {
+    let indexes = store.list()?;
+    let mut files_indexed = 0usize;
+    let mut files_total = 0usize;
+    let mut symbols_indexed = 0usize;
+    let mut embeddings_ready = !indexes.is_empty();
+    let mut readiness_tier = 0u8;
+    let mut languages = Vec::new();
+
+    for metadata in &indexes {
+        let index = store.load(&metadata.index_id)?;
+        files_indexed += index.files.len();
+        files_total += index.files.len();
+        symbols_indexed += symbol_count(index);
+        embeddings_ready &= index
+            .embeddings
+            .as_ref()
+            .map(|embeddings| !embeddings.is_empty())
+            .unwrap_or(false);
+        readiness_tier = readiness_tier.max(readiness_tier_for_index(index));
+        languages.extend(language_labels(index));
+    }
+
+    languages.sort();
+    languages.dedup();
+
+    let mut background_tasks: Vec<BackgroundTaskOutput> = jobs
+        .lock()
+        .map(|guard| {
+            guard
+                .iter()
+                .filter_map(|(job_id, state)| {
+                    let status = match &state.status {
+                        JobStatus::Queued => Some("queued"),
+                        JobStatus::Running => Some("running"),
+                        JobStatus::Complete { .. } => None,
+                        JobStatus::Error { .. } => Some("error"),
+                    }?;
+                    Some(BackgroundTaskOutput {
+                        job_id: job_id.clone(),
+                        status: status.to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    background_tasks.sort_by(|a, b| a.job_id.cmp(&b.job_id));
+
+    Ok(StatusOutput {
+        readiness_tier,
+        files_indexed,
+        files_total,
+        symbols_indexed,
+        embeddings_ready,
+        languages,
+        stale_files: 0,
+        background_tasks,
+    })
+}
+
 // Tool handler implementations
 
 /// CPU/IO heavy part of indexing -- runs in spawn_blocking, no store lock held.
 pub fn run_index_work(input: &IndexInput) -> Result<(crate::IndexFile, String, IngestOptions)> {
-    let mut files = vec![];
-    for path_str in &input.paths {
-        let path = PathBuf::from(path_str)
-            .canonicalize()
-            .with_context(|| format!("Invalid path: {}", path_str))?;
-
-        let metadata = fs::symlink_metadata(&path)?;
-        if metadata.is_symlink() {
-            continue;
-        }
-
-        if metadata.is_dir() {
-            walk_directory(&path, &mut files)?;  // crate::handlers::walk_directory
-        } else if metadata.is_file() {
-            read_file(&path, &mut files)?;       // crate::handlers::read_file
-        }
-    }
-
-    let root_path = PathBuf::from(&input.paths[0])
-        .canonicalize()
-        .unwrap_or_else(|_| PathBuf::from(&input.paths[0]))
-        .to_string_lossy()
-        .to_string();
+    let walk_config = WalkConfig {
+        max_depth: 50,
+        max_files: 100_000,
+        max_total_bytes: usize::MAX,
+        timeout_secs: 300,
+        respect_gitignore: true,
+    };
+    let (files, root_path, _) = collect_input_files(&input.paths, &walk_config)?;
 
     let options = IngestOptions {
         chunk_target_chars: input.options.as_ref()
@@ -411,7 +551,7 @@ pub fn run_index_work(input: &IndexInput) -> Result<(crate::IndexFile, String, I
 
     let index = {
         #[cfg_attr(not(feature = "embeddings"), allow(unused_mut))]
-        let mut index = ingest_files(files, options.clone());
+        let mut index = ingest_files_with_root(files, options.clone(), Some(Path::new(&root_path)));
         #[cfg(feature = "embeddings")]
         {
             use crate::embeddings::{generate_embeddings, runtime_model_id};
@@ -511,6 +651,7 @@ pub fn llmx_index_handler(store: &mut IndexStore, input: IndexInput) -> Result<I
 /// Returns error if index doesn't exist or chunk data is missing.
 pub fn llmx_search_handler(store: &mut IndexStore, input: SearchInput) -> Result<SearchOutput> {
     let index = store.load(&input.index_id)?;
+    let readiness_tier = readiness_tier_for_index(index);
 
     // Build chunk lookup map once - O(n) instead of O(n*m) lookups
     let chunk_map: std::collections::HashMap<&str, &crate::Chunk> = index.chunks
@@ -659,6 +800,7 @@ pub fn llmx_search_handler(store: &mut IndexStore, input: SearchInput) -> Result
 
     Ok(SearchOutput {
         results,
+        readiness_tier,
         truncated_count,
         total_matches: search_results.len(),
         notices,
@@ -827,6 +969,7 @@ fn parse_hybrid_strategy(value: Option<&str>) -> Result<HybridStrategy> {
 /// Returns error if index doesn't exist or mode is invalid.
 pub fn llmx_explore_handler(store: &mut IndexStore, input: ExploreInput) -> Result<ExploreOutput> {
     let index = store.load(&input.index_id)?;
+    let readiness_tier = readiness_tier_for_index(index);
 
     let items: Vec<String> = match input.mode.as_str() {
         "files" => {
@@ -924,6 +1067,7 @@ pub fn llmx_explore_handler(store: &mut IndexStore, input: ExploreInput) -> Resu
     Ok(ExploreOutput {
         total: items.len(),
         items,
+        readiness_tier,
     })
 }
 
@@ -958,8 +1102,10 @@ pub fn llmx_manage_handler(store: &mut IndexStore, input: ManageInput) -> Result
     match input.action.as_str() {
         "list" => {
             let indexes = store.list()?;
+            let readiness_tier = readiness_tier_for_store(store)?;
             Ok(ManageOutput {
                 success: true,
+                readiness_tier,
                 indexes: Some(indexes),
                 message: None,
                 stats: None,
@@ -969,8 +1115,10 @@ pub fn llmx_manage_handler(store: &mut IndexStore, input: ManageInput) -> Result
             let index_id = input.index_id
                 .context("index_id is required for delete action")?;
             store.delete(&index_id)?;
+            let readiness_tier = readiness_tier_for_store(store)?;
             Ok(ManageOutput {
                 success: true,
+                readiness_tier,
                 indexes: None,
                 message: Some(format!("Index {} deleted successfully", index_id)),
                 stats: None,
@@ -980,8 +1128,10 @@ pub fn llmx_manage_handler(store: &mut IndexStore, input: ManageInput) -> Result
             let index_id = input.index_id
                 .context("index_id is required for stats action")?;
             let index = store.load(&index_id)?;
+            let readiness_tier = readiness_tier_for_index(index);
             Ok(ManageOutput {
                 success: true,
+                readiness_tier,
                 indexes: None,
                 message: None,
                 stats: Some(build_manage_stats(index)),
@@ -1105,6 +1255,7 @@ fn file_extension_label(path: &str) -> String {
 /// - `total`: Count before limit
 pub fn llmx_symbols_handler(store: &mut IndexStore, input: SymbolsInput) -> Result<SymbolsOutput> {
     let index = store.load(&input.index_id)?;
+    let readiness_tier = readiness_tier_for_index(index);
     let limit = input.limit.unwrap_or(50).min(500);
 
     let kind_filter = input.ast_kind.as_deref().map(parse_ast_kind_filter);
@@ -1167,11 +1318,16 @@ pub fn llmx_symbols_handler(store: &mut IndexStore, input: SymbolsInput) -> Resu
     let total = entries.len();
     entries.truncate(limit);
 
-    Ok(SymbolsOutput { symbols: entries, total })
+    Ok(SymbolsOutput {
+        symbols: entries,
+        total,
+        readiness_tier,
+    })
 }
 
 pub fn llmx_lookup_handler(store: &mut IndexStore, input: LookupInput) -> Result<LookupOutput> {
     let index = store.load(&input.index_id)?;
+    let readiness_tier = readiness_tier_for_index(index);
     let limit = input.limit.unwrap_or(20).min(200);
     let kind_filter = input.kind.as_deref().map(|kind| kind.to_ascii_lowercase());
     let chunk_map: std::collections::HashMap<&str, &crate::Chunk> = index
@@ -1250,11 +1406,13 @@ pub fn llmx_lookup_handler(store: &mut IndexStore, input: LookupInput) -> Result
     Ok(LookupOutput {
         matches: entries,
         total,
+        readiness_tier,
     })
 }
 
 pub fn llmx_refs_handler(store: &mut IndexStore, input: RefsInput) -> Result<RefsOutput> {
     let index = store.load(&input.index_id)?;
+    let readiness_tier = readiness_tier_for_index(index);
     let limit = input.limit.unwrap_or(20).min(200);
     let depth = input.depth.unwrap_or(1).clamp(1, 8);
     let direction = input.direction.to_ascii_lowercase();
@@ -1280,11 +1438,13 @@ pub fn llmx_refs_handler(store: &mut IndexStore, input: RefsInput) -> Result<Ref
     Ok(RefsOutput {
         total: refs.len(),
         refs,
+        readiness_tier,
     })
 }
 
 pub fn llmx_get_chunk_handler(store: &mut IndexStore, input: GetChunkInput) -> Result<Option<GetChunkOutput>> {
     let index = store.load(&input.index_id)?;
+    let readiness_tier = readiness_tier_for_index(index);
 
     let chunk = index.chunks.iter().find(|chunk| chunk.id == input.chunk_id)
         .or_else(|| {
@@ -1304,6 +1464,7 @@ pub fn llmx_get_chunk_handler(store: &mut IndexStore, input: GetChunkInput) -> R
         symbol: chunk.symbol.clone(),
         heading_path: chunk.heading_path.clone(),
         token_estimate: chunk.token_estimate,
+        readiness_tier,
     }))
 }
 
@@ -1571,6 +1732,8 @@ fn parse_ast_kind_filter(s: &str) -> crate::model::AstNodeKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{Chunk, ChunkKind, FileMeta, IndexFile, IndexStats, ResolutionTier, LanguageId, EdgeIndex, INDEX_VERSION};
+    use tempfile::tempdir;
 
     #[test]
     fn test_plan_search_strategy_auto_skips_semantic_for_symbol_queries() {
@@ -1617,5 +1780,129 @@ mod tests {
             embedding_downgrade_reason(&err),
             Some("index embeddings do not match the current runtime model")
         );
+    }
+
+    fn make_index(with_symbols: bool, with_embeddings: bool) -> IndexFile {
+        IndexFile {
+            version: INDEX_VERSION,
+            index_id: "status-test".to_string(),
+            files: vec![FileMeta {
+                path: "core/src/exec.rs".to_string(),
+                root_path: "/tmp/project".to_string(),
+                relative_path: "core/src/exec.rs".to_string(),
+                kind: ChunkKind::Unknown,
+                language: Some(LanguageId::Rust),
+                bytes: 16,
+                sha256: "abc".to_string(),
+                line_count: 1,
+                is_generated: false,
+                resolution_tier: ResolutionTier::GenericTreeSitter,
+                mtime_ms: None,
+                fingerprint_sha256: None,
+            }],
+            chunks: vec![Chunk {
+                id: "chunk-1".to_string(),
+                short_id: "chunk-1".to_string(),
+                slug: "exec".to_string(),
+                path: "core/src/exec.rs".to_string(),
+                root_path: "/tmp/project".to_string(),
+                relative_path: "core/src/exec.rs".to_string(),
+                kind: ChunkKind::Unknown,
+                language: Some(LanguageId::Rust),
+                chunk_index: 0,
+                start_line: 1,
+                end_line: 1,
+                content: "fn codex_exec() {}".to_string(),
+                content_hash: "def".to_string(),
+                token_estimate: 4,
+                heading_path: Vec::new(),
+                symbol: with_symbols.then(|| "codex_exec".to_string()),
+                address: None,
+                asset_path: None,
+                is_generated: false,
+                quality_score: None,
+                resolution_tier: ResolutionTier::GenericTreeSitter,
+                ast_kind: None,
+                qualified_name: None,
+                symbol_id: None,
+                symbol_tail: None,
+                signature: None,
+                module_path: None,
+                parent_symbol: None,
+                visibility: None,
+                imports: Vec::new(),
+                exports: Vec::new(),
+                calls: Vec::new(),
+                type_refs: Vec::new(),
+                doc_summary: None,
+            }],
+            chunk_refs: BTreeMap::new(),
+            inverted_index: BTreeMap::new(),
+            stats: IndexStats {
+                total_files: 1,
+                total_chunks: 1,
+                avg_chunk_chars: 16,
+                avg_chunk_tokens: 4,
+            },
+            warnings: vec![],
+            embeddings: with_embeddings.then(|| vec![vec![0.1, 0.2]]),
+            embedding_model: with_embeddings.then(|| "test-model".to_string()),
+            symbols: if with_symbols {
+                let mut symbols = BTreeMap::new();
+                symbols.insert(
+                    "codex_exec".to_string(),
+                    vec![crate::SymbolIndexEntry {
+                        chunk_id: "chunk-1".to_string(),
+                        name: "codex_exec".to_string(),
+                        qualified_name: "codex_exec".to_string(),
+                        ast_kind: crate::AstNodeKind::Function,
+                        path: "core/src/exec.rs".to_string(),
+                        start_line: 1,
+                        end_line: 1,
+                        signature: None,
+                        doc_summary: None,
+                        parent_symbol: None,
+                    }],
+                );
+                symbols
+            } else {
+                BTreeMap::new()
+            },
+            edges: EdgeIndex::default(),
+        }
+    }
+
+    #[test]
+    fn test_llmx_status_handler_reports_readiness_and_languages() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let mut store = IndexStore::new(temp_dir.path().to_path_buf())?;
+        store.save(make_index(true, true), "/tmp/project".to_string())?;
+        let jobs = crate::mcp::new_job_store();
+
+        let status = llmx_status_handler(&mut store, &jobs)?;
+        assert_eq!(status.readiness_tier, 3);
+        assert_eq!(status.files_indexed, 1);
+        assert_eq!(status.files_total, 1);
+        assert_eq!(status.symbols_indexed, 1);
+        assert!(status.embeddings_ready);
+        assert_eq!(status.languages, vec!["rust".to_string()]);
+        assert!(status.background_tasks.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_llmx_status_handler_tracks_background_jobs() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let mut store = IndexStore::new(temp_dir.path().to_path_buf())?;
+        store.save(make_index(false, false), "/tmp/project".to_string())?;
+        let jobs = crate::mcp::new_job_store();
+        jobs.lock().unwrap().insert("job-1".to_string(), crate::mcp::JobState::queued());
+
+        let status = llmx_status_handler(&mut store, &jobs)?;
+        assert_eq!(status.readiness_tier, 1);
+        assert_eq!(status.background_tasks.len(), 1);
+        assert_eq!(status.background_tasks[0].job_id, "job-1");
+        assert_eq!(status.background_tasks[0].status, "queued");
+        Ok(())
     }
 }

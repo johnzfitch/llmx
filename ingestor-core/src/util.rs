@@ -1,4 +1,4 @@
-use crate::model::{Chunk, ChunkKind};
+use crate::model::{Chunk, ChunkKind, LanguageId};
 use regex::Regex;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -33,6 +33,40 @@ pub fn detect_kind(path: &str) -> ChunkKind {
         Some("txt" | "log" | "jsonl" | "csv" | "ini" | "cfg" | "conf") => ChunkKind::Text,
         Some("png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp") => ChunkKind::Image,
         _ => ChunkKind::Unknown,
+    }
+}
+
+pub fn detect_language(path: &str) -> Option<LanguageId> {
+    use std::path::Path;
+
+    let ext = Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase());
+
+    match ext.as_deref() {
+        Some("rs") => Some(LanguageId::Rust),
+        Some("py") => Some(LanguageId::Python),
+        Some("ts") | Some("tsx") => Some(LanguageId::TypeScript),
+        Some("js") | Some("jsx") | Some("mjs") | Some("cjs") => Some(LanguageId::JavaScript),
+        Some("go") => Some(LanguageId::Go),
+        Some("java") => Some(LanguageId::Java),
+        Some("c") | Some("h") => Some(LanguageId::C),
+        Some("cpp") | Some("cc") | Some("cxx") | Some("hpp") | Some("hxx") => Some(LanguageId::Cpp),
+        Some("cs") => Some(LanguageId::CSharp),
+        Some("rb") => Some(LanguageId::Ruby),
+        Some("php") => Some(LanguageId::Php),
+        Some("swift") => Some(LanguageId::Swift),
+        Some("sh") | Some("bash") | Some("zsh") => Some(LanguageId::Shell),
+        Some("sql") => Some(LanguageId::Sql),
+        Some("html") | Some("htm") => Some(LanguageId::Html),
+        Some("css") | Some("scss") | Some("sass") | Some("less") => Some(LanguageId::Css),
+        Some("json") | Some("jsonl") => Some(LanguageId::Json),
+        Some("md") | Some("markdown") => Some(LanguageId::Markdown),
+        Some("toml") => Some(LanguageId::Toml),
+        Some("yaml") | Some("yml") => Some(LanguageId::Yaml),
+        Some(other) => Some(LanguageId::Other(other.to_string())),
+        None => None,
     }
 }
 

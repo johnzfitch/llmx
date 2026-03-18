@@ -1,0 +1,83 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x86_64
+            archive_ext: tar.gz
+          - os: macos-latest
+            platform: macos-arm64
+            archive_ext: tar.gz
+          - os: windows-latest
+            platform: windows-x86_64
+            archive_ext: zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Prime embedding assets
+        run: cargo test -p ingestor-wasm --lib --no-run
+
+      - name: Build release binaries
+        run: cargo build --release -p llmx-mcp --bin llmx --bin llmx-mcp --features cli,mcp
+
+      - name: Package release archive (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME}"
+          ROOT="dist/llmx-${VERSION}-${{ matrix.platform }}"
+          mkdir -p "${ROOT}"
+          cp target/release/llmx "${ROOT}/"
+          cp target/release/llmx-mcp "${ROOT}/"
+          cp README.md LICENSE "${ROOT}/"
+          tar -C dist -czf "llmx-${VERSION}-${{ matrix.platform }}.${{ matrix.archive_ext }}" "llmx-${VERSION}-${{ matrix.platform }}"
+          shasum -a 256 "llmx-${VERSION}-${{ matrix.platform }}.${{ matrix.archive_ext }}" > "llmx-${VERSION}-${{ matrix.platform }}.${{ matrix.archive_ext }}.sha256"
+
+      - name: Package release archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME
+          $root = "dist/llmx-$version-${{ matrix.platform }}"
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          Copy-Item "target/release/llmx.exe" "$root/llmx.exe"
+          Copy-Item "target/release/llmx-mcp.exe" "$root/llmx-mcp.exe"
+          Copy-Item "README.md" "$root/README.md"
+          Copy-Item "LICENSE" "$root/LICENSE"
+          Compress-Archive -Path $root -DestinationPath "llmx-$version-${{ matrix.platform }}.${{ matrix.archive_ext }}" -Force
+          $hash = (Get-FileHash "llmx-$version-${{ matrix.platform }}.${{ matrix.archive_ext }}" -Algorithm SHA256).Hash.ToLower()
+          "$hash  llmx-$version-${{ matrix.platform }}.${{ matrix.archive_ext }}" | Out-File -FilePath "llmx-$version-${{ matrix.platform }}.${{ matrix.archive_ext }}.sha256" -Encoding ascii
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            llmx-${{ github.ref_name }}-${{ matrix.platform }}.${{ matrix.archive_ext }}
+            llmx-${{ github.ref_name }}-${{ matrix.platform }}.${{ matrix.archive_ext }}.sha256
