@@ -29,10 +29,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run CLI integration tests
-        run: cargo test -p llmx-mcp --features cli --test cli_tests -- --nocapture
+        run: cargo test -p llmx-mcp --no-default-features --features cli,treesitter,mcp --test cli_tests -- --nocapture
 
       - name: Compile MCP tests
-        run: cargo test -p llmx-mcp --features mcp --test mcp_tests --no-run
+        run: cargo test -p llmx-mcp --no-default-features --features treesitter,mcp --test mcp_tests --no-run
 
       - name: Check crate package contents
         run: cargo package -p llmx-mcp --allow-dirty --list
