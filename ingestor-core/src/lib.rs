@@ -67,10 +67,8 @@ pub fn default_storage_dir() -> PathBuf {
         .join("llmx")
         .join("indexes");
 
-    // Ensure the target directory structure exists
-    if let Some(parent) = new_dir.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
+    // Ensure the target directory exists before migration writes into it
+    let _ = std::fs::create_dir_all(&new_dir);
 
     // Collect legacy paths that contain a registry
     let legacy_paths: Vec<PathBuf> = dirs::home_dir()
@@ -140,7 +138,10 @@ fn migrate_legacy_store(src: &Path, dest: &Path) {
 
         for (key, meta) in src_indexes {
             // Get the index id to find the corresponding .json file
-            let index_id = meta.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let index_id = meta.get("index_id")
+                .or_else(|| meta.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             if index_id.is_empty() {
                 continue;
             }
