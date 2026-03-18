@@ -28,9 +28,6 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Prime embedding assets
-        run: cargo test -p ingestor-wasm --lib --no-run
-
       - name: Run CLI integration tests
         run: cargo test -p llmx-mcp --features cli --test cli_tests -- --nocapture
 
