@@ -7,13 +7,9 @@
 //! - Timeout protection (max 30 seconds)
 //! - Respects .gitignore patterns
 
-use crate::handlers::ALLOWED_EXTENSIONS;
-use crate::FileInput;
+use crate::walk::{collect_files, WalkConfig};
 use anyhow::Result;
-use ignore::WalkBuilder;
-use std::fs;
 use std::path::Path;
-use std::time::{Instant, SystemTime};
 
 /// Safety limits for dynamic file walking.
 #[derive(Debug, Clone)]
@@ -42,22 +38,7 @@ impl Default for SafetyLimits {
     }
 }
 
-/// Statistics from a file walk operation.
-#[derive(Debug, Clone, Default)]
-pub struct WalkStats {
-    /// Number of files processed
-    pub file_count: usize,
-    /// Total bytes read
-    pub total_bytes: usize,
-    /// Number of files skipped (size, extension, etc.)
-    pub skipped_count: usize,
-    /// Whether the walk was truncated due to limits
-    pub truncated: bool,
-    /// Reason for truncation if any
-    pub truncation_reason: Option<String>,
-    /// Elapsed time in milliseconds
-    pub elapsed_ms: u64,
-}
+pub type WalkStats = crate::walk::WalkStats;
 
 /// Known dangerous paths that should be rejected without --force.
 const DANGEROUS_PATHS: &[&str] = &[
@@ -153,114 +134,15 @@ pub fn find_project_root(start: &Path) -> Option<std::path::PathBuf> {
 /// Perform a safe file walk with limits and .gitignore awareness.
 ///
 /// Uses the `ignore` crate (same as ripgrep) for fast, .gitignore-respecting traversal.
-pub fn dynamic_walk(root: &Path, limits: &SafetyLimits) -> Result<(Vec<FileInput>, WalkStats)> {
-    let start = Instant::now();
-    let timeout = std::time::Duration::from_secs(limits.timeout_secs);
-
-    let mut files = Vec::new();
-    let mut stats = WalkStats::default();
-
-    // Build the walker with gitignore support
-    let mut builder = WalkBuilder::new(root);
-    builder
-        .max_depth(Some(limits.max_depth))
-        .hidden(true) // Skip hidden files/dirs
-        .git_ignore(limits.respect_gitignore)
-        .git_global(limits.respect_gitignore)
-        .git_exclude(limits.respect_gitignore)
-        .ignore(true) // Also respect .ignore files
-        .follow_links(false) // Don't follow symlinks for safety
-        .same_file_system(true); // Stay on same filesystem
-
-    let walker = builder.build();
-
-    for entry in walker {
-        // Check timeout
-        if start.elapsed() > timeout {
-            stats.truncated = true;
-            stats.truncation_reason = Some("timeout".to_string());
-            break;
-        }
-
-        // Check file count limit
-        if stats.file_count >= limits.max_files {
-            stats.truncated = true;
-            stats.truncation_reason = Some("file_limit".to_string());
-            break;
-        }
-
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => {
-                stats.skipped_count += 1;
-                continue;
-            }
-        };
-
-        // Only process files, not directories
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-
-        // Check extension whitelist
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
-        if !ALLOWED_EXTENSIONS.contains(&ext) {
-            stats.skipped_count += 1;
-            continue;
-        }
-
-        // Get file metadata
-        let metadata = match fs::metadata(path) {
-            Ok(m) => m,
-            Err(_) => {
-                stats.skipped_count += 1;
-                continue;
-            }
-        };
-
-        let file_size = metadata.len() as usize;
-
-        // Check total bytes limit
-        if stats.total_bytes + file_size > limits.max_total_bytes {
-            stats.truncated = true;
-            stats.truncation_reason = Some("size_limit".to_string());
-            break;
-        }
-
-        // Read the file
-        let data = match fs::read(path) {
-            Ok(d) => d,
-            Err(_) => {
-                stats.skipped_count += 1;
-                continue;
-            }
-        };
-
-        // Get mtime for cache invalidation
-        let mtime_ms = metadata
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-            .map(|d| d.as_millis() as u64);
-
-        files.push(FileInput {
-            path: path.to_string_lossy().to_string(),
-            data,
-            mtime_ms,
-            fingerprint_sha256: None,
-        });
-
-        stats.file_count += 1;
-        stats.total_bytes += file_size;
-    }
-
-    stats.elapsed_ms = start.elapsed().as_millis() as u64;
-
-    Ok((files, stats))
+pub fn dynamic_walk(root: &Path, limits: &SafetyLimits) -> Result<(Vec<crate::FileInput>, WalkStats)> {
+    let config = WalkConfig {
+        max_depth: limits.max_depth,
+        max_files: limits.max_files,
+        max_total_bytes: limits.max_total_bytes,
+        timeout_secs: limits.timeout_secs,
+        respect_gitignore: limits.respect_gitignore,
+    };
+    collect_files(root, root, &config)
 }
 
 #[cfg(test)]

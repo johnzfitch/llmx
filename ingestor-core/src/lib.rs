@@ -6,7 +6,9 @@ mod export;
 pub mod handlers;
 mod index;
 mod model;
+pub mod pathnorm;
 pub mod util;
+pub mod walk;
 
 #[cfg(feature = "mcp")]
 pub mod mcp;
@@ -36,7 +38,8 @@ pub use crate::model::*;
 use crate::query::{classify_intent, expand_synonyms, explain_match, weights_for_intent};
 use crate::rrf::{to_ranked_results, weighted_rrf_fusion, RrfConfig};
 use crate::symbol_search::symbol_search;
-use crate::util::{build_chunk_refs, detect_kind, sha256_hex};
+use crate::pathnorm::{infer_root_path, normalize_root_path};
+use crate::util::{build_chunk_refs, detect_kind, detect_language, sha256_hex};
 use crate::graph::build_structural_indexes;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -226,80 +229,157 @@ fn is_dir_empty(path: &Path) -> bool {
         .unwrap_or(true)
 }
 
-pub fn ingest_files(mut files: Vec<FileInput>, options: IngestOptions) -> IndexFile {
+fn prepare_root_path(files: &[FileInput], root_hint: Option<&Path>) -> String {
+    if let Some(root) = root_hint {
+        return normalize_root_path(root);
+    }
+
+    let absolute_paths: Vec<PathBuf> = files
+        .iter()
+        .map(|file| PathBuf::from(&file.path))
+        .filter(|path| path.is_absolute())
+        .collect();
+
+    infer_root_path(&absolute_paths)
+        .map(|root| normalize_root_path(&root))
+        .unwrap_or_default()
+}
+
+fn stamp_chunk_metadata(
+    chunks: &mut [Chunk],
+    root_path: &str,
+    path: &str,
+    language: Option<LanguageId>,
+    resolution_tier: ResolutionTier,
+) {
+    for chunk in chunks {
+        chunk.path = path.to_string();
+        chunk.root_path = root_path.to_string();
+        chunk.relative_path = path.to_string();
+        chunk.language = language.clone();
+        chunk.resolution_tier = resolution_tier;
+    }
+}
+
+fn ingest_one_file(
+    file: FileInput,
+    options: &IngestOptions,
+    root_path: &str,
+    warnings: &mut Vec<IngestWarning>,
+) -> Option<(FileMeta, Vec<Chunk>, usize)> {
+    let path = file.path;
+    let data = file.data;
+    let mtime_ms = file.mtime_ms;
+    let fingerprint_sha256 = file.fingerprint_sha256;
+
+    if data.len() > options.max_file_bytes {
+        warnings.push(IngestWarning {
+            path: path.clone(),
+            code: "max_file_bytes".to_string(),
+            message: "File size limit exceeded; file skipped.".to_string(),
+        });
+        return None;
+    }
+
+    let kind = detect_kind(&path);
+    let language = detect_language(&path);
+    let resolution_tier = if language.is_some() {
+        ResolutionTier::GenericTreeSitter
+    } else {
+        ResolutionTier::TextOnly
+    };
+    let file_hash = sha256_hex(&data);
+    let bytes_len = data.len();
+
+    let (line_count, mut file_chunks) = if kind == ChunkKind::Image {
+        let mut chunks = chunk::chunk_file(&path, "", kind, options);
+        for chunk in &mut chunks {
+            chunk.asset_path = Some(format!("images/{}", sanitize_zip_path(&path)));
+        }
+        (1usize, chunks)
+    } else {
+        let text = match String::from_utf8(data) {
+            Ok(text) => text,
+            Err(_) => {
+                warnings.push(IngestWarning {
+                    path: path.clone(),
+                    code: "utf8".to_string(),
+                    message: "File is not valid UTF-8; file skipped.".to_string(),
+                });
+                return None;
+            }
+        };
+        let line_count = text.lines().count().max(1);
+        (line_count, chunk::chunk_file(&path, &text, kind, options))
+    };
+
+    if file_chunks.len() > options.max_chunks_per_file {
+        warnings.push(IngestWarning {
+            path: path.clone(),
+            code: "max_chunks_per_file".to_string(),
+            message: "Chunk limit exceeded; file truncated.".to_string(),
+        });
+        file_chunks.truncate(options.max_chunks_per_file);
+    }
+
+    stamp_chunk_metadata(&mut file_chunks, root_path, &path, language.clone(), resolution_tier);
+
+    Some((
+        FileMeta {
+            path: path.clone(),
+            root_path: root_path.to_string(),
+            relative_path: path,
+            kind,
+            language,
+            bytes: bytes_len,
+            sha256: file_hash,
+            line_count,
+            is_generated: false,
+            resolution_tier,
+            mtime_ms,
+            fingerprint_sha256,
+        },
+        file_chunks,
+        bytes_len,
+    ))
+}
+
+pub fn ingest_files(files: Vec<FileInput>, options: IngestOptions) -> IndexFile {
+    ingest_files_with_root(files, options, None)
+}
+
+pub fn ingest_files_with_root(
+    mut files: Vec<FileInput>,
+    options: IngestOptions,
+    root_hint: Option<&Path>,
+) -> IndexFile {
     files.sort_by(|a, b| a.path.cmp(&b.path));
 
+    let root_path = prepare_root_path(&files, root_hint);
     let mut warnings = Vec::new();
     let mut total_bytes = 0usize;
     let mut file_metas = Vec::new();
     let mut chunks = Vec::new();
 
     for file in files {
-        let path = file.path;
-        let data = file.data;
-        let mtime_ms = file.mtime_ms;
-        let fingerprint_sha256 = file.fingerprint_sha256;
-        if total_bytes + data.len() > options.max_total_bytes {
+        if total_bytes + file.data.len() > options.max_total_bytes {
             warnings.push(IngestWarning {
-                path: path.clone(),
+                path: file.path.clone(),
                 code: "max_total_bytes".to_string(),
                 message: "Total size limit exceeded; file skipped.".to_string(),
             });
             continue;
         }
-        if data.len() > options.max_file_bytes {
-            warnings.push(IngestWarning {
-                path: path.clone(),
-                code: "max_file_bytes".to_string(),
-                message: "File size limit exceeded; file skipped.".to_string(),
-            });
-            continue;
-        }
-        total_bytes += data.len();
-        let kind = detect_kind(&path);
-        let file_hash = sha256_hex(&data);
-        let bytes_len = data.len();
 
-        let (line_count, mut file_chunks) = if kind == ChunkKind::Image {
-            let mut chunks = chunk::chunk_file(&path, "", kind, &options);
-            for chunk in &mut chunks {
-                chunk.asset_path = Some(format!("images/{}", sanitize_zip_path(&path)));
-            }
-            (1usize, chunks)
-        } else {
-            let text = match String::from_utf8(data) {
-                Ok(text) => text,
-                Err(_) => {
-                    warnings.push(IngestWarning {
-                        path: path.clone(),
-                        code: "utf8".to_string(),
-                        message: "File is not valid UTF-8; file skipped.".to_string(),
-                    });
-                    continue;
-                }
-            };
-            let line_count = text.lines().count().max(1);
-            (line_count, chunk::chunk_file(&path, &text, kind, &options))
+        let Some((file_meta, file_chunks, bytes_len)) =
+            ingest_one_file(file, &options, &root_path, &mut warnings)
+        else {
+            continue;
         };
 
-        if file_chunks.len() > options.max_chunks_per_file {
-            warnings.push(IngestWarning {
-                path: path.clone(),
-                code: "max_chunks_per_file".to_string(),
-                message: "Chunk limit exceeded; file truncated.".to_string(),
-            });
-            file_chunks.truncate(options.max_chunks_per_file);
-        }
+        total_bytes += bytes_len;
         chunks.extend(file_chunks);
-        file_metas.push(FileMeta {
-            path,
-            kind,
-            bytes: bytes_len,
-            sha256: file_hash,
-            line_count,
-            mtime_ms,
-            fingerprint_sha256,
-        });
+        file_metas.push(file_meta);
     }
 
     chunks.sort_by(|a, b| match a.path.cmp(&b.path) {
@@ -328,33 +408,20 @@ pub fn update_index(prev: IndexFile, files: Vec<FileInput>, options: IngestOptio
     let mut warnings = Vec::new();
     let mut file_metas = Vec::new();
     let mut chunks = Vec::new();
+    let root_path = prepare_root_path(&new_files, None);
     let mut total_bytes = 0usize;
 
     for file in new_files {
-        let path = file.path;
-        let data = file.data;
-        let mtime_ms = file.mtime_ms;
-        let fingerprint_sha256 = file.fingerprint_sha256;
-        if total_bytes + data.len() > options.max_total_bytes {
+        if total_bytes + file.data.len() > options.max_total_bytes {
             warnings.push(IngestWarning {
-                path: path.clone(),
+                path: file.path.clone(),
                 code: "max_total_bytes".to_string(),
                 message: "Total size limit exceeded; file skipped.".to_string(),
             });
             continue;
         }
-        if data.len() > options.max_file_bytes {
-            warnings.push(IngestWarning {
-                path: path.clone(),
-                code: "max_file_bytes".to_string(),
-                message: "File size limit exceeded; file skipped.".to_string(),
-            });
-            continue;
-        }
-        total_bytes += data.len();
-        let kind = detect_kind(&path);
-        let file_hash = sha256_hex(&data);
-        let bytes_len = data.len();
+        let path = file.path.clone();
+        let file_hash = sha256_hex(&file.data);
         if let Some((meta, existing_chunks)) = prev_map.get(&path) {
             if meta.sha256 == file_hash {
                 file_metas.push(meta.clone());
@@ -362,47 +429,15 @@ pub fn update_index(prev: IndexFile, files: Vec<FileInput>, options: IngestOptio
                 continue;
             }
         }
-
-        let (line_count, mut file_chunks) = if kind == ChunkKind::Image {
-            let mut chunks = chunk::chunk_file(&path, "", kind, &options);
-            for chunk in &mut chunks {
-                chunk.asset_path = Some(format!("images/{}", sanitize_zip_path(&path)));
-            }
-            (1usize, chunks)
-        } else {
-            let text = match String::from_utf8(data) {
-                Ok(text) => text,
-                Err(_) => {
-                    warnings.push(IngestWarning {
-                        path: path.clone(),
-                        code: "utf8".to_string(),
-                        message: "File is not valid UTF-8; file skipped.".to_string(),
-                    });
-                    continue;
-                }
-            };
-            let line_count = text.lines().count().max(1);
-            (line_count, chunk::chunk_file(&path, &text, kind, &options))
+        let Some((file_meta, file_chunks, bytes_len)) =
+            ingest_one_file(file, &options, &root_path, &mut warnings)
+        else {
+            continue;
         };
 
-        if file_chunks.len() > options.max_chunks_per_file {
-            warnings.push(IngestWarning {
-                path: path.clone(),
-                code: "max_chunks_per_file".to_string(),
-                message: "Chunk limit exceeded; file truncated.".to_string(),
-            });
-            file_chunks.truncate(options.max_chunks_per_file);
-        }
+        total_bytes += bytes_len;
         chunks.extend(file_chunks);
-        file_metas.push(FileMeta {
-            path,
-            kind,
-            bytes: bytes_len,
-            sha256: file_hash,
-            line_count,
-            mtime_ms,
-            fingerprint_sha256,
-        });
+        file_metas.push(file_meta);
     }
 
     chunks.sort_by(|a, b| match a.path.cmp(&b.path) {
@@ -433,6 +468,9 @@ pub fn update_index_selective(
     let mut warnings = Vec::new();
     let mut file_metas = Vec::new();
     let mut chunks = Vec::new();
+    let mut new_files = files;
+    new_files.sort_by(|a, b| a.path.cmp(&b.path));
+    let root_path = prepare_root_path(&new_files, None);
 
     let mut keep_paths_sorted = keep_paths;
     keep_paths_sorted.sort();
@@ -445,36 +483,18 @@ pub fn update_index_selective(
         }
     }
 
-    let mut new_files = files;
-    new_files.sort_by(|a, b| a.path.cmp(&b.path));
-
     let mut total_bytes = 0usize;
     for file in new_files {
-        let path = file.path;
-        let data = file.data;
-        let mtime_ms = file.mtime_ms;
-        let fingerprint_sha256 = file.fingerprint_sha256;
-        if total_bytes + data.len() > options.max_total_bytes {
+        if total_bytes + file.data.len() > options.max_total_bytes {
             warnings.push(IngestWarning {
-                path: path.clone(),
+                path: file.path.clone(),
                 code: "max_total_bytes".to_string(),
                 message: "Total size limit exceeded; file skipped.".to_string(),
             });
             continue;
         }
-        if data.len() > options.max_file_bytes {
-            warnings.push(IngestWarning {
-                path: path.clone(),
-                code: "max_file_bytes".to_string(),
-                message: "File size limit exceeded; file skipped.".to_string(),
-            });
-            continue;
-        }
-        total_bytes += data.len();
-
-        let kind = detect_kind(&path);
-        let file_hash = sha256_hex(&data);
-        let bytes_len = data.len();
+        let path = file.path.clone();
+        let file_hash = sha256_hex(&file.data);
 
         if let Some((meta, existing_chunks)) = prev_map.get(&path) {
             if meta.sha256 == file_hash {
@@ -483,47 +503,15 @@ pub fn update_index_selective(
                 continue;
             }
         }
-
-        let (line_count, mut file_chunks) = if kind == ChunkKind::Image {
-            let mut chunks = chunk::chunk_file(&path, "", kind, &options);
-            for chunk in &mut chunks {
-                chunk.asset_path = Some(format!("images/{}", sanitize_zip_path(&path)));
-            }
-            (1usize, chunks)
-        } else {
-            let text = match String::from_utf8(data) {
-                Ok(text) => text,
-                Err(_) => {
-                    warnings.push(IngestWarning {
-                        path: path.clone(),
-                        code: "utf8".to_string(),
-                        message: "File is not valid UTF-8; file skipped.".to_string(),
-                    });
-                    continue;
-                }
-            };
-            let line_count = text.lines().count().max(1);
-            (line_count, chunk::chunk_file(&path, &text, kind, &options))
+        let Some((file_meta, file_chunks, bytes_len)) =
+            ingest_one_file(file, &options, &root_path, &mut warnings)
+        else {
+            continue;
         };
 
-        if file_chunks.len() > options.max_chunks_per_file {
-            warnings.push(IngestWarning {
-                path: path.clone(),
-                code: "max_chunks_per_file".to_string(),
-                message: "Chunk limit exceeded; file truncated.".to_string(),
-            });
-            file_chunks.truncate(options.max_chunks_per_file);
-        }
+        total_bytes += bytes_len;
         chunks.extend(file_chunks);
-        file_metas.push(FileMeta {
-            path,
-            kind,
-            bytes: bytes_len,
-            sha256: file_hash,
-            line_count,
-            mtime_ms,
-            fingerprint_sha256,
-        });
+        file_metas.push(file_meta);
     }
 
     file_metas.sort_by(|a, b| a.path.cmp(&b.path));

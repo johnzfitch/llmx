@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub const INDEX_VERSION: u32 = 2;
+pub const INDEX_VERSION: u32 = 3;
 pub const DEFAULT_MAX_FILE_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -13,6 +13,50 @@ pub struct FileInput {
     pub mtime_ms: Option<u64>,
     #[serde(default)]
     pub fingerprint_sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum LanguageId {
+    Rust,
+    Python,
+    TypeScript,
+    JavaScript,
+    Go,
+    Java,
+    C,
+    Cpp,
+    CSharp,
+    Ruby,
+    Php,
+    Swift,
+    Shell,
+    Sql,
+    Html,
+    Css,
+    Json,
+    Markdown,
+    Toml,
+    Yaml,
+    Other(String),
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ResolutionTier {
+    StackGraph,
+    QueryPack,
+    GenericTreeSitter,
+    #[default]
+    TextOnly,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum Visibility {
+    Pub,
+    Crate,
+    Private,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,7 +98,13 @@ pub struct Chunk {
     pub short_id: String,
     pub slug: String,
     pub path: String,
+    #[serde(default)]
+    pub root_path: String,
+    #[serde(default)]
+    pub relative_path: String,
     pub kind: ChunkKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<LanguageId>,
     pub chunk_index: usize,
     pub start_line: usize,
     pub end_line: usize,
@@ -66,6 +116,12 @@ pub struct Chunk {
     pub address: Option<String>,
     #[serde(default)]
     pub asset_path: Option<String>,
+    #[serde(default)]
+    pub is_generated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality_score: Option<u16>,
+    #[serde(default)]
+    pub resolution_tier: ResolutionTier,
 
     // Phase 7: Structural metadata for code intelligence
     /// AST node kind (function, class, method, module, import, type, etc.)
@@ -74,12 +130,24 @@ pub struct Chunk {
     /// Fully qualified symbol name: "auth::jwt::verify_token"
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub qualified_name: Option<String>,
+    /// Stable symbol identity for cross-file lookup and graph traversal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol_id: Option<String>,
+    /// Final segment of the qualified symbol for fuzzy/tail lookup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol_tail: Option<String>,
     /// Function/method signature: "fn verify_token(token: &str) -> Result<Claims>"
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
+    /// Language-specific module/namespace path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub module_path: Option<String>,
     /// Parent scope symbol: "auth::jwt" or enclosing class/module
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_symbol: Option<String>,
+    /// Public API visibility when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visibility: Option<Visibility>,
     /// Symbols imported or referenced by this chunk
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub imports: Vec<String>,
@@ -120,10 +188,20 @@ pub enum AstNodeKind {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileMeta {
     pub path: String,
+    #[serde(default)]
+    pub root_path: String,
+    #[serde(default)]
+    pub relative_path: String,
     pub kind: ChunkKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<LanguageId>,
     pub bytes: usize,
     pub sha256: String,
     pub line_count: usize,
+    #[serde(default)]
+    pub is_generated: bool,
+    #[serde(default)]
+    pub resolution_tier: ResolutionTier,
     #[serde(default)]
     pub mtime_ms: Option<u64>,
     #[serde(default)]

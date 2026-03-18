@@ -15,59 +15,24 @@ pub use safety::{
 };
 pub use storage::{IndexMetadata, IndexStore, Registry};
 pub use types::*;
+pub use crate::walk::{ALLOWED_DOTFILES, ALLOWED_EXTENSIONS};
 
 use crate::{
     graph::{ast_kind_label, canonical_symbol_key, normalize_symbol_key, raw_symbol_key, CodeGraph},
-    ingest_files, search, search_advanced, Edge, EdgeKind, FileInput, IndexFile, IngestOptions,
+    ingest_files_with_root, search, search_advanced, Edge, EdgeKind, IndexFile, IngestOptions,
     QueryIntent, SearchFilters, SymbolIndexEntry, DEFAULT_MAX_FILE_BYTES,
 };
 use crate::query::classify_intent;
+use crate::walk::{collect_input_files, WalkConfig};
 #[cfg(feature = "embeddings")]
 use crate::vector_search;
 #[cfg(feature = "embeddings")]
 use crate::HybridStrategy;
 use anyhow::{Context, Result};
 use std::collections::{HashMap, HashSet};
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 const DEFAULT_MAX_TOKENS: usize = 8000;
-
-/// File extensions to include when indexing.
-pub const ALLOWED_EXTENSIONS: &[&str] = &[
-    // Rust
-    "rs",
-    // JavaScript/TypeScript
-    "js", "ts", "tsx", "jsx", "mjs", "cjs",
-    // Web
-    "html", "css", "scss", "sass", "less",
-    // Data
-    "json", "yaml", "yml", "toml",
-    // Documentation
-    "md", "txt",
-    // Python
-    "py",
-    // Go
-    "go",
-    // C/C++
-    "c", "cpp", "cc", "cxx", "h", "hpp", "hxx",
-    // Java
-    "java",
-    // Ruby
-    "rb",
-    // PHP
-    "php",
-    // Swift
-    "swift",
-    // Shell
-    "sh", "bash", "zsh",
-    // SQL
-    "sql",
-    // Data/Logs (note: .env excluded - commonly contains secrets)
-    "log", "jsonl", "csv", "xml", "ini", "cfg", "conf",
-];
-
-const MAX_WALK_DEPTH: usize = 50;
 
 /// Maximum results per search to prevent huge allocations from unbounded `limit`.
 pub const MAX_SEARCH_LIMIT: usize = 200;
@@ -90,10 +55,6 @@ enum SearchStrategyPlan {
     },
 }
 
-/// Dotfiles we allow indexing (no extension per `Path::extension()`).
-/// Note: `.env` is deliberately excluded -- commonly contains secrets.
-pub(crate) const ALLOWED_DOTFILES: &[&str] = &[".npmrc", ".nvmrc", ".editorconfig", ".gitignore"];
-
 /// Handler for `llmx_index` tool: Create or update codebase indexes.
 ///
 /// # Arguments
@@ -109,23 +70,14 @@ pub(crate) const ALLOWED_DOTFILES: &[&str] = &[".npmrc", ".nvmrc", ".editorconfi
 /// 4. Creates new index or updates existing one
 /// 5. Saves to disk and returns metadata
 pub fn llmx_index_handler(store: &mut IndexStore, input: IndexInput) -> Result<IndexOutput> {
-    let mut files = vec![];
-    for path_str in &input.paths {
-        let path = PathBuf::from(path_str)
-            .canonicalize()
-            .with_context(|| format!("Invalid path: {}", path_str))?;
-        let metadata = fs::symlink_metadata(&path)?;
-        if metadata.is_symlink() {
-            continue;
-        }
-        if metadata.is_dir() {
-            walk_directory(&path, &mut files)?;
-        } else if metadata.is_file() {
-            read_file(&path, &mut files)?;
-        }
-    }
-
-    let root_path = input.paths[0].clone();
+    let walk_config = WalkConfig {
+        max_depth: 50,
+        max_files: 100_000,
+        max_total_bytes: usize::MAX,
+        timeout_secs: 300,
+        respect_gitignore: true,
+    };
+    let (files, root_path, _) = collect_input_files(&input.paths, &walk_config)?;
     let existing_id = store.find_by_path(Path::new(&root_path));
 
     let options = IngestOptions {
@@ -150,7 +102,7 @@ pub fn llmx_index_handler(store: &mut IndexStore, input: IndexInput) -> Result<I
 
     let index = {
         #[cfg_attr(not(feature = "embeddings"), allow(unused_mut))]
-        let mut index = ingest_files(files, options);
+        let mut index = ingest_files_with_root(files, options, Some(Path::new(&root_path)));
         #[cfg(feature = "embeddings")]
         {
             if index.chunks.iter().any(|chunk| !chunk.content.trim().is_empty()) {
@@ -1066,7 +1018,7 @@ pub fn llmx_search_dynamic_handler(
 
     let index = {
         #[cfg_attr(not(feature = "embeddings"), allow(unused_mut))]
-        let mut index = ingest_files(files, options);
+        let mut index = ingest_files_with_root(files, options, Some(root.as_path()));
         #[cfg(feature = "embeddings")]
         {
             if input.use_semantic.unwrap_or(false)
@@ -1268,75 +1220,6 @@ fn perform_search(
         search_results.len(),
         notices,
     ))
-}
-
-// Helper functions
-
-pub(crate) fn walk_directory(path: &Path, files: &mut Vec<FileInput>) -> Result<()> {
-    walk_directory_inner(path, files, 0)
-}
-
-fn walk_directory_inner(path: &Path, files: &mut Vec<FileInput>, depth: usize) -> Result<()> {
-    if depth > MAX_WALK_DEPTH {
-        return Ok(());
-    }
-    for entry in fs::read_dir(path)? {
-        let entry = entry?;
-        let entry_path = entry.path();
-
-        // Use symlink_metadata to avoid following symlinks
-        let metadata = match fs::symlink_metadata(&entry_path) {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-        if metadata.is_symlink() {
-            continue;
-        }
-
-        if metadata.is_dir() {
-            if let Some(name) = entry_path.file_name().and_then(|n| n.to_str()) {
-                if name.starts_with('.')
-                    || matches!(name, "node_modules" | "target" | "dist" | "build")
-                {
-                    continue;
-                }
-            }
-            walk_directory_inner(&entry_path, files, depth + 1)?;
-        } else if metadata.is_file() {
-            read_file(&entry_path, files)?;
-        }
-    }
-    Ok(())
-}
-
-pub(crate) fn read_file(path: &Path, files: &mut Vec<FileInput>) -> Result<()> {
-    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-        if !ALLOWED_EXTENSIONS.contains(&ext) {
-            return Ok(());
-        }
-    } else if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-        if !ALLOWED_DOTFILES.contains(&name) {
-            return Ok(());
-        }
-    } else {
-        return Ok(());
-    }
-
-    let metadata = fs::metadata(path)?;
-    let data = fs::read(path)?;
-
-    files.push(FileInput {
-        path: path.to_string_lossy().to_string(),
-        data,
-        mtime_ms: metadata
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_millis() as u64),
-        fingerprint_sha256: None,
-    });
-
-    Ok(())
 }
 
 fn parse_chunk_kind(s: &str) -> Option<crate::ChunkKind> {
