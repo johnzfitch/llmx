@@ -1,0 +1,24 @@
+# Maintainer: Zack <zack@internetuniverse.org>
+pkgname=llmx-bin
+pkgver=VERSION_PLACEHOLDER
+pkgrel=1
+pkgdesc="Local-first codebase indexer with semantic search for LLM agents"
+arch=('x86_64' 'aarch64')
+url="https://github.com/johnzfitch/llmx"
+license=('MIT')
+provides=('llmx' 'llmx-mcp')
+conflicts=('llmx')
+options=('!strip')
+
+source_x86_64=("${pkgname}-${pkgver}-x86_64.tar.gz::https://github.com/johnzfitch/llmx/releases/download/v${pkgver}/llmx-v${pkgver}-linux-x86_64.tar.gz")
+source_aarch64=("${pkgname}-${pkgver}-aarch64.tar.gz::https://github.com/johnzfitch/llmx/releases/download/v${pkgver}/llmx-v${pkgver}-linux-aarch64.tar.gz")
+
+sha256sums_x86_64=('SHA256_LINUX_X86_64_PLACEHOLDER')
+sha256sums_aarch64=('SHA256_LINUX_AARCH64_PLACEHOLDER')
+
+package() {
+    cd "${srcdir}/llmx-v${pkgver}-linux-${CARCH}"
+    install -Dm755 llmx "${pkgdir}/usr/bin/llmx"
+    install -Dm755 llmx-mcp "${pkgdir}/usr/bin/llmx-mcp"
+    install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}

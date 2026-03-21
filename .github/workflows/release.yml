@@ -22,12 +22,23 @@ jobs:
         include:
           - os: ubuntu-latest
             platform: linux-x86_64
+            target: x86_64-unknown-linux-gnu
+            archive_ext: tar.gz
+          - os: ubuntu-24.04-arm
+            platform: linux-aarch64
+            target: aarch64-unknown-linux-gnu
+            archive_ext: tar.gz
+          - os: macos-13
+            platform: macos-x86_64
+            target: x86_64-apple-darwin
             archive_ext: tar.gz
           - os: macos-latest
             platform: macos-arm64
+            target: aarch64-apple-darwin
             archive_ext: tar.gz
           - os: windows-latest
             platform: windows-x86_64
+            target: x86_64-pc-windows-msvc
             archive_ext: zip
 
     steps:
@@ -81,3 +92,52 @@ jobs:
           files: |
             llmx-${{ github.ref_name }}-${{ matrix.platform }}.${{ matrix.archive_ext }}
             llmx-${{ github.ref_name }}-${{ matrix.platform }}.${{ matrix.archive_ext }}.sha256
+
+  homebrew:
+    name: Bump Homebrew Formula
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Update Homebrew formula
+        uses: dawidd6/action-homebrew-bump-formula@v4
+        with:
+          token: ${{ secrets.HOMEBREW_GITHUB_API_TOKEN }}
+          formula: llmx
+          tag: ${{ github.ref_name }}
+          revision: ${{ github.sha }}
+
+  aur:
+    name: Update AUR Package
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate PKGBUILD
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          V="${VERSION#v}"
+          BASE="https://github.com/johnzfitch/llmx/releases/download/$VERSION"
+
+          SHA_LINUX_X86_64=$(curl -fsSL "$BASE/llmx-$VERSION-linux-x86_64.tar.gz.sha256" | awk '{print $1}')
+          SHA_LINUX_AARCH64=$(curl -fsSL "$BASE/llmx-$VERSION-linux-aarch64.tar.gz.sha256" | awk '{print $1}')
+
+          sed -e "s/VERSION_PLACEHOLDER/$V/g" \
+              -e "s/SHA256_LINUX_X86_64_PLACEHOLDER/$SHA_LINUX_X86_64/g" \
+              -e "s/SHA256_LINUX_AARCH64_PLACEHOLDER/$SHA_LINUX_AARCH64/g" \
+              pkg/aur/PKGBUILD > PKGBUILD
+
+      - name: Publish to AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v3.0.1
+        with:
+          pkgname: llmx-bin
+          pkgbuild: ./PKGBUILD
+          commit_username: johnzfitch
+          commit_email: zack@internetuniverse.org
+          ssh_private_key: ${{ secrets.AUR_SSH_KEY }}
+          commit_message: "Update to ${{ github.ref_name }}"

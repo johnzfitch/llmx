@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "llmx": {
+      "command": "llmx-mcp"
+    }
+  }
+}

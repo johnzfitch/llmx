@@ -64,17 +64,73 @@ Agents can **scan headings, function names, and file types** to select relevant 
 
 ---
 
-## ![lightning](.github/assets/icons/lightning-24x24.png) Quick Start
+## ![download](.github/assets/icons/down-24x24.png) Installation
 
-> [!NOTE]
-> **CLI is recommended** for most use cases. Web UI requires WASM build.
+### From <abbr title="Rust package registry">crates.io</abbr>
+
+```bash
+cargo install --locked llmx-mcp
+```
+
+### Homebrew (macOS/Linux)
+
+```bash
+brew install johnzfitch/llmx/llmx
+```
+
+### Arch Linux (<abbr title="Arch User Repository">AUR</abbr>)
+
+```bash
+yay -S llmx-bin   # or paru, pakku, etc.
+```
+
+All methods install both `llmx` (CLI) and `llmx-mcp` (MCP server).
+
+<details>
+<summary>MCP Server Setup (Claude Code, Cursor, etc.)</summary>
+
+The repo includes `.mcp.json` for automatic MCP discovery. After installing:
+
+```bash
+# Clone the repo (for .mcp.json) or create your own:
+echo '{"mcpServers":{"llmx":{"command":"llmx-mcp"}}}' > .mcp.json
+```
+
+Then restart your MCP client. The server provides:
+
+<dl>
+  <dt><code>llmx_status</code></dt>
+  <dd>Index readiness, file counts, and background task progress</dd>
+  <dt><code>llmx_search</code></dt>
+  <dd>Semantic search with token-budgeted inline content</dd>
+  <dt><code>llmx_lookup</code></dt>
+  <dd>Exact symbol resolution by name</dd>
+  <dt><code>llmx_refs</code></dt>
+  <dd>Graph traversal &mdash; callers, callees, imports, type references</dd>
+</dl>
+
+</details>
+
+<details>
+<summary>Build from Source</summary>
+
+```bash
+git clone https://github.com/johnzfitch/llmx.git
+cd llmx
+cargo build --release --features cli,mcp
+```
+
+Binaries output to `target/release/llmx` and `target/release/llmx-mcp`.
+
+</details>
+
+---
+
+## ![lightning](.github/assets/icons/lightning-24x24.png) Quick Start
 
 ### CLI Usage
 
 ```bash
-# Build CLI
-cargo build --release --features cli
-
 # Index a codebase
 llmx index ./my-project
 
