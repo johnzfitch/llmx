@@ -498,7 +498,7 @@ impl ServerHandler for LlmxServer {
                 .build(),
             server_info: Implementation {
                 name: "llmx".to_string(),
-                version: "0.3.0".to_string(),
+                version: "2.1.0".to_string(),
             },
             instructions: Some("Structural code search and indexing MCP server. Use llmx_status first to inspect readiness and indexing quality, then query tools against the returned index state.".to_string()),
         }

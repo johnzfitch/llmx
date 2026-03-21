@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo install:*)",
+      "Bash(ln -sf /home/zack/dev/llmx/target/release/llmx-mcp ~/.cargo/bin/llmx-mcp)",
+      "Skill(github-grandpa)"
+    ]
+  }
+}
