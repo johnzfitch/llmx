@@ -425,9 +425,10 @@ fn resolve_index_id(store: &IndexStore, index_id: Option<&str>, loc: Option<&str
         return Ok(index_id.to_string());
     }
 
+    let cwd = std::env::current_dir().context("Could not get current directory")?;
     let requested = loc
         .map(PathBuf::from)
-        .unwrap_or(std::env::current_dir().context("Could not get current directory")?);
+        .unwrap_or(cwd.clone());
     let requested = requested.canonicalize().unwrap_or(requested);
     let root = if requested.is_file() {
         requested.parent().unwrap_or(requested.as_path()).to_path_buf()
@@ -437,9 +438,16 @@ fn resolve_index_id(store: &IndexStore, index_id: Option<&str>, loc: Option<&str
 
     if loc.is_some() {
         let mut cursor = root.clone();
+        let relative_boundary = loc
+            .map(Path::new)
+            .filter(|path| path.is_relative())
+            .map(|_| cwd.canonicalize().unwrap_or(cwd.clone()));
         loop {
             if let Some(index_id) = store.find_by_path(&cursor) {
                 return Ok(index_id);
+            }
+            if relative_boundary.as_ref() == Some(&cursor) {
+                break;
             }
             if !cursor.pop() {
                 break;
