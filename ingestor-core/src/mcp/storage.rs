@@ -307,7 +307,8 @@ impl IndexStore {
 
     /// Find index ID by root path
     pub fn find_by_path(&self, root: &Path) -> Option<String> {
-        let path_hash = Self::hash_path(&root.to_string_lossy());
+        let normalized = root.to_string_lossy().replace('\\', "/");
+        let path_hash = Self::hash_path(&normalized);
         self.registry.indexes.get(&path_hash)
             .map(|meta| meta.index_id.clone())
     }

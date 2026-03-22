@@ -2,6 +2,7 @@ mod generic;
 mod language;
 mod legacy;
 mod registry;
+#[cfg(test)]
 mod symbol_id;
 
 use crate::model::{Chunk, ChunkKind, IngestOptions};

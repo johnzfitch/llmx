@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use schemars::JsonSchema;
 use std::collections::BTreeMap;
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const DEFAULT_MAX_TOKENS: usize = 8000;
 
@@ -87,8 +87,12 @@ pub struct WarningOutput {
 #[derive(Debug, Deserialize)]
 #[cfg_attr(feature = "mcp", derive(JsonSchema))]
 pub struct SearchInput {
-    #[cfg_attr(feature = "mcp", schemars(description = "Index ID to search"))]
-    pub index_id: String,
+    #[serde(default)]
+    #[cfg_attr(feature = "mcp", schemars(description = "Index ID to search. Optional when loc or the current directory identifies an indexed project."))]
+    pub index_id: Option<String>,
+    #[serde(default, alias = "path")]
+    #[cfg_attr(feature = "mcp", schemars(description = "Filesystem location to resolve against. Defaults to the current directory when index_id is omitted."))]
+    pub loc: Option<String>,
     #[cfg_attr(feature = "mcp", schemars(description = "Search query"))]
     pub query: String,
     #[serde(default)]
@@ -135,8 +139,12 @@ pub struct SearchFiltersInput {
 #[derive(Debug, Deserialize)]
 #[cfg_attr(feature = "mcp", derive(JsonSchema))]
 pub struct ExploreInput {
-    #[cfg_attr(feature = "mcp", schemars(description = "Index ID to explore"))]
-    pub index_id: String,
+    #[serde(default)]
+    #[cfg_attr(feature = "mcp", schemars(description = "Index ID to explore. Optional when loc or the current directory identifies an indexed project."))]
+    pub index_id: Option<String>,
+    #[serde(default, alias = "path")]
+    #[cfg_attr(feature = "mcp", schemars(description = "Filesystem location to resolve against. Defaults to the current directory when index_id is omitted."))]
+    pub loc: Option<String>,
     #[cfg_attr(feature = "mcp", schemars(description = "What to list: 'files', 'outline', or 'symbols'"))]
     pub mode: String,
     #[serde(default)]
@@ -150,8 +158,11 @@ pub struct ManageInput {
     #[cfg_attr(feature = "mcp", schemars(description = "Action: 'list', 'delete', 'stats', or 'job_status'"))]
     pub action: String,
     #[serde(default)]
-    #[cfg_attr(feature = "mcp", schemars(description = "Index ID (required for delete or stats) or job ID (required for job_status)"))]
+    #[cfg_attr(feature = "mcp", schemars(description = "Index ID or folder path. Required for job_status (pass the job ID here). Optional for delete and stats when loc or the current directory identifies an indexed project."))]
     pub index_id: Option<String>,
+    #[serde(default, alias = "path")]
+    #[cfg_attr(feature = "mcp", schemars(description = "Filesystem location to resolve against for stats. Defaults to the current directory when index_id is omitted."))]
+    pub loc: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -234,8 +245,12 @@ pub struct ManageStatsOutput {
 #[derive(Debug, Deserialize)]
 #[cfg_attr(feature = "mcp", derive(JsonSchema))]
 pub struct SymbolsInput {
-    #[cfg_attr(feature = "mcp", schemars(description = "Index ID to query"))]
-    pub index_id: String,
+    #[serde(default)]
+    #[cfg_attr(feature = "mcp", schemars(description = "Index ID to query. Optional when loc or the current directory identifies an indexed project."))]
+    pub index_id: Option<String>,
+    #[serde(default, alias = "path")]
+    #[cfg_attr(feature = "mcp", schemars(description = "Filesystem location to resolve against. Defaults to the current directory when index_id is omitted."))]
+    pub loc: Option<String>,
     /// Name pattern: exact, prefix (ending with *), or substring (surrounded by *).
     #[serde(default)]
     #[cfg_attr(feature = "mcp", schemars(description = "Symbol name pattern: exact 'foo', prefix 'foo*', or substring '*foo*'"))]
@@ -289,8 +304,12 @@ pub struct SymbolsOutput {
 #[derive(Debug, Deserialize)]
 #[cfg_attr(feature = "mcp", derive(JsonSchema))]
 pub struct LookupInput {
-    #[cfg_attr(feature = "mcp", schemars(description = "Index ID to query"))]
-    pub index_id: String,
+    #[serde(default)]
+    #[cfg_attr(feature = "mcp", schemars(description = "Index ID to query. Optional when loc or the current directory identifies an indexed project."))]
+    pub index_id: Option<String>,
+    #[serde(default, alias = "path")]
+    #[cfg_attr(feature = "mcp", schemars(description = "Filesystem location to resolve against. Defaults to the current directory when index_id is omitted."))]
+    pub loc: Option<String>,
     #[cfg_attr(feature = "mcp", schemars(description = "Exact symbol or prefix pattern, for example 'parseConfig' or 'parse*'"))]
     pub symbol: String,
     #[serde(default)]
@@ -314,8 +333,12 @@ pub struct LookupOutput {
 #[derive(Debug, Deserialize)]
 #[cfg_attr(feature = "mcp", derive(JsonSchema))]
 pub struct RefsInput {
-    #[cfg_attr(feature = "mcp", schemars(description = "Index ID to query"))]
-    pub index_id: String,
+    #[serde(default)]
+    #[cfg_attr(feature = "mcp", schemars(description = "Index ID to query. Optional when loc or the current directory identifies an indexed project."))]
+    pub index_id: Option<String>,
+    #[serde(default, alias = "path")]
+    #[cfg_attr(feature = "mcp", schemars(description = "Filesystem location to resolve against. Defaults to the current directory when index_id is omitted."))]
+    pub loc: Option<String>,
     #[cfg_attr(feature = "mcp", schemars(description = "Symbol to trace references for"))]
     pub symbol: String,
     #[cfg_attr(feature = "mcp", schemars(description = "Direction: callers, callees, importers, imports, or type_users"))]
@@ -355,8 +378,12 @@ pub struct RefsOutput {
 #[derive(Debug, Deserialize)]
 #[cfg_attr(feature = "mcp", derive(JsonSchema))]
 pub struct GetChunkInput {
-    #[cfg_attr(feature = "mcp", schemars(description = "Index ID to query"))]
-    pub index_id: String,
+    #[serde(default)]
+    #[cfg_attr(feature = "mcp", schemars(description = "Index ID to query. Optional when loc or the current directory identifies an indexed project."))]
+    pub index_id: Option<String>,
+    #[serde(default, alias = "path")]
+    #[cfg_attr(feature = "mcp", schemars(description = "Filesystem location to resolve against. Defaults to the current directory when index_id is omitted."))]
+    pub loc: Option<String>,
     #[cfg_attr(feature = "mcp", schemars(description = "Chunk ID, chunk ref, or chunk ID prefix"))]
     pub chunk_id: String,
 }
@@ -391,6 +418,56 @@ enum SearchStrategyPlan {
         use_semantic: bool,
         intent: QueryIntent,
     },
+}
+
+fn resolve_index_id(store: &IndexStore, index_id: Option<&str>, loc: Option<&str>) -> Result<String> {
+    if let Some(index_id) = index_id {
+        return Ok(index_id.to_string());
+    }
+
+    let cwd = std::env::current_dir().context("Could not get current directory")?;
+    let requested = loc
+        .map(PathBuf::from)
+        .unwrap_or(cwd.clone());
+    let requested = requested.canonicalize().unwrap_or(requested);
+    let root = if requested.is_file() {
+        requested.parent().unwrap_or(requested.as_path()).to_path_buf()
+    } else {
+        requested.clone()
+    };
+
+    if loc.is_some() {
+        let mut cursor = root.clone();
+        let relative_boundary = loc
+            .map(Path::new)
+            .filter(|path| path.is_relative())
+            .map(|_| cwd.canonicalize().unwrap_or(cwd.clone()));
+        loop {
+            if let Some(index_id) = store.find_by_path(&cursor) {
+                return Ok(index_id);
+            }
+            if relative_boundary.as_ref() == Some(&cursor) {
+                break;
+            }
+            if !cursor.pop() {
+                break;
+            }
+        }
+    } else if let Some(index_id) = store.find_by_path(&root) {
+        return Ok(index_id);
+    }
+
+    if let Some(loc) = loc {
+        anyhow::bail!(
+            "No index found for location {}. Pass index_id explicitly or create an index for that project first.",
+            loc
+        );
+    }
+
+    anyhow::bail!(
+        "No index found for current directory {}. Pass loc or index_id, or create an index for this project first.",
+        root.display()
+    )
 }
 
 fn readiness_tier_for_index(index: &crate::IndexFile) -> u8 {
@@ -650,7 +727,8 @@ pub fn llmx_index_handler(store: &mut IndexStore, input: IndexInput) -> Result<I
 ///
 /// Returns error if index doesn't exist or chunk data is missing.
 pub fn llmx_search_handler(store: &mut IndexStore, input: SearchInput) -> Result<SearchOutput> {
-    let index = store.load(&input.index_id)?;
+    let index_id = resolve_index_id(store, input.index_id.as_deref(), input.loc.as_deref())?;
+    let index = store.load(&index_id)?;
     let readiness_tier = readiness_tier_for_index(index);
 
     // Build chunk lookup map once - O(n) instead of O(n*m) lookups
@@ -968,7 +1046,8 @@ fn parse_hybrid_strategy(value: Option<&str>) -> Result<HybridStrategy> {
 ///
 /// Returns error if index doesn't exist or mode is invalid.
 pub fn llmx_explore_handler(store: &mut IndexStore, input: ExploreInput) -> Result<ExploreOutput> {
-    let index = store.load(&input.index_id)?;
+    let index_id = resolve_index_id(store, input.index_id.as_deref(), input.loc.as_deref())?;
+    let index = store.load(&index_id)?;
     let readiness_tier = readiness_tier_for_index(index);
 
     let items: Vec<String> = match input.mode.as_str() {
@@ -1112,8 +1191,11 @@ pub fn llmx_manage_handler(store: &mut IndexStore, input: ManageInput) -> Result
             })
         }
         "delete" => {
-            let index_id = input.index_id
-                .context("index_id is required for delete action")?;
+            let index_id = match input.index_id {
+                Some(id) => id,
+                None => resolve_index_id(store, None, input.loc.as_deref())
+                    .context("index_id or loc is required for delete action")?,
+            };
             store.delete(&index_id)?;
             let readiness_tier = readiness_tier_for_store(store)?;
             Ok(ManageOutput {
@@ -1125,8 +1207,7 @@ pub fn llmx_manage_handler(store: &mut IndexStore, input: ManageInput) -> Result
             })
         }
         "stats" => {
-            let index_id = input.index_id
-                .context("index_id is required for stats action")?;
+            let index_id = resolve_index_id(store, input.index_id.as_deref(), input.loc.as_deref())?;
             let index = store.load(&index_id)?;
             let readiness_tier = readiness_tier_for_index(index);
             Ok(ManageOutput {
@@ -1254,7 +1335,8 @@ fn file_extension_label(path: &str) -> String {
 /// - `symbols`: Sorted by qualified_name; each entry has path, lines, signature, doc_summary, chunk_id
 /// - `total`: Count before limit
 pub fn llmx_symbols_handler(store: &mut IndexStore, input: SymbolsInput) -> Result<SymbolsOutput> {
-    let index = store.load(&input.index_id)?;
+    let index_id = resolve_index_id(store, input.index_id.as_deref(), input.loc.as_deref())?;
+    let index = store.load(&index_id)?;
     let readiness_tier = readiness_tier_for_index(index);
     let limit = input.limit.unwrap_or(50).min(500);
 
@@ -1326,7 +1408,8 @@ pub fn llmx_symbols_handler(store: &mut IndexStore, input: SymbolsInput) -> Resu
 }
 
 pub fn llmx_lookup_handler(store: &mut IndexStore, input: LookupInput) -> Result<LookupOutput> {
-    let index = store.load(&input.index_id)?;
+    let index_id = resolve_index_id(store, input.index_id.as_deref(), input.loc.as_deref())?;
+    let index = store.load(&index_id)?;
     let readiness_tier = readiness_tier_for_index(index);
     let limit = input.limit.unwrap_or(20).min(200);
     let kind_filter = input.kind.as_deref().map(|kind| kind.to_ascii_lowercase());
@@ -1411,7 +1494,8 @@ pub fn llmx_lookup_handler(store: &mut IndexStore, input: LookupInput) -> Result
 }
 
 pub fn llmx_refs_handler(store: &mut IndexStore, input: RefsInput) -> Result<RefsOutput> {
-    let index = store.load(&input.index_id)?;
+    let index_id = resolve_index_id(store, input.index_id.as_deref(), input.loc.as_deref())?;
+    let index = store.load(&index_id)?;
     let readiness_tier = readiness_tier_for_index(index);
     let limit = input.limit.unwrap_or(20).min(200);
     let depth = input.depth.unwrap_or(1).clamp(1, 8);
@@ -1443,7 +1527,8 @@ pub fn llmx_refs_handler(store: &mut IndexStore, input: RefsInput) -> Result<Ref
 }
 
 pub fn llmx_get_chunk_handler(store: &mut IndexStore, input: GetChunkInput) -> Result<Option<GetChunkOutput>> {
-    let index = store.load(&input.index_id)?;
+    let index_id = resolve_index_id(store, input.index_id.as_deref(), input.loc.as_deref())?;
+    let index = store.load(&index_id)?;
     let readiness_tier = readiness_tier_for_index(index);
 
     let chunk = index.chunks.iter().find(|chunk| chunk.id == input.chunk_id)

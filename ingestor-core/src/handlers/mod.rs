@@ -902,7 +902,7 @@ pub fn llmx_search_dynamic_handler(
     let root = if let Some(ref path) = input.path {
         path.canonicalize().unwrap_or_else(|_| path.clone())
     } else {
-        find_project_root(&cwd).unwrap_or(cwd.clone())
+        cwd.clone()
     };
 
     // Step 2: Check for persistent index first (unless force_dynamic)
