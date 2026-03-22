@@ -35,6 +35,7 @@ ignore = "0.4"  # .gitignore-aware file walking (same as ripgrep)
 lru = "0.16"    # LRU cache for dynamic index caching
 notify = "6"
 url = "2"
+strsim = "0.11" # Fuzzy string matching for command suggestions
 
 # Phase 6: Burn-based semantic embeddings (pure Rust, no C++ runtime)
 burn = { version = "0.21.0-pre.2", default-features = false, features = ["std"], optional = true }

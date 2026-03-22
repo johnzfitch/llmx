@@ -1,22 +1,22 @@
-//! llmx_mcp CLI - Codebase indexing and semantic search
+//! llmx CLI - Codebase indexing and semantic search
 //!
 //! A CLI for efficiently indexing and searching codebases with semantic chunking.
 //! Designed for both human users and AI agents.
 //!
 //! ## Dynamic Search (default)
 //!
-//! By default, `llmx_mcp search` auto-detects the project root and builds an in-memory
+//! By default, `llmx search` auto-detects the project root and builds an in-memory
 //! index on the fly. Results are cached for repeat queries.
 //!
 //! ```bash
-//! llmx_mcp search "handleError"              # Auto-detect project, use cache
-//! llmx_mcp search "handleError" --dynamic    # Force fresh dynamic index
-//! llmx_mcp search "handleError" --no-cache   # Skip cache, rebuild index
-//! llmx_mcp search "handleError" --path ./src # Explicit search path
+//! llmx search "handleError"              # Auto-detect project, use cache
+//! llmx search "handleError" --dynamic    # Force fresh dynamic index
+//! llmx search "handleError" --no-cache   # Skip cache, rebuild index
+//! llmx search "handleError" --path ./src # Explicit search path
 //! ```
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{error::ErrorKind, Parser, Subcommand};
 use llmx_mcp::handlers::{
     llmx_explore_handler, llmx_get_chunk_handler, llmx_index_handler, llmx_manage_handler,
     llmx_lookup_handler, llmx_refs_handler, llmx_search_dynamic_handler, llmx_search_handler,
@@ -32,7 +32,7 @@ use std::time::Instant;
 const DEFAULT_SEARCH_MAX_TOKENS: usize = 8000;
 
 #[derive(Parser)]
-#[command(name = "llmx_mcp", version, about = "Codebase indexing and semantic search")]
+#[command(name = "llmx", version, about = "Codebase indexing and semantic search")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -41,9 +41,9 @@ struct Cli {
     #[arg(long, global = true)]
     json: bool,
 
-    /// Target specific index ID (bypasses dynamic search)
-    #[arg(long, global = true)]
-    index_id: Option<String>,
+    /// Target specific index by ID (bypasses dynamic search)
+    #[arg(long, visible_alias = "index-id", global = true)]
+    index: Option<String>,
 
     /// Override storage directory (default: ~/.local/share/llmx/indexes)
     #[arg(long, global = true)]
@@ -52,17 +52,16 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Create or update persistent index from paths
+    /// Create or update persistent index from paths (default: current directory)
     Index {
-        /// File or directory paths to index
-        #[arg(required = true)]
+        /// File or directory paths to index (default: current directory)
         paths: Vec<PathBuf>,
 
         /// Target chunk size in characters (default: 4000)
         #[arg(long, default_value = "4000")]
         chunk_size: usize,
 
-        /// Maximum file size in bytes (default: 64MB)
+        /// Maximum file size in bytes (default: 256MB)
         #[arg(long, default_value_t = DEFAULT_MAX_FILE_BYTES)]
         max_file: usize,
     },
@@ -72,8 +71,8 @@ enum Commands {
     /// By default, auto-detects project root and uses dynamic indexing.
     /// Use --index-id to search a specific persistent index.
     Search {
-        /// Search query
-        query: String,
+        /// Search query (omit to see help and examples)
+        query: Option<String>,
 
         /// Search path (default: auto-detect project root)
         #[arg(long)]
@@ -227,7 +226,20 @@ enum Commands {
 }
 
 fn main() -> Result<()> {
-    let cli = Cli::parse();
+    // Handle fuzzy command matching for typos
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(e) => {
+            if e.kind() == ErrorKind::InvalidSubcommand {
+                if let Some(suggestion) = suggest_command(&std::env::args().collect::<Vec<_>>()) {
+                    eprintln!("{}\n", e);
+                    eprintln!("Did you mean: {}", suggestion);
+                    std::process::exit(1);
+                }
+            }
+            e.exit();
+        }
+    };
 
     let storage_dir = cli.storage_dir
         .unwrap_or_else(llmx_mcp::default_storage_dir);
@@ -240,7 +252,15 @@ fn main() -> Result<()> {
             paths,
             chunk_size,
             max_file,
-        } => cmd_index(&mut store, paths, chunk_size, max_file, cli.json),
+        } => {
+            // Default to current directory if no paths specified
+            let paths = if paths.is_empty() {
+                vec![std::env::current_dir().context("Could not get current directory")?]
+            } else {
+                paths
+            };
+            cmd_index(&mut store, paths, chunk_size, max_file, cli.json)
+        }
 
         Commands::Search {
             query,
@@ -257,29 +277,38 @@ fn main() -> Result<()> {
             hybrid_strategy,
             intent,
             explain,
-        } => cmd_search(
-            &mut store,
-            &mut cache,
-            &cli.index_id,
-            query,
-            path,
-            dynamic,
-            no_cache,
-            force,
-            max_tokens,
-            limit,
-            filter_path,
-            kind,
-            semantic,
-            strategy,
-            hybrid_strategy,
-            intent,
-            explain,
-            cli.json,
-        ),
+        } => {
+            // If no query provided, show directory info and search examples
+            let query = match query {
+                Some(q) => q,
+                None => {
+                    return show_search_help(&mut store, &mut cache, path.as_ref());
+                }
+            };
+            cmd_search(
+                &mut store,
+                &mut cache,
+                &cli.index,
+                query,
+                path,
+                dynamic,
+                no_cache,
+                force,
+                max_tokens,
+                limit,
+                filter_path,
+                kind,
+                semantic,
+                strategy,
+                hybrid_strategy,
+                intent,
+                explain,
+                cli.json,
+            )
+        }
 
         Commands::Explore { mode, path } => {
-            cmd_explore(&mut store, &cli.index_id, mode, path, cli.json)
+            cmd_explore(&mut store, &cli.index, mode, path, cli.json)
         }
 
         Commands::Symbols {
@@ -289,7 +318,7 @@ fn main() -> Result<()> {
             limit,
         } => cmd_symbols(
             &mut store,
-            &cli.index_id,
+            &cli.index,
             pattern,
             kind,
             path,
@@ -302,7 +331,7 @@ fn main() -> Result<()> {
             kind,
             path,
             limit,
-        } => cmd_lookup(&mut store, &cli.index_id, symbol, kind, path, limit, cli.json),
+        } => cmd_lookup(&mut store, &cli.index, symbol, kind, path, limit, cli.json),
 
         Commands::Refs {
             symbol,
@@ -311,7 +340,7 @@ fn main() -> Result<()> {
             limit,
         } => cmd_refs(
             &mut store,
-            &cli.index_id,
+            &cli.index,
             symbol,
             direction,
             depth,
@@ -321,15 +350,15 @@ fn main() -> Result<()> {
 
         Commands::List => cmd_list(&mut store, cli.json),
 
-        Commands::Stats => cmd_stats(&mut store, &cli.index_id, cli.json),
+        Commands::Stats => cmd_stats(&mut store, &cli.index, cli.json),
 
         Commands::Delete { id } => cmd_delete(&mut store, id, cli.json),
 
         Commands::Export { id, format, output } => {
-            cmd_export(&mut store, &cli.index_id, id, format, output, cli.json)
+            cmd_export(&mut store, &cli.index, id, format, output, cli.json)
         }
 
-        Commands::Get { chunk_id } => cmd_get(&mut store, &cli.index_id, chunk_id, cli.json),
+        Commands::Get { chunk_id } => cmd_get(&mut store, &cli.index, chunk_id, cli.json),
     }
 }
 
@@ -1068,4 +1097,94 @@ fn print_breakdown(title: &str, breakdown: &std::collections::BTreeMap<String, u
     for (label, count) in breakdown {
         println!("  {}: {}", label, count);
     }
+}
+
+/// Suggest a command based on fuzzy matching for typos.
+fn suggest_command(args: &[String]) -> Option<String> {
+    use strsim::jaro_winkler;
+
+    const COMMANDS: &[&str] = &[
+        "index", "search", "explore", "symbols", "lookup", "refs",
+        "list", "stats", "delete", "export", "get",
+    ];
+
+    // Find the invalid subcommand (usually the second arg)
+    let typo = args.get(1)?;
+    if typo.starts_with('-') {
+        return None;
+    }
+
+    let mut best_match: Option<(&str, f64)> = None;
+    for cmd in COMMANDS {
+        let score = jaro_winkler(typo, cmd);
+        if score > 0.7 {
+            if best_match.is_none() || score > best_match.unwrap().1 {
+                best_match = Some((cmd, score));
+            }
+        }
+    }
+
+    best_match.map(|(cmd, _)| format!("llmx {}", cmd))
+}
+
+/// Show search help with examples when no query is provided.
+fn show_search_help(
+    store: &mut IndexStore,
+    cache: &mut DynamicCache,
+    path: Option<&PathBuf>,
+) -> Result<()> {
+    use llmx_mcp::handlers::{find_project_root, has_project_marker};
+
+    let cwd = std::env::current_dir().context("Could not get current directory")?;
+    let root = path
+        .map(|p| p.canonicalize().unwrap_or_else(|_| p.clone()))
+        .unwrap_or_else(|| find_project_root(&cwd).unwrap_or(cwd.clone()));
+
+    println!("llmx search - Semantic codebase search\n");
+    println!("Directory: {}", root.display());
+
+    // Check index status
+    let indexed = if let Some(meta) = store.find_metadata_by_path(&root) {
+        println!("Status: Indexed ({} files, {} chunks)", meta.file_count, meta.chunk_count);
+        true
+    } else if cache.get(&root).is_some() {
+        println!("Status: Cached (in-memory)");
+        true
+    } else if has_project_marker(&root) {
+        println!("Status: Not indexed (will auto-index on first search)");
+        false
+    } else {
+        println!("Status: No project markers found");
+        false
+    };
+
+    println!("\n--- Search Query Examples ---\n");
+    println!("  Symbol lookup (function/class names):");
+    println!("    llmx search getUserById");
+    println!("    llmx search \"verify_token\"");
+    println!("    llmx search \"auth::Claims\"");
+    println!();
+    println!("  Semantic questions (natural language):");
+    println!("    llmx search \"how does authentication work\"");
+    println!("    llmx search \"where is the database connection handled\"");
+    println!("    llmx search \"error handling strategy\"");
+    println!();
+    println!("  Keyword grep (literal matches):");
+    println!("    llmx search TODO");
+    println!("    llmx search FIXME");
+    println!("    llmx search \"unsafe block\"");
+    println!();
+    println!("--- Options ---\n");
+    println!("  --limit N        Max results (default: 10)");
+    println!("  --max-tokens N   Token budget for content (default: 8000)");
+    println!("  --filter-path P  Filter by path prefix");
+    println!("  --kind K         Filter by type: markdown, javascript, json, html, text");
+    println!("  --strategy S     Search mode: auto, bm25, semantic, hybrid");
+    println!("  --explain        Show why each result matched");
+
+    if !indexed {
+        println!("\nTip: Run any search query to auto-index this directory.");
+    }
+
+    Ok(())
 }
