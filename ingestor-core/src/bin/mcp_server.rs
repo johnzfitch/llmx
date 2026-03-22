@@ -1,3 +1,4 @@
+use clap::Parser;
 use llmx_mcp::mcp::{
     llmx_explore_handler, llmx_get_chunk_handler, llmx_lookup_handler, llmx_manage_handler, llmx_refs_handler,
     llmx_search_handler, llmx_status_handler, llmx_symbols_handler,
@@ -23,6 +24,44 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing_subscriber::EnvFilter;
 use url::Url;
+
+/// LLMX MCP Server - Codebase indexing and semantic search
+///
+/// Provides tools for indexing codebases and searching with semantic understanding.
+/// Designed for integration with Claude Code, Cursor, Codex, and other MCP clients.
+///
+/// # Environment Variables
+///
+/// - LLMX_STORAGE_DIR: Override index storage location (default: ~/.local/share/llmx/indexes)
+///
+/// # Example .mcp.json
+///
+/// ```json
+/// {
+///   "mcpServers": {
+///     "llmx": {
+///       "command": "llmx-mcp",
+///       "args": ["--path", "/path/to/project"]
+///     }
+///   }
+/// }
+/// ```
+#[derive(Parser)]
+#[command(name = "llmx-mcp", version, about)]
+struct Args {
+    /// Paths to auto-index on startup
+    #[arg(long = "path", short = 'p')]
+    paths: Vec<PathBuf>,
+
+    /// Override storage directory (default: ~/.local/share/llmx/indexes)
+    /// Can also be set via LLMX_STORAGE_DIR environment variable.
+    #[arg(long)]
+    storage_dir: Option<PathBuf>,
+
+    /// Run HTTP server on specified port instead of stdio
+    #[arg(long)]
+    http: Option<u16>,
+}
 
 const STATUS_RESOURCE_URI: &str = "llmx://index/status";
 
@@ -769,18 +808,39 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    // Parse --http <port> flag from args (no clap needed for one flag)
-    let http_port = parse_http_port();
+    let args = Args::parse();
 
-    // Get storage directory from env or default
-    let storage_dir = env::var("LLMX_STORAGE_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| llmx_mcp::default_storage_dir());
+    // Get storage directory from args, env, or default
+    let storage_dir = args.storage_dir
+        .or_else(|| env::var("LLMX_STORAGE_DIR").ok().map(PathBuf::from))
+        .unwrap_or_else(llmx_mcp::default_storage_dir);
 
     tracing::info!("Starting LLMX MCP server, storage: {:?}", storage_dir);
 
     let store = Arc::new(Mutex::new(IndexStore::new(storage_dir)?));
     let jobs = new_job_store();
+
+    // Auto-index paths specified via --path
+    if !args.paths.is_empty() {
+        let path_strings: Vec<String> = args.paths.iter()
+            .map(|p| p.canonicalize().unwrap_or_else(|_| p.clone()).to_string_lossy().to_string())
+            .collect();
+        tracing::info!("Auto-indexing {} paths: {:?}", path_strings.len(), path_strings);
+        let input = IndexInput {
+            paths: path_strings,
+            options: None,
+        };
+        match run_index_work(&input) {
+            Ok((index, root_path, _)) => {
+                let mut store_guard = store.lock().unwrap();
+                let index_id = store_guard.save(index, root_path.clone())?;
+                tracing::info!("Auto-indexed {} as {}", root_path, index_id);
+            }
+            Err(e) => {
+                tracing::warn!("Failed to auto-index: {}", e);
+            }
+        }
+    }
 
     // Spawn cleanup task: remove completed/errored jobs older than 10 minutes
     let cleanup_jobs = jobs.clone();
@@ -793,7 +853,7 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    if let Some(port) = http_port {
+    if let Some(port) = args.http {
         serve_http(store, jobs, port).await
     } else {
         let server = LlmxServer::new(store, jobs);
@@ -802,14 +862,6 @@ async fn main() -> anyhow::Result<()> {
         service.waiting().await?;
         Ok(())
     }
-}
-
-fn parse_http_port() -> Option<u16> {
-    let args: Vec<String> = env::args().collect();
-    args.iter()
-        .position(|a| a == "--http")
-        .and_then(|i| args.get(i + 1))
-        .and_then(|p| p.parse().ok())
 }
 
 #[cfg(feature = "mcp-http")]

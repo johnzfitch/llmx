@@ -57,8 +57,8 @@ treesitter = [
     "tree-sitter-cpp",
     "tree-sitter-c-sharp",
 ]
-mcp = ["dep:rmcp", "dep:schemars", "dep:tokio", "dep:tracing", "dep:tracing-subscriber", "dep:getrandom"]
-mcp-http = ["mcp", "dep:clap", "dep:hyper", "dep:hyper-util", "dep:tower-service", "rmcp/transport-streamable-http-server", "rmcp/transport-worker"]
+mcp = ["dep:rmcp", "dep:schemars", "dep:tokio", "dep:tracing", "dep:tracing-subscriber", "dep:getrandom", "dep:clap"]
+mcp-http = ["mcp", "dep:hyper", "dep:hyper-util", "dep:tower-service", "rmcp/transport-streamable-http-server", "rmcp/transport-worker"]
 cli = ["dep:clap"]
 embeddings = ["dep:burn", "dep:tokenizers"]
 ndarray-backend = ["embeddings", "dep:burn-ndarray"]
