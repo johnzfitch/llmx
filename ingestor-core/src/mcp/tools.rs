@@ -528,7 +528,7 @@ pub fn llmx_status_handler(store: &mut IndexStore, jobs: &JobStore) -> Result<St
 pub fn run_index_work(input: &IndexInput) -> Result<(crate::IndexFile, String, IngestOptions)> {
     let walk_config = WalkConfig {
         max_depth: 50,
-        max_files: 100_000,
+        max_files: 200_000,
         max_total_bytes: usize::MAX,
         timeout_secs: 300,
         respect_gitignore: true,

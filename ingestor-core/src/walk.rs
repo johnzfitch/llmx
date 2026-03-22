@@ -52,10 +52,10 @@ pub struct WalkConfig {
 impl Default for WalkConfig {
     fn default() -> Self {
         Self {
-            max_depth: 10,
-            max_files: 10_000,
-            max_total_bytes: 100 * 1024 * 1024,
-            timeout_secs: 30,
+            max_depth: 20,
+            max_files: 200_000,
+            max_total_bytes: 500 * 1024 * 1024,
+            timeout_secs: 120,
             respect_gitignore: true,
         }
     }

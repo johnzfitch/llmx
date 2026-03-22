@@ -597,7 +597,7 @@ fn refresh_impacted_indexes(
         let updated = if requires_full_refresh {
             let walk_config = WalkConfig {
                 max_depth: 50,
-                max_files: 100_000,
+                max_files: 200_000,
                 max_total_bytes: usize::MAX,
                 timeout_secs: 300,
                 respect_gitignore: true,

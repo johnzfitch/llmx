@@ -2,9 +2,9 @@
 //!
 //! Provides protection against:
 //! - Dangerous paths (/, /home, /usr, etc.)
-//! - Runaway file counts (max 10K files)
-//! - Excessive total size (max 100MB)
-//! - Timeout protection (max 30 seconds)
+//! - Runaway file counts (max 200K files)
+//! - Excessive total size (max 500MB)
+//! - Timeout protection (max 120 seconds)
 //! - Respects .gitignore patterns
 
 use crate::walk::{collect_files, WalkConfig};
@@ -14,13 +14,13 @@ use std::path::Path;
 /// Safety limits for dynamic file walking.
 #[derive(Debug, Clone)]
 pub struct SafetyLimits {
-    /// Maximum directory depth to traverse (default: 10)
+    /// Maximum directory depth to traverse (default: 20)
     pub max_depth: usize,
-    /// Maximum number of files to process (default: 10,000)
+    /// Maximum number of files to process (default: 200,000)
     pub max_files: usize,
-    /// Maximum total bytes to read (default: 100MB)
+    /// Maximum total bytes to read (default: 500MB)
     pub max_total_bytes: usize,
-    /// Timeout in seconds (default: 30)
+    /// Timeout in seconds (default: 120)
     pub timeout_secs: u64,
     /// Whether to respect .gitignore files (default: true)
     pub respect_gitignore: bool,
@@ -29,10 +29,10 @@ pub struct SafetyLimits {
 impl Default for SafetyLimits {
     fn default() -> Self {
         Self {
-            max_depth: 10,
-            max_files: 10_000,
-            max_total_bytes: 100 * 1024 * 1024, // 100MB
-            timeout_secs: 30,
+            max_depth: 20,
+            max_files: 200_000,
+            max_total_bytes: 500 * 1024 * 1024, // 500MB
+            timeout_secs: 120,
             respect_gitignore: true,
         }
     }

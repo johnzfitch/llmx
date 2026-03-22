@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub const INDEX_VERSION: u32 = 3;
-pub const DEFAULT_MAX_FILE_BYTES: usize = 64 * 1024 * 1024;
+pub const DEFAULT_MAX_FILE_BYTES: usize = 256 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileInput {
