@@ -7,7 +7,6 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 use std::fs;
-use std::path::Path;
 use tempfile::TempDir;
 
 /// Get a Command for the llmx binary.
@@ -15,6 +14,9 @@ fn llmx() -> Command {
     #[allow(deprecated)]
     Command::cargo_bin("llmx").expect("Failed to find llmx binary")
 }
+
+#[cfg(feature = "embeddings")]
+use std::path::Path;
 
 #[cfg(feature = "embeddings")]
 fn rewrite_embedding_model(storage_dir: &Path, index_id: &str, embedding_model: &str) {
@@ -187,8 +189,8 @@ fn test_cli_index_help_reports_default_file_cap() {
         .args(["index", "--help"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("default: 64MB"))
-        .stdout(predicate::str::contains("67108864"));
+        .stdout(predicate::str::contains("default: 256MB"))
+        .stdout(predicate::str::contains("268435456"));
 }
 
 #[test]
