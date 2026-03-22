@@ -85,7 +85,8 @@ fn test_mcp_search_input_minimal() {
     }"#;
     let input: SearchInput = serde_json::from_str(json).expect("Should deserialize");
 
-    assert_eq!(input.index_id, "abc123");
+    assert_eq!(input.index_id.as_deref(), Some("abc123"));
+    assert!(input.loc.is_none());
     assert_eq!(input.query, "test query");
     assert!(input.filters.is_none());
     assert!(input.limit.is_none());
@@ -107,7 +108,7 @@ fn test_mcp_search_input_with_all_options() {
     }"#;
     let input: SearchInput = serde_json::from_str(json).expect("Should deserialize");
 
-    assert_eq!(input.index_id, "abc123");
+    assert_eq!(input.index_id.as_deref(), Some("abc123"));
     assert_eq!(input.query, "function");
     assert_eq!(input.limit, Some(20));
     assert_eq!(input.max_tokens, Some(8000));
@@ -146,7 +147,8 @@ fn test_mcp_explore_input_files_mode() {
     }"#;
     let input: ExploreInput = serde_json::from_str(json).expect("Should deserialize");
 
-    assert_eq!(input.index_id, "abc123");
+    assert_eq!(input.index_id.as_deref(), Some("abc123"));
+    assert!(input.loc.is_none());
     assert_eq!(input.mode, "files");
     assert!(input.path_filter.is_none());
 }
@@ -160,6 +162,7 @@ fn test_mcp_explore_input_with_path_filter() {
     }"#;
     let input: ExploreInput = serde_json::from_str(json).expect("Should deserialize");
 
+    assert_eq!(input.index_id.as_deref(), Some("abc123"));
     assert_eq!(input.mode, "symbols");
     assert_eq!(input.path_filter, Some("src/api".to_string()));
 }
@@ -184,6 +187,7 @@ fn test_mcp_manage_input_list() {
 
     assert_eq!(input.action, "list");
     assert!(input.index_id.is_none());
+    assert!(input.loc.is_none());
 }
 
 #[test]
@@ -228,7 +232,8 @@ fn test_mcp_index_input_struct_construction() {
 #[test]
 fn test_mcp_search_input_struct_construction() {
     let input = SearchInput {
-        index_id: "test-id".to_string(),
+        index_id: Some("test-id".to_string()),
+        loc: None,
         query: "test query".to_string(),
         filters: Some(SearchFiltersInput {
             path_prefix: Some("src/".to_string()),
@@ -245,7 +250,7 @@ fn test_mcp_search_input_struct_construction() {
         strategy: None,
     };
 
-    assert_eq!(input.index_id, "test-id");
+    assert_eq!(input.index_id.as_deref(), Some("test-id"));
     assert_eq!(input.query, "test query");
     assert_eq!(input.limit, Some(15));
 }
@@ -271,7 +276,8 @@ fn test_mcp_search_auto_default_degrades_with_notice_when_embeddings_missing() {
     let output = llmx_search_handler(
         &mut store,
         SearchInput {
-            index_id,
+            index_id: Some(index_id),
+            loc: None,
             query: "where do we validate tokens".to_string(),
             filters: None,
             limit: Some(5),
@@ -303,6 +309,7 @@ fn test_mcp_search_input_deserializes_phase7_fields() {
         "explain": true
     }"#;
     let input: SearchInput = serde_json::from_str(json).expect("Should deserialize");
+    assert_eq!(input.index_id.as_deref(), Some("idx-123"));
     assert_eq!(input.intent.as_deref(), Some("symbol"));
     assert_eq!(input.explain, Some(true));
 }
@@ -370,6 +377,7 @@ export function verifyToken(token: string): boolean {
         ManageInput {
             action: "stats".to_string(),
             index_id: Some(index_output.index_id),
+            loc: None,
         },
     )
     .expect("Stats should succeed");
@@ -536,4 +544,16 @@ fn test_storage_rejects_empty_and_oversized_id() {
 fn test_search_limit_constant_is_200() {
     // MAX_SEARCH_LIMIT is the hard cap on result count; verify the value
     assert_eq!(llmx_mcp::handlers::MAX_SEARCH_LIMIT, 200);
+}
+#[test]
+fn test_mcp_search_input_with_loc_only() {
+    let json = r#"{
+        "loc": "/tmp/project/src",
+        "query": "test query"
+    }"#;
+    let input: SearchInput = serde_json::from_str(json).expect("Should deserialize");
+
+    assert!(input.index_id.is_none());
+    assert_eq!(input.loc.as_deref(), Some("/tmp/project/src"));
+    assert_eq!(input.query, "test query");
 }

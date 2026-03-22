@@ -204,6 +204,16 @@ fn test_cli_search_help_reports_v2_options() {
         .stdout(predicate::str::contains("8000"));
 }
 
+#[test]
+fn test_cli_parse_errors_offer_recovery_examples() {
+    llmx()
+        .args(["search", "auth", "src/"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Use `--path <dir>`"))
+        .stderr(predicate::str::contains("llmx search \"auth\" --path ./src"));
+}
+
 // ============================================================================
 // Search Command Tests
 // ============================================================================
@@ -385,6 +395,51 @@ fn test_cli_search_no_index() {
         .success()
         .stdout(predicate::str::contains("[dynamic]"))
         .stdout(predicate::str::contains("Found 0 results"));
+}
+
+#[test]
+fn test_cli_search_defaults_to_current_directory_not_parent_project_root() {
+    let storage = TempDir::new().unwrap();
+    let parent = TempDir::new().unwrap();
+
+    fs::write(parent.path().join("Cargo.toml"), "[package]\nname = \"parent\"\nversion = \"0.1.0\"\n").unwrap();
+    fs::write(parent.path().join("parent_only.rs"), "fn parent_only() -> bool { true }\n").unwrap();
+    fs::create_dir_all(parent.path().join("child")).unwrap();
+    fs::write(parent.path().join("child/child_only.rs"), "fn child_only() -> bool { true }\n").unwrap();
+
+    llmx()
+        .args([
+            "index",
+            parent.path().to_str().unwrap(),
+            "--storage-dir",
+            storage.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    llmx()
+        .args([
+            "index",
+            parent.path().join("child").to_str().unwrap(),
+            "--storage-dir",
+            storage.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    llmx()
+        .args([
+            "search",
+            "parent_only",
+            "--storage-dir",
+            storage.path().to_str().unwrap(),
+        ])
+        .current_dir(parent.path().join("child"))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[persistent]"))
+        .stdout(predicate::str::contains("parent_only.rs").not())
+        .stdout(predicate::str::contains("child_only.rs"));
 }
 
 // ============================================================================

@@ -50,7 +50,8 @@ export class AuthService {
     let output = llmx_lookup_handler(
         &mut store,
         LookupInput {
-            index_id,
+            index_id: Some(index_id),
+            loc: None,
             symbol: "verifyToken".to_string(),
             kind: Some("function".to_string()),
             path_prefix: None,
@@ -83,7 +84,8 @@ export function verifySession(token: string): boolean {
     let output = llmx_lookup_handler(
         &mut store,
         LookupInput {
-            index_id,
+            index_id: Some(index_id),
+            loc: None,
             symbol: "verify*".to_string(),
             kind: Some("function".to_string()),
             path_prefix: None,
@@ -106,6 +108,78 @@ export function verifySession(token: string): boolean {
 }
 
 #[test]
+fn lookup_resolves_index_from_loc_when_index_id_is_omitted() {
+    let (project, mut store, _index_id) = build_store(&[(
+        "src/auth.ts",
+        r#"
+export function verifyToken(token: string): boolean {
+  return token.length > 0;
+}
+"#,
+    )]);
+
+    let output = llmx_lookup_handler(
+        &mut store,
+        LookupInput {
+            index_id: None,
+            loc: Some(project.path().join("src").to_string_lossy().to_string()),
+            symbol: "verifyToken".to_string(),
+            kind: Some("function".to_string()),
+            path_prefix: None,
+            limit: Some(10),
+        },
+    )
+    .expect("lookup should resolve from loc");
+
+    assert_eq!(output.total, 1, "expected one exact symbol match");
+    assert_eq!(output.matches[0].qualified_name, "verifyToken");
+}
+
+#[test]
+fn lookup_with_loc_can_resolve_nearest_indexed_ancestor() {
+    let project = tempdir().expect("should create temp project");
+    std::fs::write(
+        project.path().join("parent.ts"),
+        "export function parentOnly(): boolean { return true; }\n",
+    )
+    .expect("should write parent file");
+    std::fs::create_dir_all(project.path().join("child")).expect("should create child dir");
+    std::fs::write(
+        project.path().join("child/child.ts"),
+        "export function childOnly(): boolean { return true; }\n",
+    )
+    .expect("should write child file");
+
+    let storage_dir = tempdir().expect("should create temp storage");
+    let mut store = IndexStore::new(storage_dir.path().to_path_buf()).expect("should create store");
+
+    llmx_index_handler(
+        &mut store,
+        IndexInput {
+            paths: vec![project.path().to_string_lossy().to_string()],
+            options: None,
+        },
+    )
+    .expect("parent index should succeed");
+
+    let output = llmx_lookup_handler(
+        &mut store,
+        LookupInput {
+            index_id: None,
+            loc: Some(project.path().join("child").to_string_lossy().to_string()),
+            symbol: "parentOnly".to_string(),
+            kind: Some("function".to_string()),
+            path_prefix: None,
+            limit: Some(10),
+        },
+    )
+    .expect("lookup should resolve nearest indexed ancestor from loc");
+
+    assert_eq!(output.total, 1, "expected parent symbol match");
+    assert_eq!(output.matches[0].qualified_name, "parentOnly");
+}
+
+#[test]
 fn refs_returns_callers_for_symbol() {
     let (_project, mut store, index_id) = build_store(&[(
         "auth.ts",
@@ -125,7 +199,8 @@ export class AuthService {
     let output = llmx_refs_handler(
         &mut store,
         RefsInput {
-            index_id,
+            index_id: Some(index_id),
+            loc: None,
             symbol: "verifyToken".to_string(),
             direction: "callers".to_string(),
             depth: Some(1),
@@ -170,7 +245,8 @@ export function parseConfig(token: string): boolean {
     let output = llmx_refs_handler(
         &mut store,
         RefsInput {
-            index_id,
+            index_id: Some(index_id),
+            loc: None,
             symbol: "parseConfig".to_string(),
             direction: "callees".to_string(),
             depth: Some(1),
@@ -231,7 +307,8 @@ export function startB(): boolean {
     let output = llmx_refs_handler(
         &mut store,
         RefsInput {
-            index_id: index_id.clone(),
+            index_id: Some(index_id.clone()),
+            loc: None,
             symbol: "startA".to_string(),
             direction: "callees".to_string(),
             depth: Some(1),
@@ -249,7 +326,8 @@ export function startB(): boolean {
     let target_chunk = llmx_get_chunk_handler(
         &mut store,
         GetChunkInput {
-            index_id,
+            index_id: Some(index_id),
+            loc: None,
             chunk_id: target_chunk_id,
         },
     )

@@ -5,7 +5,7 @@
 //!
 //! ## Dynamic Search (default)
 //!
-//! By default, `llmx search` auto-detects the project root and builds an in-memory
+//! By default, `llmx search` uses the current directory and builds an in-memory
 //! index on the fly. Results are cached for repeat queries.
 //!
 //! ```bash
@@ -68,13 +68,13 @@ enum Commands {
 
     /// Search with inline content (token-budgeted)
     ///
-    /// By default, auto-detects project root and uses dynamic indexing.
+    /// By default, uses the current directory and dynamic indexing.
     /// Use --index-id to search a specific persistent index.
     Search {
         /// Search query (omit to see help and examples)
         query: Option<String>,
 
-        /// Search path (default: auto-detect project root)
+        /// Search path (default: current directory)
         #[arg(long)]
         path: Option<PathBuf>,
 
@@ -230,14 +230,25 @@ fn main() -> Result<()> {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(e) => {
+            if matches!(e.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayVersion) {
+                e.exit();
+            }
+            let args = std::env::args().collect::<Vec<_>>();
             if e.kind() == ErrorKind::InvalidSubcommand {
-                if let Some(suggestion) = suggest_command(&std::env::args().collect::<Vec<_>>()) {
+                if let Some(suggestion) = suggest_command(&args) {
                     eprintln!("{}\n", e);
                     eprintln!("Did you mean: {}", suggestion);
+                    if let Some(guidance) = parse_error_guidance(&args) {
+                        eprintln!("\n{}", guidance);
+                    }
                     std::process::exit(1);
                 }
             }
-            e.exit();
+            eprintln!("{e}");
+            if let Some(guidance) = parse_error_guidance(&args) {
+                eprintln!("\n{}", guidance);
+            }
+            std::process::exit(1);
         }
     };
 
@@ -823,8 +834,9 @@ fn cmd_list(store: &mut IndexStore, json_output: bool) -> Result<()> {
         }
     } else if let Some(indexes) = &output.indexes {
         if indexes.is_empty() {
-            println!("No persistent indexes found. Run `llmx_mcp index <path>` to create one.");
-            println!("\nNote: `llmx_mcp search` now works without a persistent index!");
+            println!("No persistent indexes found. Run `llmx index <path>` to create one.");
+            println!("Try `llmx index .` to index the current folder.");
+            println!("\nNote: `llmx search` now works without a persistent index.");
             println!("It auto-detects project roots and builds indexes on the fly.");
         } else {
             println!("Persistent indexes:\n");
@@ -1007,74 +1019,29 @@ fn cmd_get(
     Ok(())
 }
 
-/// Resolve index ID from --index-id flag or auto-detect from cwd.
-/// If no index exists, auto-creates one from the project root.
+/// Resolve index ID from --index-id flag or the current directory.
+/// If no index exists, auto-creates one from the current directory.
 fn resolve_index_id(store: &mut IndexStore, override_id: &Option<String>) -> Result<String> {
     if let Some(id) = override_id {
         return Ok(id.clone());
     }
 
-    // Try to auto-detect from current directory
     let cwd = std::env::current_dir().context("Could not get current directory")?;
-
-    // Walk up to find project root (by .git, Cargo.toml, package.json, etc.)
-    let mut project_root: Option<&std::path::Path> = None;
-    let mut dir = cwd.as_path();
-    loop {
-        // Check for common project markers
-        let markers = [
-            ".git",
-            "Cargo.toml",
-            "package.json",
-            "pyproject.toml",
-            "go.mod",
-        ];
-        for marker in markers {
-            let marker_path = dir.join(marker);
-            if marker_path.exists() {
-                // Found project root, check if it's indexed
-                if let Some(meta) = store.find_metadata_by_path(dir) {
-                    return Ok(meta.id.clone());
-                }
-                // Remember as potential root for auto-indexing
-                if project_root.is_none() {
-                    project_root = Some(dir);
-                }
-            }
-        }
-
-        // Also check if this exact path is indexed
-        if let Some(meta) = store.find_metadata_by_path(dir) {
-            return Ok(meta.id.clone());
-        }
-
-        // Go up one directory
-        if let Some(parent) = dir.parent() {
-            dir = parent;
-        } else {
-            break;
-        }
+    if let Some(meta) = store.find_metadata_by_path(&cwd) {
+        return Ok(meta.id.clone());
     }
 
-    // Auto-index if we found a project root
-    if let Some(root) = project_root {
-        eprintln!("No index found. Auto-indexing {}...", root.display());
-        let input = IndexInput {
-            paths: vec![root.to_string_lossy().to_string()],
-            options: None,
-        };
-        let output = llmx_index_handler(store, input)?;
-        eprintln!(
-            "Created index: {} ({} files, {} chunks)",
-            output.index_id, output.stats.total_files, output.stats.total_chunks
-        );
-        return Ok(output.index_id);
-    }
-
-    anyhow::bail!(
-        "No index found and no project root detected.\n\
-         Run `llmx_mcp index <path>` to create one, or use --index-id to specify."
-    )
+    eprintln!("No index found for {}. Auto-indexing current directory...", cwd.display());
+    let input = IndexInput {
+        paths: vec![cwd.to_string_lossy().to_string()],
+        options: None,
+    };
+    let output = llmx_index_handler(store, input)?;
+    eprintln!(
+        "Created index: {} ({} files, {} chunks)",
+        output.index_id, output.stats.total_files, output.stats.total_chunks
+    );
+    return Ok(output.index_id);
 }
 
 /// Format bytes as human-readable string
@@ -1127,18 +1094,81 @@ fn suggest_command(args: &[String]) -> Option<String> {
     best_match.map(|(cmd, _)| format!("llmx {}", cmd))
 }
 
+fn parse_error_guidance(args: &[String]) -> Option<String> {
+    let command = args.get(1).map(|arg| arg.as_str());
+
+    if command == Some("search") {
+        let extra_positionals = args.iter().skip(3).filter(|arg| !arg.starts_with('-')).count();
+        if extra_positionals > 0 {
+            return Some(
+                "Search takes one positional query.\n\
+                 Use `--path <dir>` to choose a folder instead of adding a second positional value.\n\
+                 Examples:\n\
+                   llmx search \"auth\"\n\
+                   llmx search \"auth\" --path ./src\n\
+                   llmx --index-id <id> search \"auth\""
+                    .to_string(),
+            );
+        }
+
+        return Some(
+            "Examples:\n\
+               llmx search \"auth\"\n\
+               llmx search \"auth\" --path ./src\n\
+               llmx search \"auth\" --semantic --limit 5"
+                .to_string(),
+        );
+    }
+
+    if command == Some("explore") {
+        return Some(
+            "Examples:\n\
+               llmx explore files\n\
+               llmx explore outline --path src/\n\
+               llmx explore symbols"
+                .to_string(),
+        );
+    }
+
+    if command == Some("lookup") {
+        return Some(
+            "Examples:\n\
+               llmx lookup parseConfig\n\
+               llmx lookup 'parse*' --path src/"
+                .to_string(),
+        );
+    }
+
+    if command == Some("refs") {
+        return Some(
+            "Examples:\n\
+               llmx refs parseConfig callers\n\
+               llmx refs parseConfig callees --depth 2"
+                .to_string(),
+        );
+    }
+
+    Some(
+        "Examples:\n\
+           llmx index .\n\
+           llmx search \"auth\"\n\
+           llmx explore files"
+            .to_string(),
+    )
+}
+
 /// Show search help with examples when no query is provided.
 fn show_search_help(
     store: &mut IndexStore,
     cache: &mut DynamicCache,
     path: Option<&PathBuf>,
 ) -> Result<()> {
-    use llmx_mcp::handlers::{find_project_root, has_project_marker};
+    use llmx_mcp::handlers::has_project_marker;
 
     let cwd = std::env::current_dir().context("Could not get current directory")?;
     let root = path
         .map(|p| p.canonicalize().unwrap_or_else(|_| p.clone()))
-        .unwrap_or_else(|| find_project_root(&cwd).unwrap_or(cwd.clone()));
+        .unwrap_or_else(|| cwd.clone());
 
     println!("llmx search - Semantic codebase search\n");
     println!("Directory: {}", root.display());
