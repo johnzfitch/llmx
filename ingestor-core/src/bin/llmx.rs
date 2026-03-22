@@ -1142,8 +1142,8 @@ fn parse_error_guidance(args: &[String]) -> Option<String> {
     if command == Some("refs") {
         return Some(
             "Examples:\n\
-               llmx refs parseConfig callers\n\
-               llmx refs parseConfig callees --depth 2"
+               llmx refs parseConfig --direction callers\n\
+               llmx refs parseConfig --direction callees --depth 2"
                 .to_string(),
         );
     }

@@ -158,7 +158,7 @@ pub struct ManageInput {
     #[cfg_attr(feature = "mcp", schemars(description = "Action: 'list', 'delete', 'stats', or 'job_status'"))]
     pub action: String,
     #[serde(default)]
-    #[cfg_attr(feature = "mcp", schemars(description = "Index ID (required for delete or job_status; optional for stats when loc/current directory identifies an indexed project) or job ID (required for job_status)"))]
+    #[cfg_attr(feature = "mcp", schemars(description = "Index ID or folder path. Required for job_status (pass the job ID here). Optional for delete and stats when loc or the current directory identifies an indexed project."))]
     pub index_id: Option<String>,
     #[serde(default, alias = "path")]
     #[cfg_attr(feature = "mcp", schemars(description = "Filesystem location to resolve against for stats. Defaults to the current directory when index_id is omitted."))]
@@ -1191,8 +1191,11 @@ pub fn llmx_manage_handler(store: &mut IndexStore, input: ManageInput) -> Result
             })
         }
         "delete" => {
-            let index_id = input.index_id
-                .context("index_id is required for delete action")?;
+            let index_id = match input.index_id {
+                Some(id) => id,
+                None => resolve_index_id(store, None, input.loc.as_deref())
+                    .context("index_id or loc is required for delete action")?,
+            };
             store.delete(&index_id)?;
             let readiness_tier = readiness_tier_for_store(store)?;
             Ok(ManageOutput {
