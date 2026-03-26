@@ -313,6 +313,17 @@ impl IndexStore {
             .map(|meta| meta.index_id.clone())
     }
 
+    /// Find an index whose root is an ancestor of the given path.
+    /// Returns true if any indexed root contains this path.
+    pub fn has_ancestor_index(&self, path: &Path) -> bool {
+        let normalized = path.to_string_lossy().replace('\\', "/");
+        self.registry.indexes.values().any(|meta| {
+            let root = meta.root_path.trim_end_matches('/');
+            let prefix = format!("{}/", root);
+            normalized.starts_with(&prefix)
+        })
+    }
+
     /// Get mutable reference to cached index
     pub fn get_mut(&mut self, id: &str) -> Option<&mut IndexFile> {
         self.cache.get_mut(id)

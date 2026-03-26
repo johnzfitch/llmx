@@ -1204,6 +1204,14 @@ impl BackendClient {
             self.post("/api/roots", &serde_json::json!({ "roots": roots })).await?;
         Ok(())
     }
+
+    async fn storage_dir(&self) -> anyhow::Result<String> {
+        let resp: serde_json::Value = self.get("/api/config").await?;
+        resp.get("storage_dir")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .ok_or_else(|| anyhow::anyhow!("missing storage_dir in config response"))
+    }
 }
 
 #[cfg(not(feature = "mcp-http"))]
@@ -1222,8 +1230,30 @@ async fn detect_or_start_backend(port: u16, storage_dir: Option<&PathBuf>) -> Op
     let client = BackendClient::new(port);
 
     if client.health_check().await {
-        tracing::info!("Connected to existing llmx backend on port {port}");
-        return Some(client);
+        // Verify storage-dir compatibility if the caller specified one
+        let expected_dir = storage_dir
+            .map(|d| resolve_storage_dir(Some(d.clone())))
+            .unwrap_or_else(|| resolve_storage_dir(None));
+        let expected = expected_dir.to_string_lossy().to_string();
+
+        match client.storage_dir().await {
+            Ok(backend_dir) if backend_dir == expected => {
+                tracing::info!("Connected to existing llmx backend on port {port}");
+                return Some(client);
+            }
+            Ok(backend_dir) => {
+                tracing::warn!(
+                    "Backend on port {port} uses storage {backend_dir}, \
+                     but this session expects {expected}. Falling back to standalone."
+                );
+                return None;
+            }
+            Err(e) => {
+                // Older backend without /api/config -- accept it
+                tracing::debug!("Backend config check failed ({e}), assuming compatible");
+                return Some(client);
+            }
+        }
     }
 
     if env::var("LLMX_NO_AUTOSTART").map(|v| v == "1").unwrap_or(false) {
@@ -1287,6 +1317,7 @@ async fn serve_rest(
     jobs: JobStore,
     stale_paths: Arc<Mutex<BTreeSet<String>>>,
     port: u16,
+    storage_dir: PathBuf,
 ) -> anyhow::Result<()> {
     use hyper::body::Incoming;
     use hyper::{Method, Request, Response, StatusCode};
@@ -1326,12 +1357,17 @@ async fn serve_rest(
         store: Arc<Mutex<IndexStore>>,
         jobs: JobStore,
         stale_paths: Arc<Mutex<BTreeSet<String>>>,
+        storage_dir: PathBuf,
     ) -> Result<Response<Full<Bytes>>, std::convert::Infallible> {
         let method = req.method().clone();
         let path = req.uri().path().to_string();
 
         let response = match (method, path.as_str()) {
             (Method::GET, "/api/health") => json_ok(&serde_json::json!({ "ok": true })),
+
+            (Method::GET, "/api/config") => json_ok(&serde_json::json!({
+                "storage_dir": storage_dir.to_string_lossy(),
+            })),
 
             (Method::GET, "/api/status") => {
                 match store.lock() {
@@ -1567,13 +1603,17 @@ async fn serve_rest(
                     .and_then(|v| serde_json::from_value(v.clone()).ok())
                     .unwrap_or_default();
                 tracing::info!("Received {} root paths from proxy", roots.len());
-                // Auto-index root paths that aren't already indexed
+                // Auto-index root paths not already covered by an exact
+                // or ancestor index (avoids duplicate nested indexes).
                 let paths_to_index: Vec<PathBuf> = roots.iter()
                     .filter_map(|uri| url::Url::parse(uri).ok())
                     .filter_map(|u| u.to_file_path().ok())
                     .filter(|p| {
                         store.lock().ok()
-                            .map(|s| s.find_by_path(p).is_none())
+                            .map(|s| {
+                                s.find_by_path(p).is_none()
+                                    && !s.has_ancestor_index(p)
+                            })
                             .unwrap_or(true)
                     })
                     .collect();
@@ -1602,10 +1642,11 @@ async fn serve_rest(
         let store = store.clone();
         let jobs = jobs.clone();
         let stale_paths = stale_paths.clone();
+        let storage_dir = storage_dir.clone();
 
         tokio::spawn(async move {
             let service = hyper::service::service_fn(move |req| {
-                handle(req, store.clone(), jobs.clone(), stale_paths.clone())
+                handle(req, store.clone(), jobs.clone(), stale_paths.clone(), storage_dir.clone())
             });
             if let Err(err) = hyper::server::conn::http1::Builder::new()
                 .serve_connection(io, service)
@@ -1623,6 +1664,7 @@ async fn serve_rest(
     _jobs: JobStore,
     _stale_paths: Arc<Mutex<BTreeSet<String>>>,
     _port: u16,
+    _storage_dir: PathBuf,
 ) -> anyhow::Result<()> {
     anyhow::bail!("REST backend requires the 'mcp-http' feature")
 }
@@ -1645,7 +1687,7 @@ async fn main() -> anyhow::Result<()> {
         let storage_dir = resolve_storage_dir(args.storage_dir);
         tracing::info!("Starting LLMX REST backend, storage: {:?}", storage_dir);
 
-        let store = Arc::new(Mutex::new(IndexStore::new(storage_dir)?));
+        let store = Arc::new(Mutex::new(IndexStore::new(storage_dir.clone())?));
         let jobs = new_job_store();
         let stale_paths = Arc::new(Mutex::new(BTreeSet::new()));
 
@@ -1653,7 +1695,7 @@ async fn main() -> anyhow::Result<()> {
         spawn_job_cleanup(jobs.clone());
         spawn_backend_watcher(store.clone(), stale_paths.clone());
 
-        return serve_rest(store, jobs, stale_paths, port).await;
+        return serve_rest(store, jobs, stale_paths, port, storage_dir).await;
     }
 
     // Stdio mode: try backend, then fallback to standalone
