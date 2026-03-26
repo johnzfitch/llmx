@@ -268,9 +268,20 @@ impl LlmxServer {
     #[tool(description = "Create or update index from file paths. Returns job_id immediately; poll with llmx_manage(action='job_status', index_id='<job_id>')")]
     async fn llmx_index(
         &self,
-        Parameters(input): Parameters<IndexInput>,
+        Parameters(mut input): Parameters<IndexInput>,
     ) -> Result<CallToolResult, McpError> {
         if let DataSource::Remote(client) = &self.data_source {
+            // Resolve relative paths against client cwd so the backend
+            // doesn't canonicalize them against its own working directory.
+            input.paths = input.paths.into_iter().map(|p| {
+                let path = PathBuf::from(&p);
+                if path.is_relative() {
+                    if let Ok(cwd) = env::current_dir() {
+                        return cwd.join(&path).to_string_lossy().to_string();
+                    }
+                }
+                p
+            }).collect();
             let result = client.index(&input).await
                 .map_err(|e| McpError::internal_error(e.to_string(), None))?;
             let content = serde_json::to_string_pretty(&result)
@@ -956,6 +967,78 @@ fn spawn_job_cleanup(jobs: JobStore) {
     });
 }
 
+/// Spawn a file watcher for --serve backend mode.
+///
+/// Periodically discovers indexed roots and watches them for changes,
+/// refreshing impacted indexes on disk edits. Unlike the MCP watcher,
+/// there are no peer notifications to send -- proxy sessions will see
+/// fresh data on their next request.
+fn spawn_backend_watcher(
+    store: Arc<Mutex<IndexStore>>,
+    stale_paths: Arc<Mutex<BTreeSet<String>>>,
+) {
+    tokio::spawn(async move {
+        let mut watched_roots: BTreeSet<PathBuf> = BTreeSet::new();
+        // Hold the watcher in scope so it stays alive
+        let mut _watcher: Option<RecommendedWatcher> = None;
+
+        loop {
+            // Discover all indexed roots
+            let current_roots: BTreeSet<PathBuf> = store
+                .lock()
+                .ok()
+                .and_then(|s| s.list().ok())
+                .unwrap_or_default()
+                .into_iter()
+                .map(|m| PathBuf::from(&m.root_path))
+                .filter(|p| p.exists())
+                .collect();
+
+            if current_roots != watched_roots {
+                let store2 = store.clone();
+                let stale2 = stale_paths.clone();
+                let runtime = tokio::runtime::Handle::current();
+
+                match notify::recommended_watcher(move |event: notify::Result<Event>| {
+                    let Ok(event) = event else { return };
+                    let changed_paths = event.paths.clone();
+                    let stale_markers = normalize_paths(&changed_paths);
+                    if let Ok(mut stale) = stale2.lock() {
+                        stale.extend(stale_markers);
+                    }
+                    let store3 = store2.clone();
+                    let stale3 = stale2.clone();
+                    runtime.spawn(async move {
+                        let _ = tokio::task::spawn_blocking(move || {
+                            if let Err(e) = refresh_impacted_indexes(&store3, &stale3, &changed_paths) {
+                                tracing::warn!("backend watcher refresh failed: {e}");
+                            }
+                        })
+                        .await;
+                    });
+                }) {
+                    Ok(mut w) => {
+                        for root in &current_roots {
+                            if let Err(e) = w.watch(root, RecursiveMode::Recursive) {
+                                tracing::warn!("backend watcher: failed to watch {}: {e}", root.display());
+                            }
+                        }
+                        tracing::info!("backend watcher: watching {} roots", current_roots.len());
+                        watched_roots = current_roots;
+                        _watcher = Some(w);
+                    }
+                    Err(e) => {
+                        tracing::warn!("backend watcher: failed to create watcher: {e}");
+                    }
+                }
+            }
+
+            // Re-scan every 30s for newly indexed roots
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        }
+    });
+}
+
 // ─── BackendClient ───────────────────────────────────────────────────────────
 
 #[cfg(feature = "mcp-http")]
@@ -1090,7 +1173,7 @@ impl BackendClient {
 
 // ─── Auto-start ──────────────────────────────────────────────────────────────
 
-async fn detect_or_start_backend(port: u16) -> Option<BackendClient> {
+async fn detect_or_start_backend(port: u16, storage_dir: Option<&PathBuf>) -> Option<BackendClient> {
     let client = BackendClient::new(port);
 
     if client.health_check().await {
@@ -1114,8 +1197,11 @@ async fn detect_or_start_backend(port: u16) -> Option<BackendClient> {
 
     let mut cmd = std::process::Command::new(&exe);
     cmd.arg("--serve")
-        .arg(port.to_string())
-        .stdin(std::process::Stdio::null())
+        .arg(port.to_string());
+    if let Some(dir) = storage_dir {
+        cmd.arg("--storage-dir").arg(dir);
+    }
+    cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::inherit());
 
@@ -1520,6 +1606,7 @@ async fn main() -> anyhow::Result<()> {
 
         auto_index_paths(&store, &args.paths);
         spawn_job_cleanup(jobs.clone());
+        spawn_backend_watcher(store.clone(), stale_paths.clone());
 
         return serve_rest(store, jobs, stale_paths, port).await;
     }
@@ -1530,7 +1617,7 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|v| v.parse().ok())
         .unwrap_or(DEFAULT_SERVE_PORT);
 
-    let server = if let Some(client) = detect_or_start_backend(port).await {
+    let server = if let Some(client) = detect_or_start_backend(port, args.storage_dir.as_ref()).await {
         tracing::info!("Running in proxy mode (backend on port {port})");
         // Forward --path args to the backend for indexing
         if !args.paths.is_empty() {
