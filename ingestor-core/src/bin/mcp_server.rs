@@ -994,6 +994,7 @@ mod tests {
 }
 
 const DEFAULT_SERVE_PORT: u16 = 19100;
+const TOKEN_FILENAME: &str = ".backend-token";
 
 /// Fill in `loc` with the proxy process's cwd when unset, so the backend
 /// resolves indexes against the client's working directory rather than its own.
@@ -1003,6 +1004,42 @@ fn fill_loc_from_cwd(loc: &mut Option<String>) {
             *loc = Some(cwd.to_string_lossy().to_string());
         }
     }
+}
+
+/// Generate a random 32-byte hex token for backend auth.
+fn generate_token() -> String {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+    let s = RandomState::new();
+    let mut h = s.build_hasher();
+    h.write_u128(std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos());
+    let a = h.finish();
+    let mut h2 = s.build_hasher();
+    h2.write_u64(a);
+    h2.write_usize(std::process::id() as usize);
+    let b = h2.finish();
+    format!("{a:016x}{b:016x}")
+}
+
+/// Write token to storage_dir/.backend-token with restrictive permissions.
+fn write_token_file(storage_dir: &std::path::Path, token: &str) -> anyhow::Result<()> {
+    let path = storage_dir.join(TOKEN_FILENAME);
+    std::fs::write(&path, token)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
+/// Read token from storage_dir/.backend-token.
+fn read_token_file(storage_dir: &std::path::Path) -> Option<String> {
+    let path = storage_dir.join(TOKEN_FILENAME);
+    std::fs::read_to_string(&path).ok().map(|s| s.trim().to_string())
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -1104,11 +1141,12 @@ struct BackendClient {
         http_body_util::Full<bytes::Bytes>,
     >,
     base_url: String,
+    token: Option<String>,
 }
 
 #[cfg(feature = "mcp-http")]
 impl BackendClient {
-    fn new(port: u16) -> Self {
+    fn new(port: u16, token: Option<String>) -> Self {
         let client = hyper_util::client::legacy::Client::builder(
             hyper_util::rt::TokioExecutor::new(),
         )
@@ -1116,6 +1154,7 @@ impl BackendClient {
         Self {
             client,
             base_url: format!("http://127.0.0.1:{port}"),
+            token,
         }
     }
 
@@ -1134,8 +1173,11 @@ impl BackendClient {
     async fn get<T: serde::de::DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
         use http_body_util::BodyExt;
         let uri: hyper::Uri = format!("{}{}", self.base_url, path).parse()?;
-        let req = hyper::Request::get(uri)
-            .body(http_body_util::Full::new(bytes::Bytes::new()))?;
+        let mut builder = hyper::Request::get(uri);
+        if let Some(ref token) = self.token {
+            builder = builder.header("authorization", format!("Bearer {token}"));
+        }
+        let req = builder.body(http_body_util::Full::new(bytes::Bytes::new()))?;
         let resp = self.client.request(req).await?;
         let status = resp.status();
         let body = resp.into_body().collect().await?.to_bytes();
@@ -1157,9 +1199,12 @@ impl BackendClient {
         use http_body_util::BodyExt;
         let uri: hyper::Uri = format!("{}{}", self.base_url, path).parse()?;
         let body = serde_json::to_vec(input)?;
-        let req = hyper::Request::post(uri)
-            .header("content-type", "application/json")
-            .body(http_body_util::Full::new(bytes::Bytes::from(body)))?;
+        let mut builder = hyper::Request::post(uri)
+            .header("content-type", "application/json");
+        if let Some(ref token) = self.token {
+            builder = builder.header("authorization", format!("Bearer {token}"));
+        }
+        let req = builder.body(http_body_util::Full::new(bytes::Bytes::from(body)))?;
         let resp = self.client.request(req).await?;
         let status = resp.status();
         let body = resp.into_body().collect().await?.to_bytes();
@@ -1230,22 +1275,23 @@ struct BackendClient;
 
 #[cfg(not(feature = "mcp-http"))]
 impl BackendClient {
-    fn new(_port: u16) -> Self { Self }
+    fn new(_port: u16, _token: Option<String>) -> Self { Self }
     async fn health_check(&self) -> bool { false }
 }
 
 // ─── Auto-start ──────────────────────────────────────────────────────────────
 
 async fn detect_or_start_backend(port: u16, storage_dir: Option<&PathBuf>) -> Option<BackendClient> {
-    let client = BackendClient::new(port);
+    let expected_dir = storage_dir
+        .map(|d| resolve_storage_dir(Some(d.clone())))
+        .unwrap_or_else(|| resolve_storage_dir(None));
+    let token = read_token_file(&expected_dir);
+    let client = BackendClient::new(port, token);
 
     if client.health_check().await {
-        // Verify storage-dir compatibility if the caller specified one
-        let expected_dir = storage_dir
-            .map(|d| resolve_storage_dir(Some(d.clone())))
-            .unwrap_or_else(|| resolve_storage_dir(None));
+        // Verify storage-dir compatibility via authenticated /api/config.
+        // If auth fails the backend isn't ours -- fall back to standalone.
         let expected = expected_dir.to_string_lossy().to_string();
-
         match client.storage_dir().await {
             Ok(backend_dir) if backend_dir == expected => {
                 tracing::info!("Connected to existing llmx backend on port {port}");
@@ -1259,9 +1305,8 @@ async fn detect_or_start_backend(port: u16, storage_dir: Option<&PathBuf>) -> Op
                 return None;
             }
             Err(e) => {
-                // Older backend without /api/config -- accept it
-                tracing::debug!("Backend config check failed ({e}), assuming compatible");
-                return Some(client);
+                tracing::warn!("Backend auth/config check failed ({e}), falling back to standalone");
+                return None;
             }
         }
     }
@@ -1304,14 +1349,18 @@ async fn detect_or_start_backend(port: u16, storage_dir: Option<&PathBuf>) -> Op
         }
     }
 
+    // Wait for backend to start, then re-read token it wrote
     for i in 0..50 {
         tokio::time::sleep(Duration::from_millis(100)).await;
-        if client.health_check().await {
+        // Re-read token on each attempt (backend writes it on startup)
+        let fresh_token = read_token_file(&expected_dir);
+        let fresh_client = BackendClient::new(port, fresh_token);
+        if fresh_client.health_check().await {
             tracing::info!(
                 "Backend started successfully on port {port} (took ~{}ms)",
                 (i + 1) * 100
             );
-            return Some(client);
+            return Some(fresh_client);
         }
     }
 
@@ -1335,6 +1384,11 @@ async fn serve_rest(
     use http_body_util::{BodyExt, Full};
     use bytes::Bytes;
     use std::net::SocketAddr;
+
+    // Generate and persist auth token
+    let token = generate_token();
+    write_token_file(&storage_dir, &token)?;
+    let token = Arc::new(token);
 
     fn json_ok<T: serde::Serialize>(value: &T) -> Response<Full<Bytes>> {
         let body = serde_json::to_vec(value).unwrap_or_default();
@@ -1368,7 +1422,19 @@ async fn serve_rest(
         jobs: JobStore,
         stale_paths: Arc<Mutex<BTreeSet<String>>>,
         storage_dir: PathBuf,
+        expected_token: Arc<String>,
     ) -> Result<Response<Full<Bytes>>, std::convert::Infallible> {
+        // Validate bearer token on every request
+        let auth_ok = req.headers()
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .map(|t| t == expected_token.as_str())
+            .unwrap_or(false);
+        if !auth_ok {
+            return Ok(json_err(StatusCode::UNAUTHORIZED, "Invalid or missing bearer token"));
+        }
+
         let method = req.method().clone();
         let path = req.uri().path().to_string();
 
@@ -1653,10 +1719,11 @@ async fn serve_rest(
         let jobs = jobs.clone();
         let stale_paths = stale_paths.clone();
         let storage_dir = storage_dir.clone();
+        let token = token.clone();
 
         tokio::spawn(async move {
             let service = hyper::service::service_fn(move |req| {
-                handle(req, store.clone(), jobs.clone(), stale_paths.clone(), storage_dir.clone())
+                handle(req, store.clone(), jobs.clone(), stale_paths.clone(), storage_dir.clone(), token.clone())
             });
             if let Err(err) = hyper::server::conn::http1::Builder::new()
                 .serve_connection(io, service)
