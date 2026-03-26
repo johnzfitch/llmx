@@ -695,14 +695,24 @@ impl ServerHandler for LlmxServer {
     }
 
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            protocol_version: ProtocolVersion::V_2024_11_05,
-            capabilities: ServerCapabilities::builder()
+        // Only advertise listChanged in local mode where the file
+        // watcher can actually fire these notifications.
+        let capabilities = if matches!(self.data_source, DataSource::Local { .. }) {
+            ServerCapabilities::builder()
                 .enable_tools()
                 .enable_tool_list_changed()
                 .enable_resources()
                 .enable_resources_list_changed()
-                .build(),
+                .build()
+        } else {
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_resources()
+                .build()
+        };
+        ServerInfo {
+            protocol_version: ProtocolVersion::V_2024_11_05,
+            capabilities,
             server_info: Implementation {
                 name: "llmx".to_string(),
                 version: "2.1.0".to_string(),
