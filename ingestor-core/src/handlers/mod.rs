@@ -929,7 +929,16 @@ pub fn llmx_search_dynamic_handler(
                     prefix.push('/');
                 }
                 filters.path_prefix = Some(match filters.path_prefix {
-                    Some(existing) => format!("{}{}", prefix, existing),
+                    Some(existing) => {
+                        // User's path_prefix is relative to their cwd (the subdirectory).
+                        // Prepend the scope prefix, ensuring a single separator between them.
+                        let trimmed = existing.trim_start_matches('/');
+                        if trimmed.is_empty() {
+                            prefix
+                        } else {
+                            format!("{}{}", prefix, trimmed)
+                        }
+                    }
                     None => prefix,
                 });
                 Some(filters)
