@@ -375,10 +375,11 @@ impl LlmxServer {
     #[tool(description = "Search index with inline content")]
     async fn llmx_search(
         &self,
-        Parameters(input): Parameters<SearchInput>,
+        Parameters(mut input): Parameters<SearchInput>,
     ) -> Result<CallToolResult, McpError> {
         let content = match &self.data_source {
             DataSource::Remote(client) => {
+                fill_loc_from_cwd(&mut input.loc);
                 let result = client.search(&input).await
                     .map_err(|e| McpError::internal_error(e.to_string(), None))?;
                 serde_json::to_string_pretty(&result)
@@ -398,10 +399,11 @@ impl LlmxServer {
     #[tool(description = "Legacy compatibility tool: explore index structure (files, outline, symbols, callers/callees/importers)")]
     async fn llmx_explore(
         &self,
-        Parameters(input): Parameters<ExploreInput>,
+        Parameters(mut input): Parameters<ExploreInput>,
     ) -> Result<CallToolResult, McpError> {
         let content = match &self.data_source {
             DataSource::Remote(client) => {
+                fill_loc_from_cwd(&mut input.loc);
                 let result = client.explore(&input).await
                     .map_err(|e| McpError::internal_error(e.to_string(), None))?;
                 serde_json::to_string_pretty(&result)
@@ -421,10 +423,11 @@ impl LlmxServer {
     #[tool(description = "Legacy compatibility tool: symbol table lookup by glob-like pattern.")]
     async fn llmx_symbols(
         &self,
-        Parameters(input): Parameters<SymbolsInput>,
+        Parameters(mut input): Parameters<SymbolsInput>,
     ) -> Result<CallToolResult, McpError> {
         let content = match &self.data_source {
             DataSource::Remote(client) => {
+                fill_loc_from_cwd(&mut input.loc);
                 let result = client.symbols(&input).await
                     .map_err(|e| McpError::internal_error(e.to_string(), None))?;
                 serde_json::to_string_pretty(&result)
@@ -444,10 +447,11 @@ impl LlmxServer {
     #[tool(description = "Exact or prefix symbol resolution by name. Use this for 'find function parseConfig' and similar symbol lookups.")]
     async fn llmx_lookup(
         &self,
-        Parameters(input): Parameters<LookupInput>,
+        Parameters(mut input): Parameters<LookupInput>,
     ) -> Result<CallToolResult, McpError> {
         let content = match &self.data_source {
             DataSource::Remote(client) => {
+                fill_loc_from_cwd(&mut input.loc);
                 let result = client.lookup(&input).await
                     .map_err(|e| McpError::internal_error(e.to_string(), None))?;
                 serde_json::to_string_pretty(&result)
@@ -467,10 +471,11 @@ impl LlmxServer {
     #[tool(description = "Graph traversal for code structure: callers, callees, imports, importers, and type users.")]
     async fn llmx_refs(
         &self,
-        Parameters(input): Parameters<RefsInput>,
+        Parameters(mut input): Parameters<RefsInput>,
     ) -> Result<CallToolResult, McpError> {
         let content = match &self.data_source {
             DataSource::Remote(client) => {
+                fill_loc_from_cwd(&mut input.loc);
                 let result = client.refs(&input).await
                     .map_err(|e| McpError::internal_error(e.to_string(), None))?;
                 serde_json::to_string_pretty(&result)
@@ -490,10 +495,11 @@ impl LlmxServer {
     #[tool(description = "Fetch the full chunk content by chunk ID, chunk ref, or ID prefix.")]
     async fn llmx_get_chunk(
         &self,
-        Parameters(input): Parameters<GetChunkInput>,
+        Parameters(mut input): Parameters<GetChunkInput>,
     ) -> Result<CallToolResult, McpError> {
         let content = match &self.data_source {
             DataSource::Remote(client) => {
+                fill_loc_from_cwd(&mut input.loc);
                 let result = client.get_chunk(&input).await
                     .map_err(|e| McpError::internal_error(e.to_string(), None))?;
                 serde_json::to_string_pretty(&result)
@@ -513,10 +519,11 @@ impl LlmxServer {
     #[tool(description = "List indexes, delete an index, inspect index stats, or check job status (action='job_status', index_id='<job_id>')")]
     async fn llmx_manage(
         &self,
-        Parameters(input): Parameters<ManageInput>,
+        Parameters(mut input): Parameters<ManageInput>,
     ) -> Result<CallToolResult, McpError> {
         let content = match &self.data_source {
             DataSource::Remote(client) => {
+                fill_loc_from_cwd(&mut input.loc);
                 let result = client.manage(&input).await
                     .map_err(|e| McpError::internal_error(e.to_string(), None))?;
                 serde_json::to_string_pretty(&result)
@@ -576,9 +583,18 @@ impl ServerHandler for LlmxServer {
             ));
         }
 
-        let output = self.status_snapshot()?;
-        let text = serde_json::to_string_pretty(&output)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let text = match &self.data_source {
+            DataSource::Local { .. } => {
+                let output = self.status_snapshot()?;
+                serde_json::to_string_pretty(&output)
+            }
+            DataSource::Remote(client) => {
+                let output = client.status().await
+                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+                serde_json::to_string_pretty(&output)
+            }
+        }
+        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
         Ok(ReadResourceResult {
             contents: vec![ResourceContents::TextResourceContents {
@@ -888,6 +904,16 @@ mod tests {
 }
 
 const DEFAULT_SERVE_PORT: u16 = 19100;
+
+/// Fill in `loc` with the proxy process's cwd when unset, so the backend
+/// resolves indexes against the client's working directory rather than its own.
+fn fill_loc_from_cwd(loc: &mut Option<String>) {
+    if loc.is_none() {
+        if let Ok(cwd) = env::current_dir() {
+            *loc = Some(cwd.to_string_lossy().to_string());
+        }
+    }
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -1410,6 +1436,22 @@ async fn serve_rest(
                     .and_then(|v| serde_json::from_value(v.clone()).ok())
                     .unwrap_or_default();
                 tracing::info!("Received {} root paths from proxy", roots.len());
+                // Auto-index root paths that aren't already indexed
+                let paths_to_index: Vec<PathBuf> = roots.iter()
+                    .filter_map(|uri| url::Url::parse(uri).ok())
+                    .filter_map(|u| u.to_file_path().ok())
+                    .filter(|p| {
+                        store.lock().ok()
+                            .map(|s| s.find_by_path(p).is_none())
+                            .unwrap_or(true)
+                    })
+                    .collect();
+                if !paths_to_index.is_empty() {
+                    let store2 = store.clone();
+                    tokio::task::spawn_blocking(move || {
+                        auto_index_paths(&store2, &paths_to_index);
+                    });
+                }
                 json_ok(&serde_json::json!({ "ok": true, "roots": roots.len() }))
             }
 
@@ -1490,6 +1532,17 @@ async fn main() -> anyhow::Result<()> {
 
     let server = if let Some(client) = detect_or_start_backend(port).await {
         tracing::info!("Running in proxy mode (backend on port {port})");
+        // Forward --path args to the backend for indexing
+        if !args.paths.is_empty() {
+            let path_strings: Vec<String> = args.paths.iter()
+                .map(|p| p.canonicalize().unwrap_or_else(|_| p.clone()).to_string_lossy().to_string())
+                .collect();
+            tracing::info!("Forwarding {} --path args to backend", path_strings.len());
+            let input = IndexInput { paths: path_strings, options: None };
+            if let Err(e) = client.index(&input).await {
+                tracing::warn!("Failed to forward --path to backend: {e}");
+            }
+        }
         LlmxServer::new_remote(client)
     } else {
         tracing::info!("Running in standalone mode");
