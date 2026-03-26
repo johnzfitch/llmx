@@ -261,6 +261,29 @@ impl IndexStore {
         self.registry.indexes.get(&path_hash)
     }
 
+    /// Find a persistent index whose root is an ancestor of the given path.
+    ///
+    /// Returns the metadata and the relative path from the index root to the given path.
+    /// Prefers the deepest (most specific) ancestor match.
+    pub fn find_metadata_containing_path(&self, path: &Path) -> Option<(&IndexMetadata, String)> {
+        let normalized = path.to_string_lossy().replace('\\', "/");
+        let mut best: Option<(&IndexMetadata, String)> = None;
+
+        for meta in self.registry.indexes.values() {
+            let root = meta.root_path.trim_end_matches('/');
+            let prefix = format!("{}/", root);
+            if normalized.starts_with(&prefix) {
+                let relative = &normalized[prefix.len()..];
+                // Prefer deepest ancestor (longest root_path)
+                if best.as_ref().map_or(true, |(b, _)| meta.root_path.len() > b.root_path.len()) {
+                    best = Some((meta, relative.to_string()));
+                }
+            }
+        }
+
+        best
+    }
+
     /// Get mutable reference to cached index.
     pub fn get_mut(&mut self, id: &str) -> Option<&mut IndexFile> {
         self.cache.get_mut(id)

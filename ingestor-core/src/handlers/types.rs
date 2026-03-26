@@ -43,7 +43,7 @@ pub struct SearchInput {
     pub strategy: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct SearchFiltersInput {
     pub path_prefix: Option<String>,
     pub kind: Option<String>,

@@ -898,24 +898,46 @@ pub fn llmx_search_dynamic_handler(
     let _start = Instant::now();
     let cwd = std::env::current_dir().context("Could not get current directory")?;
 
-    // Step 1: Determine the root path
+    // Step 1: Determine the root path (canonicalize to match what llmx_index stores)
     let root = if let Some(ref path) = input.path {
         path.canonicalize().unwrap_or_else(|_| path.clone())
     } else {
-        cwd.clone()
+        cwd.canonicalize().unwrap_or_else(|_| cwd.clone())
     };
 
     // Step 2: Check for persistent index first (unless force_dynamic)
     if !input.force_dynamic {
-        if let Some(metadata) = store.find_metadata_by_path(&root) {
-            // Use persistent index
-            let index_id = metadata.id.clone();
+        // Try exact match first, then check if any parent index contains this path
+        let persistent_match: Option<(String, Option<String>)> =
+            if let Some(metadata) = store.find_metadata_by_path(&root) {
+                Some((metadata.id.clone(), None))
+            } else if let Some((metadata, relative)) = store.find_metadata_containing_path(&root) {
+                Some((metadata.id.clone(), Some(relative)))
+            } else {
+                None
+            };
+
+        if let Some((index_id, sub_path)) = persistent_match {
             let index = store.load(&index_id)?;
+
+            // If searching from a subdirectory, scope results via path_prefix filter
+            let scoped_filters = if let Some(ref relative) = sub_path {
+                let mut filters = input.filters.clone().unwrap_or_default();
+                // Combine with any existing path_prefix filter
+                filters.path_prefix = Some(match filters.path_prefix {
+                    Some(existing) => format!("{}/{}", relative, existing),
+                    None => relative.clone(),
+                });
+                Some(filters)
+            } else {
+                input.filters.clone()
+            };
+
             let search_start = Instant::now();
             let (results, truncated_ids, total_matches, notices) = perform_search(
                 index,
                 &input.query,
-                &input.filters,
+                &scoped_filters,
                 input.limit,
                 input.max_tokens,
                 input.use_semantic,
