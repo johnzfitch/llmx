@@ -75,6 +75,7 @@ const STATUS_RESOURCE_URI: &str = "llmx://index/status";
 struct DebouncedWatcher {
     _watcher: RecommendedWatcher,
     watched_roots: BTreeSet<PathBuf>,
+    _consumer: tokio::task::JoinHandle<()>,
 }
 
 const DEBOUNCE_QUIET_MS: u64 = 500;
@@ -99,7 +100,7 @@ fn spawn_debounced_watcher(
     })?;
 
     // Consumer task: debounce + batch refresh
-    tokio::spawn(async move {
+    let consumer = tokio::spawn(async move {
         loop {
             // Wait for first event
             let first = match rx.recv().await {
@@ -169,6 +170,7 @@ fn spawn_debounced_watcher(
     Ok(DebouncedWatcher {
         _watcher: w,
         watched_roots,
+        _consumer: consumer,
     })
 }
 
@@ -366,7 +368,9 @@ impl LlmxServer {
                 .map_err(|e| McpError::internal_error(e.to_string(), None))?;
             return Ok(CallToolResult::success(vec![Content::text(content)]));
         }
-        let DataSource::Local { store, jobs } = &self.data_source else { unreachable!() };
+        let DataSource::Local { store, jobs } = &self.data_source else {
+            return Err(McpError::internal_error("llmx_index not available in proxy mode", None));
+        };
 
         if active_job_count(jobs) >= MAX_CONCURRENT_JOBS {
             return Err(McpError::internal_error(
@@ -1006,33 +1010,37 @@ fn fill_loc_from_cwd(loc: &mut Option<String>) {
     }
 }
 
-/// Generate a random 32-byte hex token for backend auth.
+/// Generate a cryptographically random 32-byte hex token for backend auth.
 fn generate_token() -> String {
-    use std::collections::hash_map::RandomState;
-    use std::hash::{BuildHasher, Hasher};
-    let s = RandomState::new();
-    let mut h = s.build_hasher();
-    h.write_u128(std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos());
-    let a = h.finish();
-    let mut h2 = s.build_hasher();
-    h2.write_u64(a);
-    h2.write_usize(std::process::id() as usize);
-    let b = h2.finish();
-    format!("{a:016x}{b:016x}")
+    let mut buf = [0u8; 32];
+    getrandom::fill(&mut buf).expect("OS entropy source unavailable");
+    hex::encode(buf)
 }
 
 /// Write token to storage_dir/.backend-token with restrictive permissions.
+/// Uses atomic write-to-temp + rename to avoid TOCTOU permission window.
 fn write_token_file(storage_dir: &std::path::Path, token: &str) -> anyhow::Result<()> {
-    let path = storage_dir.join(TOKEN_FILENAME);
-    std::fs::write(&path, token)?;
-    #[cfg(unix)]
+    use std::io::Write;
+    let target = storage_dir.join(TOKEN_FILENAME);
+    let tmp = storage_dir.join(".backend-token.tmp");
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+        #[cfg(unix)]
+        let file = {
+            use std::os::unix::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&tmp)?
+        };
+        #[cfg(not(unix))]
+        let file = std::fs::File::create(&tmp)?;
+        let mut file = std::io::BufWriter::new(file);
+        file.write_all(token.as_bytes())?;
+        file.flush()?;
     }
+    std::fs::rename(&tmp, &target)?;
     Ok(())
 }
 
@@ -1092,6 +1100,7 @@ fn spawn_backend_watcher(
 ) {
     tokio::spawn(async move {
         let mut current_watcher: Option<DebouncedWatcher> = None;
+        let mut consecutive_failures: u32 = 0;
 
         loop {
             let indexed_roots: Vec<PathBuf> = store
@@ -1120,8 +1129,18 @@ fn spawn_backend_watcher(
                     indexed_roots,
                     None, // no MCP notifications in backend mode
                 ) {
-                    Ok(w) => { current_watcher = Some(w); }
-                    Err(e) => { tracing::warn!("backend watcher setup failed: {e}"); }
+                    Ok(w) => {
+                        current_watcher = Some(w);
+                        consecutive_failures = 0;
+                    }
+                    Err(e) => {
+                        consecutive_failures += 1;
+                        if consecutive_failures >= 10 {
+                            tracing::error!("backend watcher failed {consecutive_failures} times, giving up");
+                            break;
+                        }
+                        tracing::warn!("backend watcher setup failed ({consecutive_failures}/10): {e}");
+                    }
                 }
             }
 
@@ -1424,12 +1443,16 @@ async fn serve_rest(
         storage_dir: PathBuf,
         expected_token: Arc<String>,
     ) -> Result<Response<Full<Bytes>>, std::convert::Infallible> {
-        // Validate bearer token on every request
+        // Validate bearer token on every request (constant-time comparison)
         let auth_ok = req.headers()
             .get("authorization")
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "))
-            .map(|t| t == expected_token.as_str())
+            .map(|t| {
+                let a = t.as_bytes();
+                let b = expected_token.as_bytes();
+                a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+            })
             .unwrap_or(false);
         if !auth_ok {
             return Ok(json_err(StatusCode::UNAUTHORIZED, "Invalid or missing bearer token"));
@@ -1681,18 +1704,16 @@ async fn serve_rest(
                 tracing::info!("Received {} root paths from proxy", roots.len());
                 // Auto-index root paths not already covered by an exact
                 // or ancestor index (avoids duplicate nested indexes).
-                let paths_to_index: Vec<PathBuf> = roots.iter()
+                let candidate_paths: Vec<PathBuf> = roots.iter()
                     .filter_map(|uri| url::Url::parse(uri).ok())
                     .filter_map(|u| u.to_file_path().ok())
-                    .filter(|p| {
-                        store.lock().ok()
-                            .map(|s| {
-                                s.find_by_path(p).is_none()
-                                    && !s.has_ancestor_index(p)
-                            })
-                            .unwrap_or(true)
-                    })
                     .collect();
+                let paths_to_index: Vec<PathBuf> = match store.lock() {
+                    Ok(s) => candidate_paths.into_iter()
+                        .filter(|p| s.find_by_path(p).is_none() && !s.has_ancestor_index(p))
+                        .collect(),
+                    Err(_) => candidate_paths,
+                };
                 if !paths_to_index.is_empty() {
                     let store2 = store.clone();
                     tokio::task::spawn_blocking(move || {
