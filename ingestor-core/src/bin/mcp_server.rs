@@ -13,8 +13,8 @@ use llmx_mcp::{ingest_files_with_root, update_index_selective, IngestOptions};
 use rmcp::handler::server::{router::tool::ToolRouter, tool::Parameters};
 use rmcp::model::{ErrorData as McpError, *};
 use rmcp::{tool, tool_handler, tool_router, ServerHandler, ServiceExt};
-use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use notify::event::ModifyKind;
+use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
+use tokio::sync::mpsc;
 use rmcp::service::{NotificationContext, Peer, RequestContext, RoleServer};
 use std::collections::BTreeSet;
 use std::env;
@@ -66,10 +66,110 @@ struct Args {
 
 const STATUS_RESOURCE_URI: &str = "llmx://index/status";
 
-#[derive(Default)]
-struct WatchState {
-    watcher: Option<RecommendedWatcher>,
+/// Debounced file watcher shared by both stdio and --serve modes.
+///
+/// The notify callback only sends paths into an mpsc channel (instant, no locks).
+/// A consumer task drains the channel after a 500ms quiet window and calls
+/// `refresh_impacted_indexes` once with the full batch. In stdio mode an
+/// optional MCP peer callback fires notifications after each refresh.
+struct DebouncedWatcher {
+    _watcher: RecommendedWatcher,
     watched_roots: BTreeSet<PathBuf>,
+}
+
+const DEBOUNCE_QUIET_MS: u64 = 500;
+
+/// Callback invoked after a debounced refresh completes.
+/// Stdio mode sends MCP notifications; backend mode is a no-op.
+type PostRefreshFn = Box<dyn Fn(bool, &[PathBuf]) + Send + 'static>;
+
+fn spawn_debounced_watcher(
+    store: Arc<Mutex<IndexStore>>,
+    stale_paths: Arc<Mutex<BTreeSet<String>>>,
+    roots: Vec<PathBuf>,
+    post_refresh: Option<PostRefreshFn>,
+) -> anyhow::Result<DebouncedWatcher> {
+    let (tx, mut rx) = mpsc::unbounded_channel::<Vec<PathBuf>>();
+
+    let watcher = notify::recommended_watcher(move |event: notify::Result<Event>| {
+        let Ok(event) = event else { return };
+        if !event.paths.is_empty() {
+            let _ = tx.send(event.paths);
+        }
+    })?;
+
+    // Consumer task: debounce + batch refresh
+    tokio::spawn(async move {
+        loop {
+            // Wait for first event
+            let first = match rx.recv().await {
+                Some(paths) => paths,
+                None => break, // channel closed
+            };
+            let mut batch: BTreeSet<PathBuf> = first.into_iter().collect();
+
+            // Drain more events during quiet window
+            loop {
+                match tokio::time::timeout(
+                    Duration::from_millis(DEBOUNCE_QUIET_MS),
+                    rx.recv(),
+                )
+                .await
+                {
+                    Ok(Some(paths)) => { batch.extend(paths); }
+                    _ => break, // timeout or channel closed
+                }
+            }
+
+            let changed_paths: Vec<PathBuf> = batch.into_iter().collect();
+            let stale_markers = normalize_paths(&changed_paths);
+            if let Ok(mut stale) = stale_paths.lock() {
+                stale.extend(stale_markers);
+            }
+
+            let store2 = store.clone();
+            let stale2 = stale_paths.clone();
+            let changed2 = changed_paths.clone();
+            let refresh = tokio::task::spawn_blocking(move || {
+                refresh_impacted_indexes(&store2, &stale2, &changed2)
+            })
+            .await;
+
+            let changed = match refresh {
+                Ok(Ok(changed)) => changed,
+                Ok(Err(err)) => {
+                    tracing::warn!("debounced refresh failed: {err}");
+                    false
+                }
+                Err(err) => {
+                    tracing::warn!("debounced refresh join error: {err}");
+                    false
+                }
+            };
+
+            if let Some(ref cb) = post_refresh {
+                cb(changed, &changed_paths);
+            }
+        }
+    });
+
+    let mut watched_roots = BTreeSet::new();
+    let mut w = watcher;
+    for root in &roots {
+        if let Err(e) = w.watch(root, RecursiveMode::Recursive) {
+            tracing::warn!("watcher: failed to watch {}: {e}", root.display());
+        } else {
+            watched_roots.insert(root.clone());
+        }
+    }
+    if !watched_roots.is_empty() {
+        tracing::info!("watcher: watching {} roots", watched_roots.len());
+    }
+
+    Ok(DebouncedWatcher {
+        _watcher: w,
+        watched_roots,
+    })
 }
 
 /// MCP server for codebase indexing and semantic search.
@@ -105,7 +205,7 @@ enum DataSource {
 struct LlmxServer {
     data_source: DataSource,
     peer: Arc<Mutex<Option<Peer<RoleServer>>>>,
-    watch_state: Arc<Mutex<WatchState>>,
+    watcher: Arc<Mutex<Option<DebouncedWatcher>>>,
     stale_paths: Arc<Mutex<BTreeSet<String>>>,
     tool_router: ToolRouter<Self>,
 }
@@ -116,7 +216,7 @@ impl LlmxServer {
         Self {
             data_source: DataSource::Local { store, jobs },
             peer: Arc::new(Mutex::new(None)),
-            watch_state: Arc::new(Mutex::new(WatchState::default())),
+            watcher: Arc::new(Mutex::new(None)),
             stale_paths: Arc::new(Mutex::new(BTreeSet::new())),
             tool_router: Self::tool_router(),
         }
@@ -126,7 +226,7 @@ impl LlmxServer {
         Self {
             data_source: DataSource::Remote(client),
             peer: Arc::new(Mutex::new(None)),
-            watch_state: Arc::new(Mutex::new(WatchState::default())),
+            watcher: Arc::new(Mutex::new(None)),
             stale_paths: Arc::new(Mutex::new(BTreeSet::new())),
             tool_router: Self::tool_router(),
         }
@@ -186,74 +286,52 @@ impl LlmxServer {
         let DataSource::Local { store, .. } = &self.data_source else {
             return Ok(()); // No-op in proxy mode
         };
+
+        // Build MCP notification callback for stdio mode
         let peer_slot = self.peer.clone();
-        let store = store.clone();
-        let stale_paths = self.stale_paths.clone();
         let runtime = tokio::runtime::Handle::current();
-        let mut watcher = notify::recommended_watcher(move |event: notify::Result<Event>| {
-            let Ok(event) = event else { return };
+        let post_refresh: PostRefreshFn = Box::new(move |changed, changed_paths: &[PathBuf]| {
             let peer = peer_slot.lock().ok().and_then(|slot| slot.clone());
             let Some(peer) = peer else { return };
-            let changed_paths = event.paths.clone();
-            let stale_markers = normalize_paths(&changed_paths);
-            if let Ok(mut stale) = stale_paths.lock() {
-                stale.extend(stale_markers);
-            }
-
-            let uris: Vec<String> = event
-                .paths
+            let uris: Vec<String> = changed_paths
                 .iter()
                 .filter_map(|path| file_path_to_uri(path))
                 .collect();
-            let should_list_changed = should_emit_resource_list_changed(&event);
-            let store = store.clone();
-            let stale_paths = stale_paths.clone();
-
+            let has_structural = changed_paths.iter().any(|p| {
+                // Approximate: treat creates/removes as structural
+                !p.exists() || p.is_dir()
+            });
             runtime.spawn(async move {
                 let _ = peer
                     .notify_resource_updated(ResourceUpdatedNotificationParam {
                         uri: STATUS_RESOURCE_URI.to_string(),
                     })
                     .await;
-                for uri in uris {
+                for uri in &uris {
                     let _ = peer
-                        .notify_resource_updated(ResourceUpdatedNotificationParam { uri })
+                        .notify_resource_updated(ResourceUpdatedNotificationParam {
+                            uri: uri.clone(),
+                        })
                         .await;
                 }
-                if should_list_changed {
+                if has_structural {
                     let _ = peer.notify_resource_list_changed().await;
                 }
-
-                let refresh = tokio::task::spawn_blocking(move || {
-                    refresh_impacted_indexes(&store, &stale_paths, &changed_paths)
-                })
-                .await;
-
-                match refresh {
-                    Ok(Ok(changed)) if changed => {
-                        let _ = peer
-                            .notify_resource_updated(ResourceUpdatedNotificationParam {
-                                uri: STATUS_RESOURCE_URI.to_string(),
-                            })
-                            .await;
-                        let _ = peer.notify_tool_list_changed().await;
-                    }
-                    Ok(Ok(_)) => {}
-                    Ok(Err(err)) => tracing::warn!("failed to refresh impacted indexes: {err}"),
-                    Err(err) => tracing::warn!("refresh task join error: {err}"),
+                if changed {
+                    let _ = peer.notify_tool_list_changed().await;
                 }
             });
-        })?;
+        });
 
-        let mut watched_roots = BTreeSet::new();
-        for root in &roots {
-            watcher.watch(root, RecursiveMode::Recursive)?;
-            watched_roots.insert(root.clone());
-        }
+        let new_watcher = spawn_debounced_watcher(
+            store.clone(),
+            self.stale_paths.clone(),
+            roots.clone(),
+            Some(post_refresh),
+        )?;
 
-        if let Ok(mut state) = self.watch_state.lock() {
-            state.watcher = Some(watcher);
-            state.watched_roots = watched_roots;
+        if let Ok(mut slot) = self.watcher.lock() {
+            *slot = Some(new_watcher);
         }
 
         if let Ok(mut stale) = self.stale_paths.lock() {
@@ -693,15 +771,6 @@ fn normalize_paths(paths: &[PathBuf]) -> Vec<String> {
     normalized
 }
 
-fn should_emit_resource_list_changed(event: &Event) -> bool {
-    matches!(
-        event.kind,
-        EventKind::Create(_)
-            | EventKind::Remove(_)
-            | EventKind::Modify(ModifyKind::Name(_))
-    )
-}
-
 fn refresh_impacted_indexes(
     store: &Arc<Mutex<IndexStore>>,
     stale_paths: &Arc<Mutex<BTreeSet<String>>>,
@@ -967,24 +1036,18 @@ fn spawn_job_cleanup(jobs: JobStore) {
     });
 }
 
-/// Spawn a file watcher for --serve backend mode.
-///
-/// Periodically discovers indexed roots and watches them for changes,
-/// refreshing impacted indexes on disk edits. Unlike the MCP watcher,
-/// there are no peer notifications to send -- proxy sessions will see
-/// fresh data on their next request.
+/// Spawn a background loop for --serve backend mode that discovers indexed
+/// roots and watches them via the shared `spawn_debounced_watcher`. No MCP
+/// peer notifications -- proxy sessions see fresh data on their next request.
 fn spawn_backend_watcher(
     store: Arc<Mutex<IndexStore>>,
     stale_paths: Arc<Mutex<BTreeSet<String>>>,
 ) {
     tokio::spawn(async move {
-        let mut watched_roots: BTreeSet<PathBuf> = BTreeSet::new();
-        // Hold the watcher in scope so it stays alive
-        let mut _watcher: Option<RecommendedWatcher> = None;
+        let mut current_watcher: Option<DebouncedWatcher> = None;
 
         loop {
-            // Discover all indexed roots
-            let current_roots: BTreeSet<PathBuf> = store
+            let indexed_roots: Vec<PathBuf> = store
                 .lock()
                 .ok()
                 .and_then(|s| s.list().ok())
@@ -994,42 +1057,24 @@ fn spawn_backend_watcher(
                 .filter(|p| p.exists())
                 .collect();
 
-            if current_roots != watched_roots {
-                let store2 = store.clone();
-                let stale2 = stale_paths.clone();
-                let runtime = tokio::runtime::Handle::current();
+            let need_update = match &current_watcher {
+                None => !indexed_roots.is_empty(),
+                Some(w) => {
+                    let old: BTreeSet<_> = w.watched_roots.iter().collect();
+                    let new: BTreeSet<_> = indexed_roots.iter().collect();
+                    old != new
+                }
+            };
 
-                match notify::recommended_watcher(move |event: notify::Result<Event>| {
-                    let Ok(event) = event else { return };
-                    let changed_paths = event.paths.clone();
-                    let stale_markers = normalize_paths(&changed_paths);
-                    if let Ok(mut stale) = stale2.lock() {
-                        stale.extend(stale_markers);
-                    }
-                    let store3 = store2.clone();
-                    let stale3 = stale2.clone();
-                    runtime.spawn(async move {
-                        let _ = tokio::task::spawn_blocking(move || {
-                            if let Err(e) = refresh_impacted_indexes(&store3, &stale3, &changed_paths) {
-                                tracing::warn!("backend watcher refresh failed: {e}");
-                            }
-                        })
-                        .await;
-                    });
-                }) {
-                    Ok(mut w) => {
-                        for root in &current_roots {
-                            if let Err(e) = w.watch(root, RecursiveMode::Recursive) {
-                                tracing::warn!("backend watcher: failed to watch {}: {e}", root.display());
-                            }
-                        }
-                        tracing::info!("backend watcher: watching {} roots", current_roots.len());
-                        watched_roots = current_roots;
-                        _watcher = Some(w);
-                    }
-                    Err(e) => {
-                        tracing::warn!("backend watcher: failed to create watcher: {e}");
-                    }
+            if need_update {
+                match spawn_debounced_watcher(
+                    store.clone(),
+                    stale_paths.clone(),
+                    indexed_roots,
+                    None, // no MCP notifications in backend mode
+                ) {
+                    Ok(w) => { current_watcher = Some(w); }
+                    Err(e) => { tracing::warn!("backend watcher setup failed: {e}"); }
                 }
             }
 
