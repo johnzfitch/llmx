@@ -920,13 +920,17 @@ pub fn llmx_search_dynamic_handler(
         if let Some((index_id, sub_path)) = persistent_match {
             let index = store.load(&index_id)?;
 
-            // If searching from a subdirectory, scope results via path_prefix filter
+            // If searching from a subdirectory, scope results via path_prefix filter.
+            // Ensure trailing '/' so "src/lib" doesn't match "src/library/...".
             let scoped_filters = if let Some(ref relative) = sub_path {
                 let mut filters = input.filters.clone().unwrap_or_default();
-                // Combine with any existing path_prefix filter
+                let mut prefix = relative.clone();
+                if !prefix.is_empty() && !prefix.ends_with('/') {
+                    prefix.push('/');
+                }
                 filters.path_prefix = Some(match filters.path_prefix {
-                    Some(existing) => format!("{}/{}", relative, existing),
-                    None => relative.clone(),
+                    Some(existing) => format!("{}{}", prefix, existing),
+                    None => prefix,
                 });
                 Some(filters)
             } else {
