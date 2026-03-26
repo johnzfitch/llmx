@@ -21,13 +21,13 @@ use std::path::{Path, PathBuf};
 
 const DEFAULT_MAX_TOKENS: usize = 8000;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct BackgroundTaskOutput {
     pub job_id: String,
     pub status: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct StatusOutput {
     pub readiness_tier: u8,
     pub files_indexed: usize,
@@ -41,7 +41,7 @@ pub struct StatusOutput {
 
 // Input/Output types for MCP tools
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "mcp", derive(JsonSchema))]
 pub struct IndexInput {
     #[cfg_attr(feature = "mcp", schemars(description = "File or directory paths to index"))]
@@ -51,7 +51,7 @@ pub struct IndexInput {
     pub options: Option<IngestOptionsInput>,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Serialize, Default)]
 #[cfg_attr(feature = "mcp", derive(JsonSchema))]
 pub struct IngestOptionsInput {
     #[cfg_attr(feature = "mcp", schemars(description = "Target chunk size in characters"))]
@@ -84,7 +84,7 @@ pub struct WarningOutput {
     pub message: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "mcp", derive(JsonSchema))]
 pub struct SearchInput {
     #[serde(default)]
@@ -123,7 +123,7 @@ pub struct SearchInput {
     pub strategy: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Serialize, Default)]
 #[cfg_attr(feature = "mcp", derive(JsonSchema))]
 pub struct SearchFiltersInput {
     #[cfg_attr(feature = "mcp", schemars(description = "Filter by file path prefix"))]
@@ -136,7 +136,7 @@ pub struct SearchFiltersInput {
     pub heading_prefix: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "mcp", derive(JsonSchema))]
 pub struct ExploreInput {
     #[serde(default)]
@@ -152,7 +152,7 @@ pub struct ExploreInput {
     pub path_filter: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "mcp", derive(JsonSchema))]
 pub struct ManageInput {
     #[cfg_attr(feature = "mcp", schemars(description = "Action: 'list', 'delete', 'stats', or 'job_status'"))]
@@ -242,7 +242,7 @@ pub struct ManageStatsOutput {
 }
 
 /// Phase 7: llmx_symbols input — fast symbol table lookup by name pattern.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "mcp", derive(JsonSchema))]
 pub struct SymbolsInput {
     #[serde(default)]
@@ -301,7 +301,7 @@ pub struct SymbolsOutput {
     pub readiness_tier: u8,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "mcp", derive(JsonSchema))]
 pub struct LookupInput {
     #[serde(default)]
@@ -330,7 +330,7 @@ pub struct LookupOutput {
     pub readiness_tier: u8,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "mcp", derive(JsonSchema))]
 pub struct RefsInput {
     #[serde(default)]
@@ -375,7 +375,7 @@ pub struct RefsOutput {
     pub readiness_tier: u8,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "mcp", derive(JsonSchema))]
 pub struct GetChunkInput {
     #[serde(default)]
