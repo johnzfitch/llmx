@@ -1314,17 +1314,18 @@ async fn detect_or_start_backend(port: u16, storage_dir: Option<&PathBuf>) -> Op
                 return Some(client);
             }
             Ok(backend_dir) => {
-                tracing::warn!(
-                    "Backend on port {port} uses storage {backend_dir}, \
-                     but this session expects {expected}. \
-                     Cannot auto-start (port occupied). Falling back to standalone."
+                tracing::error!(
+                    "LLMX backend conflict: port {port} is running with storage_dir={backend_dir}, \
+                     but this session expects {expected}. Running in standalone mode (no shared index). \
+                     Fix: kill the other backend with `pkill -f 'llmx-mcp.*--serve'` or use LLMX_PORT=<other> to pick a different port."
                 );
                 return None;
             }
             Err(e) => {
-                tracing::warn!(
-                    "Port {port} occupied but auth/config check failed ({e}). \
-                     Stale or incompatible backend? Falling back to standalone."
+                tracing::error!(
+                    "LLMX backend auth failed: port {port} is occupied but returned error: {e}. \
+                     This usually means a stale backend from an older build is running. \
+                     Running in standalone mode. Fix: `pkill -f 'llmx-mcp.*--serve'` to kill it, then reconnect."
                 );
                 return None;
             }
@@ -1343,7 +1344,10 @@ async fn detect_or_start_backend(port: u16, storage_dir: Option<&PathBuf>) -> Op
     let exe = match env::current_exe() {
         Ok(exe) => exe,
         Err(e) => {
-            tracing::warn!("Cannot determine own executable path: {e}");
+            tracing::error!(
+                "LLMX auto-start failed: cannot determine executable path ({e}). \
+                 Running in standalone mode. Fix: start backend manually with `llmx-mcp --serve {port}`."
+            );
             return None;
         }
     };
@@ -1367,7 +1371,10 @@ async fn detect_or_start_backend(port: u16, storage_dir: Option<&PathBuf>) -> Op
     match cmd.spawn() {
         Ok(_) => {}
         Err(e) => {
-            tracing::warn!("Failed to spawn backend: {e}");
+            tracing::error!(
+                "LLMX auto-start failed: could not spawn backend process ({e}). \
+                 Running in standalone mode. Fix: start backend manually with `llmx-mcp --serve {port}`."
+            );
             return None;
         }
     }
@@ -1395,7 +1402,10 @@ async fn detect_or_start_backend(port: u16, storage_dir: Option<&PathBuf>) -> Op
         }
     }
 
-    tracing::warn!("Backend failed to start within 5s, falling back to standalone");
+    tracing::error!(
+        "LLMX auto-start timeout: backend did not respond within 5s. \
+         Running in standalone mode. Check stderr for backend errors, or start manually with `llmx-mcp --serve {port}`."
+    );
     None
 }
 
