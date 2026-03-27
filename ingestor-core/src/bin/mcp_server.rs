@@ -1011,14 +1011,15 @@ fn fill_loc_from_cwd(loc: &mut Option<String>) {
 }
 
 /// Generate a cryptographically random 32-byte hex token for backend auth.
-fn generate_token() -> String {
+fn generate_token() -> anyhow::Result<String> {
     let mut buf = [0u8; 32];
-    getrandom::fill(&mut buf).expect("OS entropy source unavailable");
-    hex::encode(buf)
+    getrandom::fill(&mut buf).map_err(|e| anyhow::anyhow!("OS entropy source unavailable: {e}"))?;
+    Ok(hex::encode(buf))
 }
 
 /// Write token to storage_dir/.backend-token with restrictive permissions.
 /// Uses atomic write-to-temp + rename to avoid TOCTOU permission window.
+/// Calls fsync before rename to guarantee visibility to readers on all filesystems.
 fn write_token_file(storage_dir: &std::path::Path, token: &str) -> anyhow::Result<()> {
     use std::io::Write;
     let target = storage_dir.join(TOKEN_FILENAME);
@@ -1039,6 +1040,7 @@ fn write_token_file(storage_dir: &std::path::Path, token: &str) -> anyhow::Resul
         let mut file = std::io::BufWriter::new(file);
         file.write_all(token.as_bytes())?;
         file.flush()?;
+        file.get_ref().sync_all()?;
     }
     std::fs::rename(&tmp, &target)?;
     Ok(())
@@ -1177,18 +1179,6 @@ impl BackendClient {
         }
     }
 
-    async fn health_check(&self) -> bool {
-        let check = async {
-            let resp: serde_json::Value = self.get("/api/health").await?;
-            Ok::<bool, anyhow::Error>(resp.get("ok").and_then(|v| v.as_bool()).unwrap_or(false))
-        };
-        tokio::time::timeout(Duration::from_millis(500), check)
-            .await
-            .ok()
-            .and_then(|r| r.ok())
-            .unwrap_or(false)
-    }
-
     async fn get<T: serde::de::DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
         use http_body_util::BodyExt;
         let uri: hyper::Uri = format!("{}{}", self.base_url, path).parse()?;
@@ -1295,11 +1285,16 @@ struct BackendClient;
 #[cfg(not(feature = "mcp-http"))]
 impl BackendClient {
     fn new(_port: u16, _token: Option<String>) -> Self { Self }
-    async fn health_check(&self) -> bool { false }
 }
 
 // ─── Auto-start ──────────────────────────────────────────────────────────────
 
+/// Try to connect to an existing compatible backend, or auto-start one.
+///
+/// Compatibility is verified via an authenticated `/api/config` call that
+/// checks the backend's storage-dir matches ours.  If the port is occupied
+/// by a stale or incompatible backend we skip auto-start (can't bind anyway)
+/// and fall back to standalone mode.
 async fn detect_or_start_backend(port: u16, storage_dir: Option<&PathBuf>) -> Option<BackendClient> {
     let expected_dir = storage_dir
         .map(|d| resolve_storage_dir(Some(d.clone())))
@@ -1307,9 +1302,11 @@ async fn detect_or_start_backend(port: u16, storage_dir: Option<&PathBuf>) -> Op
     let token = read_token_file(&expected_dir);
     let client = BackendClient::new(port, token);
 
-    if client.health_check().await {
-        // Verify storage-dir compatibility via authenticated /api/config.
-        // If auth fails the backend isn't ours -- fall back to standalone.
+    // Check if something is already listening on the port.
+    let port_occupied = is_port_listening(port).await;
+
+    if port_occupied {
+        // Verify the running backend is ours via authenticated /api/config.
         let expected = expected_dir.to_string_lossy().to_string();
         match client.storage_dir().await {
             Ok(backend_dir) if backend_dir == expected => {
@@ -1317,14 +1314,19 @@ async fn detect_or_start_backend(port: u16, storage_dir: Option<&PathBuf>) -> Op
                 return Some(client);
             }
             Ok(backend_dir) => {
-                tracing::warn!(
-                    "Backend on port {port} uses storage {backend_dir}, \
-                     but this session expects {expected}. Falling back to standalone."
+                tracing::error!(
+                    "LLMX backend conflict: port {port} is running with storage_dir={backend_dir}, \
+                     but this session expects {expected}. Running in standalone mode (no shared index). \
+                     Fix: kill the other backend with `pkill -f 'llmx-mcp.*--serve'` or use LLMX_PORT=<other> to pick a different port."
                 );
                 return None;
             }
             Err(e) => {
-                tracing::warn!("Backend auth/config check failed ({e}), falling back to standalone");
+                tracing::error!(
+                    "LLMX backend auth failed: port {port} is occupied but returned error: {e}. \
+                     This usually means a stale backend from an older build is running. \
+                     Running in standalone mode. Fix: `pkill -f 'llmx-mcp.*--serve'` to kill it, then reconnect."
+                );
                 return None;
             }
         }
@@ -1335,11 +1337,17 @@ async fn detect_or_start_backend(port: u16, storage_dir: Option<&PathBuf>) -> Op
         return None;
     }
 
+    // Delete stale token file so we only accept the freshly written one.
+    let _ = std::fs::remove_file(expected_dir.join(TOKEN_FILENAME));
+
     tracing::info!("No backend found, auto-starting llmx-mcp --serve {port}");
     let exe = match env::current_exe() {
         Ok(exe) => exe,
         Err(e) => {
-            tracing::warn!("Cannot determine own executable path: {e}");
+            tracing::error!(
+                "LLMX auto-start failed: cannot determine executable path ({e}). \
+                 Running in standalone mode. Fix: start backend manually with `llmx-mcp --serve {port}`."
+            );
             return None;
         }
     };
@@ -1363,31 +1371,90 @@ async fn detect_or_start_backend(port: u16, storage_dir: Option<&PathBuf>) -> Op
     match cmd.spawn() {
         Ok(_) => {}
         Err(e) => {
-            tracing::warn!("Failed to spawn backend: {e}");
+            tracing::error!(
+                "LLMX auto-start failed: could not spawn backend process ({e}). \
+                 Running in standalone mode. Fix: start backend manually with `llmx-mcp --serve {port}`."
+            );
             return None;
         }
     }
 
-    // Wait for backend to start, then re-read token it wrote
+    // Wait for backend to start.  We verify via the authenticated
+    // /api/config endpoint (not bare health check) so we can't be
+    // confused by a rogue process that grabs the port first.
+    let expected = expected_dir.to_string_lossy().to_string();
     for i in 0..50 {
         tokio::time::sleep(Duration::from_millis(100)).await;
-        // Re-read token on each attempt (backend writes it on startup)
         let fresh_token = read_token_file(&expected_dir);
+        if fresh_token.is_none() {
+            continue; // token not written yet
+        }
         let fresh_client = BackendClient::new(port, fresh_token);
-        if fresh_client.health_check().await {
-            tracing::info!(
-                "Backend started successfully on port {port} (took ~{}ms)",
-                (i + 1) * 100
-            );
-            return Some(fresh_client);
+        match fresh_client.storage_dir().await {
+            Ok(dir) if dir == expected => {
+                tracing::info!(
+                    "Backend started successfully on port {port} (took ~{}ms)",
+                    (i + 1) * 100
+                );
+                return Some(fresh_client);
+            }
+            Ok(_) | Err(_) => continue,
         }
     }
 
-    tracing::warn!("Backend failed to start within 5s, falling back to standalone");
+    tracing::error!(
+        "LLMX auto-start timeout: backend did not respond within 5s. \
+         Running in standalone mode. Check stderr for backend errors, or start manually with `llmx-mcp --serve {port}`."
+    );
     None
 }
 
+/// Quick TCP probe to check if a port is already listening.
+async fn is_port_listening(port: u16) -> bool {
+    tokio::time::timeout(
+        Duration::from_millis(200),
+        tokio::net::TcpStream::connect(("127.0.0.1", port)),
+    )
+    .await
+    .ok()
+    .and_then(|r| r.ok())
+    .is_some()
+}
+
 // ─── REST Backend ────────────────────────────────────────────────────────────
+
+/// Simple sliding-window rate limiter: allows `capacity` requests per `window`.
+/// Shared across all connections via Arc.
+struct RateLimiter {
+    timestamps: Mutex<std::collections::VecDeque<std::time::Instant>>,
+    capacity: usize,
+    window: Duration,
+}
+
+impl RateLimiter {
+    fn new(capacity: usize, window: Duration) -> Self {
+        Self {
+            timestamps: Mutex::new(std::collections::VecDeque::with_capacity(capacity)),
+            capacity,
+            window,
+        }
+    }
+
+    fn allow(&self) -> bool {
+        let now = std::time::Instant::now();
+        let Ok(mut ts) = self.timestamps.lock() else { return true };
+        // Evict expired entries
+        while ts.front().map_or(false, |t| now.duration_since(*t) > self.window) {
+            ts.pop_front();
+        }
+        if ts.len() >= self.capacity {
+            false
+        } else {
+            ts.push_back(now);
+            true
+        }
+    }
+}
 
 #[cfg(feature = "mcp-http")]
 async fn serve_rest(
@@ -1397,7 +1464,7 @@ async fn serve_rest(
     port: u16,
     storage_dir: PathBuf,
 ) -> anyhow::Result<()> {
-    use hyper::body::Incoming;
+    use hyper::body::{Body as _, Incoming};
     use hyper::{Method, Request, Response, StatusCode};
     use hyper_util::rt::TokioIo;
     use http_body_util::{BodyExt, Full};
@@ -1405,7 +1472,7 @@ async fn serve_rest(
     use std::net::SocketAddr;
 
     // Generate and persist auth token
-    let token = generate_token();
+    let token = generate_token()?;
     write_token_file(&storage_dir, &token)?;
     let token = Arc::new(token);
 
@@ -1428,11 +1495,46 @@ async fn serve_rest(
             .unwrap()
     }
 
+    const MAX_REQUEST_BODY: usize = 10 * 1024 * 1024; // 10 MB
+    const MAX_JSON_DEPTH: usize = 64;
+
     async fn read_body(req: Request<Incoming>) -> Result<Bytes, Response<Full<Bytes>>> {
-        req.collect()
+        let upper = req.body().size_hint().upper().unwrap_or(u64::MAX);
+        if upper > MAX_REQUEST_BODY as u64 {
+            return Err(json_err(StatusCode::PAYLOAD_TOO_LARGE, "Request body too large"));
+        }
+        let collected = req.collect()
             .await
-            .map(|collected| collected.to_bytes())
-            .map_err(|_| json_err(StatusCode::BAD_REQUEST, "Failed to read request body"))
+            .map_err(|_| json_err(StatusCode::BAD_REQUEST, "Failed to read request body"))?;
+        let bytes = collected.to_bytes();
+        if bytes.len() > MAX_REQUEST_BODY {
+            return Err(json_err(StatusCode::PAYLOAD_TOO_LARGE, "Request body too large"));
+        }
+        Ok(bytes)
+    }
+
+    fn parse_json<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, String> {
+        // serde_json's default recursion limit (128) guards the initial parse.
+        // We apply a tighter depth check afterward to catch pathological inputs.
+        let value: serde_json::Value = serde_json::from_slice(body)
+            .map_err(|e| e.to_string())?;
+        fn check_depth(v: &serde_json::Value, depth: usize, max: usize) -> Result<(), String> {
+            if depth > max {
+                return Err(format!("JSON nesting exceeds maximum depth of {max}"));
+            }
+            match v {
+                serde_json::Value::Array(arr) => {
+                    for item in arr { check_depth(item, depth + 1, max)?; }
+                }
+                serde_json::Value::Object(map) => {
+                    for val in map.values() { check_depth(val, depth + 1, max)?; }
+                }
+                _ => {}
+            }
+            Ok(())
+        }
+        check_depth(&value, 0, MAX_JSON_DEPTH)?;
+        serde_json::from_value(value).map_err(|e| e.to_string())
     }
 
     async fn handle(
@@ -1442,8 +1544,10 @@ async fn serve_rest(
         stale_paths: Arc<Mutex<BTreeSet<String>>>,
         storage_dir: PathBuf,
         expected_token: Arc<String>,
+        rate_limiter: Arc<RateLimiter>,
     ) -> Result<Response<Full<Bytes>>, std::convert::Infallible> {
-        // Validate bearer token on every request (constant-time comparison)
+        // Validate bearer token on every request (constant-time comparison).
+        // Fixed-length XOR avoids leaking token length via timing.
         let auth_ok = req.headers()
             .get("authorization")
             .and_then(|v| v.to_str().ok())
@@ -1451,11 +1555,23 @@ async fn serve_rest(
             .map(|t| {
                 let a = t.as_bytes();
                 let b = expected_token.as_bytes();
-                a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+                if a.len() != b.len() {
+                    // Consume constant time even on length mismatch by
+                    // comparing b against itself, then returning false.
+                    let _ = b.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y));
+                    false
+                } else {
+                    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+                }
             })
             .unwrap_or(false);
         if !auth_ok {
-            return Ok(json_err(StatusCode::UNAUTHORIZED, "Invalid or missing bearer token"));
+            tracing::debug!("Rejected unauthenticated request to {}", req.uri().path());
+            return Ok(json_err(StatusCode::UNAUTHORIZED, "Unauthorized"));
+        }
+
+        if !rate_limiter.allow() {
+            return Ok(json_err(StatusCode::TOO_MANY_REQUESTS, "Rate limit exceeded"));
         }
 
         let method = req.method().clone();
@@ -1476,9 +1592,15 @@ async fn serve_rest(
                                 stale_paths.lock().map(|p| p.len()).unwrap_or(0);
                             json_ok(&status)
                         }
-                        Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                        Err(e) => {
+                            tracing::error!("status failed: {e}");
+                            json_err(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+                        }
                     },
-                    Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                    Err(e) => {
+                        tracing::error!("store lock: {e}");
+                        json_err(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+                    }
                 }
             }
 
@@ -1487,16 +1609,22 @@ async fn serve_rest(
                     Ok(b) => b,
                     Err(r) => return Ok(r),
                 };
-                let input: SearchInput = match serde_json::from_slice(&body) {
+                let input: SearchInput = match parse_json(&body) {
                     Ok(v) => v,
-                    Err(e) => return Ok(json_err(StatusCode::BAD_REQUEST, &e.to_string())),
+                    Err(e) => return Ok(json_err(StatusCode::BAD_REQUEST, &e)),
                 };
                 match store.lock() {
                     Ok(mut s) => match llmx_search_handler(&mut s, input) {
                         Ok(output) => json_ok(&output),
-                        Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                        Err(e) => {
+                            tracing::error!("search failed: {e}");
+                            json_err(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+                        }
                     },
-                    Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                    Err(e) => {
+                        tracing::error!("store lock: {e}");
+                        json_err(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+                    }
                 }
             }
 
@@ -1505,9 +1633,9 @@ async fn serve_rest(
                     Ok(b) => b,
                     Err(r) => return Ok(r),
                 };
-                let input: IndexInput = match serde_json::from_slice(&body) {
+                let input: IndexInput = match parse_json(&body) {
                     Ok(v) => v,
-                    Err(e) => return Ok(json_err(StatusCode::BAD_REQUEST, &e.to_string())),
+                    Err(e) => return Ok(json_err(StatusCode::BAD_REQUEST, &e)),
                 };
                 if active_job_count(&jobs) >= MAX_CONCURRENT_JOBS {
                     return Ok(json_err(
@@ -1569,16 +1697,22 @@ async fn serve_rest(
                     Ok(b) => b,
                     Err(r) => return Ok(r),
                 };
-                let input: ExploreInput = match serde_json::from_slice(&body) {
+                let input: ExploreInput = match parse_json(&body) {
                     Ok(v) => v,
-                    Err(e) => return Ok(json_err(StatusCode::BAD_REQUEST, &e.to_string())),
+                    Err(e) => return Ok(json_err(StatusCode::BAD_REQUEST, &e)),
                 };
                 match store.lock() {
                     Ok(mut s) => match llmx_explore_handler(&mut s, input) {
                         Ok(output) => json_ok(&output),
-                        Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                        Err(e) => {
+                            tracing::error!("explore failed: {e}");
+                            json_err(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+                        }
                     },
-                    Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                    Err(e) => {
+                        tracing::error!("store lock: {e}");
+                        json_err(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+                    }
                 }
             }
 
@@ -1587,9 +1721,9 @@ async fn serve_rest(
                     Ok(b) => b,
                     Err(r) => return Ok(r),
                 };
-                let input: ManageInput = match serde_json::from_slice(&body) {
+                let input: ManageInput = match parse_json(&body) {
                     Ok(v) => v,
-                    Err(e) => return Ok(json_err(StatusCode::BAD_REQUEST, &e.to_string())),
+                    Err(e) => return Ok(json_err(StatusCode::BAD_REQUEST, &e)),
                 };
                 if input.action == "job_status" {
                     let job_id = input.index_id.as_deref().unwrap_or("");
@@ -1601,17 +1735,24 @@ async fn serve_rest(
                                 &format!("Unknown job_id: {job_id}"),
                             ),
                         },
-                        Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                        Err(e) => {
+                            tracing::error!("jobs lock: {e}");
+                            json_err(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+                        }
                     }
                 } else {
                     match store.lock() {
                         Ok(mut s) => match llmx_manage_handler(&mut s, input) {
                             Ok(output) => json_ok(&output),
                             Err(e) => {
-                                json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string())
+                                tracing::error!("manage failed: {e}");
+                                json_err(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
                             }
                         },
-                        Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                        Err(e) => {
+                            tracing::error!("store lock: {e}");
+                            json_err(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+                        }
                     }
                 }
             }
@@ -1621,16 +1762,22 @@ async fn serve_rest(
                     Ok(b) => b,
                     Err(r) => return Ok(r),
                 };
-                let input: SymbolsInput = match serde_json::from_slice(&body) {
+                let input: SymbolsInput = match parse_json(&body) {
                     Ok(v) => v,
-                    Err(e) => return Ok(json_err(StatusCode::BAD_REQUEST, &e.to_string())),
+                    Err(e) => return Ok(json_err(StatusCode::BAD_REQUEST, &e)),
                 };
                 match store.lock() {
                     Ok(mut s) => match llmx_symbols_handler(&mut s, input) {
                         Ok(output) => json_ok(&output),
-                        Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                        Err(e) => {
+                            tracing::error!("symbols failed: {e}");
+                            json_err(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+                        }
                     },
-                    Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                    Err(e) => {
+                        tracing::error!("store lock: {e}");
+                        json_err(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+                    }
                 }
             }
 
@@ -1639,16 +1786,22 @@ async fn serve_rest(
                     Ok(b) => b,
                     Err(r) => return Ok(r),
                 };
-                let input: LookupInput = match serde_json::from_slice(&body) {
+                let input: LookupInput = match parse_json(&body) {
                     Ok(v) => v,
-                    Err(e) => return Ok(json_err(StatusCode::BAD_REQUEST, &e.to_string())),
+                    Err(e) => return Ok(json_err(StatusCode::BAD_REQUEST, &e)),
                 };
                 match store.lock() {
                     Ok(mut s) => match llmx_lookup_handler(&mut s, input) {
                         Ok(output) => json_ok(&output),
-                        Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                        Err(e) => {
+                            tracing::error!("lookup failed: {e}");
+                            json_err(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+                        }
                     },
-                    Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                    Err(e) => {
+                        tracing::error!("store lock: {e}");
+                        json_err(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+                    }
                 }
             }
 
@@ -1657,16 +1810,22 @@ async fn serve_rest(
                     Ok(b) => b,
                     Err(r) => return Ok(r),
                 };
-                let input: RefsInput = match serde_json::from_slice(&body) {
+                let input: RefsInput = match parse_json(&body) {
                     Ok(v) => v,
-                    Err(e) => return Ok(json_err(StatusCode::BAD_REQUEST, &e.to_string())),
+                    Err(e) => return Ok(json_err(StatusCode::BAD_REQUEST, &e)),
                 };
                 match store.lock() {
                     Ok(mut s) => match llmx_refs_handler(&mut s, input) {
                         Ok(output) => json_ok(&output),
-                        Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                        Err(e) => {
+                            tracing::error!("refs failed: {e}");
+                            json_err(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+                        }
                     },
-                    Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                    Err(e) => {
+                        tracing::error!("store lock: {e}");
+                        json_err(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+                    }
                 }
             }
 
@@ -1675,16 +1834,22 @@ async fn serve_rest(
                     Ok(b) => b,
                     Err(r) => return Ok(r),
                 };
-                let input: GetChunkInput = match serde_json::from_slice(&body) {
+                let input: GetChunkInput = match parse_json(&body) {
                     Ok(v) => v,
-                    Err(e) => return Ok(json_err(StatusCode::BAD_REQUEST, &e.to_string())),
+                    Err(e) => return Ok(json_err(StatusCode::BAD_REQUEST, &e)),
                 };
                 match store.lock() {
                     Ok(mut s) => match llmx_get_chunk_handler(&mut s, input) {
                         Ok(output) => json_ok(&output),
-                        Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                        Err(e) => {
+                            tracing::error!("get_chunk failed: {e}");
+                            json_err(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+                        }
                     },
-                    Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                    Err(e) => {
+                        tracing::error!("store lock: {e}");
+                        json_err(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+                    }
                 }
             }
 
@@ -1693,9 +1858,9 @@ async fn serve_rest(
                     Ok(b) => b,
                     Err(r) => return Ok(r),
                 };
-                let parsed: serde_json::Value = match serde_json::from_slice(&body) {
+                let parsed: serde_json::Value = match parse_json(&body) {
                     Ok(v) => v,
-                    Err(e) => return Ok(json_err(StatusCode::BAD_REQUEST, &e.to_string())),
+                    Err(e) => return Ok(json_err(StatusCode::BAD_REQUEST, &e)),
                 };
                 let roots: Vec<String> = parsed
                     .get("roots")
@@ -1731,6 +1896,8 @@ async fn serve_rest(
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    // 100 requests per second -- generous for local proxies, stops runaway loops
+    let rate_limiter = Arc::new(RateLimiter::new(100, Duration::from_secs(1)));
     tracing::info!("REST backend ready on http://127.0.0.1:{port}");
 
     loop {
@@ -1741,10 +1908,11 @@ async fn serve_rest(
         let stale_paths = stale_paths.clone();
         let storage_dir = storage_dir.clone();
         let token = token.clone();
+        let limiter = rate_limiter.clone();
 
         tokio::spawn(async move {
             let service = hyper::service::service_fn(move |req| {
-                handle(req, store.clone(), jobs.clone(), stale_paths.clone(), storage_dir.clone(), token.clone())
+                handle(req, store.clone(), jobs.clone(), stale_paths.clone(), storage_dir.clone(), token.clone(), limiter.clone())
             });
             if let Err(err) = hyper::server::conn::http1::Builder::new()
                 .serve_connection(io, service)
