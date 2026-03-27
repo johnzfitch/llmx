@@ -13,8 +13,8 @@ use llmx_mcp::{ingest_files_with_root, update_index_selective, IngestOptions};
 use rmcp::handler::server::{router::tool::ToolRouter, tool::Parameters};
 use rmcp::model::{ErrorData as McpError, *};
 use rmcp::{tool, tool_handler, tool_router, ServerHandler, ServiceExt};
-use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use notify::event::ModifyKind;
+use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
+use tokio::sync::mpsc;
 use rmcp::service::{NotificationContext, Peer, RequestContext, RoleServer};
 use std::collections::BTreeSet;
 use std::env;
@@ -58,17 +58,120 @@ struct Args {
     #[arg(long)]
     storage_dir: Option<PathBuf>,
 
-    /// Run HTTP server on specified port instead of stdio
+    /// Run as a persistent REST backend on the specified port (default 19100).
+    /// Other llmx-mcp instances connect to this backend automatically.
     #[arg(long)]
-    http: Option<u16>,
+    serve: Option<u16>,
 }
 
 const STATUS_RESOURCE_URI: &str = "llmx://index/status";
 
-#[derive(Default)]
-struct WatchState {
-    watcher: Option<RecommendedWatcher>,
+/// Debounced file watcher shared by both stdio and --serve modes.
+///
+/// The notify callback only sends paths into an mpsc channel (instant, no locks).
+/// A consumer task drains the channel after a 500ms quiet window and calls
+/// `refresh_impacted_indexes` once with the full batch. In stdio mode an
+/// optional MCP peer callback fires notifications after each refresh.
+struct DebouncedWatcher {
+    _watcher: RecommendedWatcher,
     watched_roots: BTreeSet<PathBuf>,
+    _consumer: tokio::task::JoinHandle<()>,
+}
+
+const DEBOUNCE_QUIET_MS: u64 = 500;
+
+/// Callback invoked after a debounced refresh completes.
+/// Stdio mode sends MCP notifications; backend mode is a no-op.
+type PostRefreshFn = Box<dyn Fn(bool, &[PathBuf]) + Send + 'static>;
+
+fn spawn_debounced_watcher(
+    store: Arc<Mutex<IndexStore>>,
+    stale_paths: Arc<Mutex<BTreeSet<String>>>,
+    roots: Vec<PathBuf>,
+    post_refresh: Option<PostRefreshFn>,
+) -> anyhow::Result<DebouncedWatcher> {
+    let (tx, mut rx) = mpsc::unbounded_channel::<Vec<PathBuf>>();
+
+    let watcher = notify::recommended_watcher(move |event: notify::Result<Event>| {
+        let Ok(event) = event else { return };
+        if !event.paths.is_empty() {
+            let _ = tx.send(event.paths);
+        }
+    })?;
+
+    // Consumer task: debounce + batch refresh
+    let consumer = tokio::spawn(async move {
+        loop {
+            // Wait for first event
+            let first = match rx.recv().await {
+                Some(paths) => paths,
+                None => break, // channel closed
+            };
+            let mut batch: BTreeSet<PathBuf> = first.into_iter().collect();
+
+            // Drain more events during quiet window
+            loop {
+                match tokio::time::timeout(
+                    Duration::from_millis(DEBOUNCE_QUIET_MS),
+                    rx.recv(),
+                )
+                .await
+                {
+                    Ok(Some(paths)) => { batch.extend(paths); }
+                    _ => break, // timeout or channel closed
+                }
+            }
+
+            let changed_paths: Vec<PathBuf> = batch.into_iter().collect();
+            let stale_markers = normalize_paths(&changed_paths);
+            if let Ok(mut stale) = stale_paths.lock() {
+                stale.extend(stale_markers);
+            }
+
+            let store2 = store.clone();
+            let stale2 = stale_paths.clone();
+            let changed2 = changed_paths.clone();
+            let refresh = tokio::task::spawn_blocking(move || {
+                refresh_impacted_indexes(&store2, &stale2, &changed2)
+            })
+            .await;
+
+            let changed = match refresh {
+                Ok(Ok(changed)) => changed,
+                Ok(Err(err)) => {
+                    tracing::warn!("debounced refresh failed: {err}");
+                    false
+                }
+                Err(err) => {
+                    tracing::warn!("debounced refresh join error: {err}");
+                    false
+                }
+            };
+
+            if let Some(ref cb) = post_refresh {
+                cb(changed, &changed_paths);
+            }
+        }
+    });
+
+    let mut watched_roots = BTreeSet::new();
+    let mut w = watcher;
+    for root in &roots {
+        if let Err(e) = w.watch(root, RecursiveMode::Recursive) {
+            tracing::warn!("watcher: failed to watch {}: {e}", root.display());
+        } else {
+            watched_roots.insert(root.clone());
+        }
+    }
+    if !watched_roots.is_empty() {
+        tracing::info!("watcher: watching {} roots", watched_roots.len());
+    }
+
+    Ok(DebouncedWatcher {
+        _watcher: w,
+        watched_roots,
+        _consumer: consumer,
+    })
 }
 
 /// MCP server for codebase indexing and semantic search.
@@ -92,41 +195,64 @@ struct WatchState {
 /// The `IndexStore` is wrapped in `Arc<Mutex<>>` to enable shared access across
 /// async tasks while maintaining interior mutability for the cache.
 #[derive(Clone)]
+enum DataSource {
+    Local {
+        store: Arc<Mutex<IndexStore>>,
+        jobs: JobStore,
+    },
+    Remote(BackendClient),
+}
+
+#[derive(Clone)]
 struct LlmxServer {
-    store: Arc<Mutex<IndexStore>>,
-    jobs: JobStore,
+    data_source: DataSource,
     peer: Arc<Mutex<Option<Peer<RoleServer>>>>,
-    watch_state: Arc<Mutex<WatchState>>,
+    watcher: Arc<Mutex<Option<DebouncedWatcher>>>,
     stale_paths: Arc<Mutex<BTreeSet<String>>>,
     tool_router: ToolRouter<Self>,
 }
 
 #[tool_router]
 impl LlmxServer {
-    fn new(store: Arc<Mutex<IndexStore>>, jobs: JobStore) -> Self {
+    fn new_local(store: Arc<Mutex<IndexStore>>, jobs: JobStore) -> Self {
         Self {
-            store,
-            jobs,
+            data_source: DataSource::Local { store, jobs },
             peer: Arc::new(Mutex::new(None)),
-            watch_state: Arc::new(Mutex::new(WatchState::default())),
+            watcher: Arc::new(Mutex::new(None)),
+            stale_paths: Arc::new(Mutex::new(BTreeSet::new())),
+            tool_router: Self::tool_router(),
+        }
+    }
+
+    fn new_remote(client: BackendClient) -> Self {
+        Self {
+            data_source: DataSource::Remote(client),
+            peer: Arc::new(Mutex::new(None)),
+            watcher: Arc::new(Mutex::new(None)),
             stale_paths: Arc::new(Mutex::new(BTreeSet::new())),
             tool_router: Self::tool_router(),
         }
     }
 
     fn status_snapshot(&self) -> Result<StatusOutput, McpError> {
-        let mut store = self
-            .store
-            .lock()
-            .map_err(|e| McpError::internal_error(format!("IndexStore mutex poisoned: {e}"), None))?;
-        let mut status = llmx_status_handler(&mut store, &self.jobs)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-        status.stale_files = self
-            .stale_paths
-            .lock()
-            .map(|paths| paths.len())
-            .unwrap_or(0);
-        Ok(status)
+        match &self.data_source {
+            DataSource::Local { store, jobs } => {
+                let mut store = store
+                    .lock()
+                    .map_err(|e| McpError::internal_error(format!("IndexStore mutex poisoned: {e}"), None))?;
+                let mut status = llmx_status_handler(&mut store, jobs)
+                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+                status.stale_files = self
+                    .stale_paths
+                    .lock()
+                    .map(|paths| paths.len())
+                    .unwrap_or(0);
+                Ok(status)
+            }
+            DataSource::Remote(_) => {
+                Err(McpError::internal_error("status_snapshot not available in proxy mode", None))
+            }
+        }
     }
 
     fn remember_peer(&self, peer: Peer<RoleServer>) {
@@ -159,74 +285,55 @@ impl LlmxServer {
     }
 
     fn replace_watch_roots(&self, roots: Vec<PathBuf>) -> anyhow::Result<()> {
+        let DataSource::Local { store, .. } = &self.data_source else {
+            return Ok(()); // No-op in proxy mode
+        };
+
+        // Build MCP notification callback for stdio mode
         let peer_slot = self.peer.clone();
-        let store = self.store.clone();
-        let stale_paths = self.stale_paths.clone();
         let runtime = tokio::runtime::Handle::current();
-        let mut watcher = notify::recommended_watcher(move |event: notify::Result<Event>| {
-            let Ok(event) = event else { return };
+        let post_refresh: PostRefreshFn = Box::new(move |changed, changed_paths: &[PathBuf]| {
             let peer = peer_slot.lock().ok().and_then(|slot| slot.clone());
             let Some(peer) = peer else { return };
-            let changed_paths = event.paths.clone();
-            let stale_markers = normalize_paths(&changed_paths);
-            if let Ok(mut stale) = stale_paths.lock() {
-                stale.extend(stale_markers);
-            }
-
-            let uris: Vec<String> = event
-                .paths
+            let uris: Vec<String> = changed_paths
                 .iter()
                 .filter_map(|path| file_path_to_uri(path))
                 .collect();
-            let should_list_changed = should_emit_resource_list_changed(&event);
-            let store = store.clone();
-            let stale_paths = stale_paths.clone();
-
+            let has_structural = changed_paths.iter().any(|p| {
+                // Approximate: treat creates/removes as structural
+                !p.exists() || p.is_dir()
+            });
             runtime.spawn(async move {
                 let _ = peer
                     .notify_resource_updated(ResourceUpdatedNotificationParam {
                         uri: STATUS_RESOURCE_URI.to_string(),
                     })
                     .await;
-                for uri in uris {
+                for uri in &uris {
                     let _ = peer
-                        .notify_resource_updated(ResourceUpdatedNotificationParam { uri })
+                        .notify_resource_updated(ResourceUpdatedNotificationParam {
+                            uri: uri.clone(),
+                        })
                         .await;
                 }
-                if should_list_changed {
+                if has_structural {
                     let _ = peer.notify_resource_list_changed().await;
                 }
-
-                let refresh = tokio::task::spawn_blocking(move || {
-                    refresh_impacted_indexes(&store, &stale_paths, &changed_paths)
-                })
-                .await;
-
-                match refresh {
-                    Ok(Ok(changed)) if changed => {
-                        let _ = peer
-                            .notify_resource_updated(ResourceUpdatedNotificationParam {
-                                uri: STATUS_RESOURCE_URI.to_string(),
-                            })
-                            .await;
-                        let _ = peer.notify_tool_list_changed().await;
-                    }
-                    Ok(Ok(_)) => {}
-                    Ok(Err(err)) => tracing::warn!("failed to refresh impacted indexes: {err}"),
-                    Err(err) => tracing::warn!("refresh task join error: {err}"),
+                if changed {
+                    let _ = peer.notify_tool_list_changed().await;
                 }
             });
-        })?;
+        });
 
-        let mut watched_roots = BTreeSet::new();
-        for root in &roots {
-            watcher.watch(root, RecursiveMode::Recursive)?;
-            watched_roots.insert(root.clone());
-        }
+        let new_watcher = spawn_debounced_watcher(
+            store.clone(),
+            self.stale_paths.clone(),
+            roots.clone(),
+            Some(post_refresh),
+        )?;
 
-        if let Ok(mut state) = self.watch_state.lock() {
-            state.watcher = Some(watcher);
-            state.watched_roots = watched_roots;
+        if let Ok(mut slot) = self.watcher.lock() {
+            *slot = Some(new_watcher);
         }
 
         if let Ok(mut stale) = self.stale_paths.lock() {
@@ -241,10 +348,31 @@ impl LlmxServer {
     #[tool(description = "Create or update index from file paths. Returns job_id immediately; poll with llmx_manage(action='job_status', index_id='<job_id>')")]
     async fn llmx_index(
         &self,
-        Parameters(input): Parameters<IndexInput>,
+        Parameters(mut input): Parameters<IndexInput>,
     ) -> Result<CallToolResult, McpError> {
-        // Reject if too many jobs are already active
-        if active_job_count(&self.jobs) >= MAX_CONCURRENT_JOBS {
+        if let DataSource::Remote(client) = &self.data_source {
+            // Resolve relative paths against client cwd so the backend
+            // doesn't canonicalize them against its own working directory.
+            input.paths = input.paths.into_iter().map(|p| {
+                let path = PathBuf::from(&p);
+                if path.is_relative() {
+                    if let Ok(cwd) = env::current_dir() {
+                        return cwd.join(&path).to_string_lossy().to_string();
+                    }
+                }
+                p
+            }).collect();
+            let result = client.index(&input).await
+                .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+            let content = serde_json::to_string_pretty(&result)
+                .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+            return Ok(CallToolResult::success(vec![Content::text(content)]));
+        }
+        let DataSource::Local { store, jobs } = &self.data_source else {
+            return Err(McpError::internal_error("llmx_index not available in proxy mode", None));
+        };
+
+        if active_job_count(jobs) >= MAX_CONCURRENT_JOBS {
             return Err(McpError::internal_error(
                 format!("Too many active indexing jobs (max {MAX_CONCURRENT_JOBS}). Wait for existing jobs to complete."),
                 None,
@@ -253,12 +381,12 @@ impl LlmxServer {
 
         let job_id = new_job_id();
 
-        self.jobs.lock()
+        jobs.lock()
             .map_err(|e| McpError::internal_error(format!("Job store lock poisoned: {e}"), None))?
             .insert(job_id.clone(), JobState::queued());
 
-        let store = self.store.clone();
-        let jobs = self.jobs.clone();
+        let store = store.clone();
+        let jobs = jobs.clone();
         let peer = self.peer.clone();
         let jid = job_id.clone();
         let runtime = tokio::runtime::Handle::current();
@@ -322,161 +450,196 @@ impl LlmxServer {
 
     #[tool(description = "Report index readiness tier, indexed file counts, symbols, languages, and background task progress.")]
     async fn llmx_status(&self) -> Result<CallToolResult, McpError> {
-        let output = self.status_snapshot()?;
-        let content = serde_json::to_string_pretty(&output)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let content = match &self.data_source {
+            DataSource::Local { .. } => {
+                let output = self.status_snapshot()?;
+                serde_json::to_string_pretty(&output)
+            }
+            DataSource::Remote(client) => {
+                let output = client.status().await
+                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+                serde_json::to_string_pretty(&output)
+            }
+        }
+        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         Ok(CallToolResult::success(vec![Content::text(content)]))
     }
 
-    /// Search indexed codebase with inline content (token-budgeted)
     #[tool(description = "Search index with inline content")]
     async fn llmx_search(
         &self,
-        Parameters(input): Parameters<SearchInput>,
+        Parameters(mut input): Parameters<SearchInput>,
     ) -> Result<CallToolResult, McpError> {
-        let mut store = self
-            .store
-            .lock()
-            .map_err(|e| {
-                McpError::internal_error(
-                    format!("IndexStore mutex poisoned - indicates a panic in a previous operation: {e}"),
-                    None,
-                )
-            })?;
-        let output = llmx_search_handler(&mut store, input)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-
-        let content = serde_json::to_string_pretty(&output)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-
+        let content = match &self.data_source {
+            DataSource::Remote(client) => {
+                fill_loc_from_cwd(&mut input.loc);
+                let result = client.search(&input).await
+                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+                serde_json::to_string_pretty(&result)
+            }
+            DataSource::Local { store, .. } => {
+                let mut store = store.lock()
+                    .map_err(|e| McpError::internal_error(format!("lock poisoned: {e}"), None))?;
+                let output = llmx_search_handler(&mut store, input)
+                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+                serde_json::to_string_pretty(&output)
+            }
+        }
+        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         Ok(CallToolResult::success(vec![Content::text(content)]))
     }
 
-    /// Legacy structure exploration tool kept for compatibility.
     #[tool(description = "Legacy compatibility tool: explore index structure (files, outline, symbols, callers/callees/importers)")]
     async fn llmx_explore(
         &self,
-        Parameters(input): Parameters<ExploreInput>,
+        Parameters(mut input): Parameters<ExploreInput>,
     ) -> Result<CallToolResult, McpError> {
-        let mut store = self
-            .store
-            .lock()
-            .map_err(|e| {
-                McpError::internal_error(
-                    format!("IndexStore mutex poisoned - indicates a panic in a previous operation: {e}"),
-                    None,
-                )
-            })?;
-        let output = llmx_explore_handler(&mut store, input)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-
-        let content = serde_json::to_string_pretty(&output)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-
+        let content = match &self.data_source {
+            DataSource::Remote(client) => {
+                fill_loc_from_cwd(&mut input.loc);
+                let result = client.explore(&input).await
+                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+                serde_json::to_string_pretty(&result)
+            }
+            DataSource::Local { store, .. } => {
+                let mut store = store.lock()
+                    .map_err(|e| McpError::internal_error(format!("lock poisoned: {e}"), None))?;
+                let output = llmx_explore_handler(&mut store, input)
+                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+                serde_json::to_string_pretty(&output)
+            }
+        }
+        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         Ok(CallToolResult::success(vec![Content::text(content)]))
     }
 
-    /// Legacy symbol lookup tool kept for compatibility.
     #[tool(description = "Legacy compatibility tool: symbol table lookup by glob-like pattern.")]
     async fn llmx_symbols(
         &self,
-        Parameters(input): Parameters<SymbolsInput>,
+        Parameters(mut input): Parameters<SymbolsInput>,
     ) -> Result<CallToolResult, McpError> {
-        let mut store = self
-            .store
-            .lock()
-            .map_err(|e| McpError::internal_error(
-                format!("IndexStore mutex poisoned: {e}"), None,
-            ))?;
-        let output = llmx_symbols_handler(&mut store, input)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-        let content = serde_json::to_string_pretty(&output)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let content = match &self.data_source {
+            DataSource::Remote(client) => {
+                fill_loc_from_cwd(&mut input.loc);
+                let result = client.symbols(&input).await
+                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+                serde_json::to_string_pretty(&result)
+            }
+            DataSource::Local { store, .. } => {
+                let mut store = store.lock()
+                    .map_err(|e| McpError::internal_error(format!("lock poisoned: {e}"), None))?;
+                let output = llmx_symbols_handler(&mut store, input)
+                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+                serde_json::to_string_pretty(&output)
+            }
+        }
+        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         Ok(CallToolResult::success(vec![Content::text(content)]))
     }
 
     #[tool(description = "Exact or prefix symbol resolution by name. Use this for 'find function parseConfig' and similar symbol lookups.")]
     async fn llmx_lookup(
         &self,
-        Parameters(input): Parameters<LookupInput>,
+        Parameters(mut input): Parameters<LookupInput>,
     ) -> Result<CallToolResult, McpError> {
-        let mut store = self
-            .store
-            .lock()
-            .map_err(|e| McpError::internal_error(format!("IndexStore mutex poisoned: {e}"), None))?;
-        let output = llmx_lookup_handler(&mut store, input)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-        let content = serde_json::to_string_pretty(&output)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let content = match &self.data_source {
+            DataSource::Remote(client) => {
+                fill_loc_from_cwd(&mut input.loc);
+                let result = client.lookup(&input).await
+                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+                serde_json::to_string_pretty(&result)
+            }
+            DataSource::Local { store, .. } => {
+                let mut store = store.lock()
+                    .map_err(|e| McpError::internal_error(format!("lock poisoned: {e}"), None))?;
+                let output = llmx_lookup_handler(&mut store, input)
+                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+                serde_json::to_string_pretty(&output)
+            }
+        }
+        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         Ok(CallToolResult::success(vec![Content::text(content)]))
     }
 
     #[tool(description = "Graph traversal for code structure: callers, callees, imports, importers, and type users.")]
     async fn llmx_refs(
         &self,
-        Parameters(input): Parameters<RefsInput>,
+        Parameters(mut input): Parameters<RefsInput>,
     ) -> Result<CallToolResult, McpError> {
-        let mut store = self
-            .store
-            .lock()
-            .map_err(|e| McpError::internal_error(format!("IndexStore mutex poisoned: {e}"), None))?;
-        let output = llmx_refs_handler(&mut store, input)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-        let content = serde_json::to_string_pretty(&output)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let content = match &self.data_source {
+            DataSource::Remote(client) => {
+                fill_loc_from_cwd(&mut input.loc);
+                let result = client.refs(&input).await
+                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+                serde_json::to_string_pretty(&result)
+            }
+            DataSource::Local { store, .. } => {
+                let mut store = store.lock()
+                    .map_err(|e| McpError::internal_error(format!("lock poisoned: {e}"), None))?;
+                let output = llmx_refs_handler(&mut store, input)
+                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+                serde_json::to_string_pretty(&output)
+            }
+        }
+        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         Ok(CallToolResult::success(vec![Content::text(content)]))
     }
 
     #[tool(description = "Fetch the full chunk content by chunk ID, chunk ref, or ID prefix.")]
     async fn llmx_get_chunk(
         &self,
-        Parameters(input): Parameters<GetChunkInput>,
+        Parameters(mut input): Parameters<GetChunkInput>,
     ) -> Result<CallToolResult, McpError> {
-        let mut store = self
-            .store
-            .lock()
-            .map_err(|e| McpError::internal_error(format!("IndexStore mutex poisoned: {e}"), None))?;
-        let output = llmx_get_chunk_handler(&mut store, input)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-        let content = serde_json::to_string_pretty(&output)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let content = match &self.data_source {
+            DataSource::Remote(client) => {
+                fill_loc_from_cwd(&mut input.loc);
+                let result = client.get_chunk(&input).await
+                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+                serde_json::to_string_pretty(&result)
+            }
+            DataSource::Local { store, .. } => {
+                let mut store = store.lock()
+                    .map_err(|e| McpError::internal_error(format!("lock poisoned: {e}"), None))?;
+                let output = llmx_get_chunk_handler(&mut store, input)
+                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+                serde_json::to_string_pretty(&output)
+            }
+        }
+        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         Ok(CallToolResult::success(vec![Content::text(content)]))
     }
 
-    /// List, delete, inspect stats for indexes, or check job status
     #[tool(description = "List indexes, delete an index, inspect index stats, or check job status (action='job_status', index_id='<job_id>')")]
     async fn llmx_manage(
         &self,
-        Parameters(input): Parameters<ManageInput>,
+        Parameters(mut input): Parameters<ManageInput>,
     ) -> Result<CallToolResult, McpError> {
-        // Handle job_status before taking the store lock
-        if input.action == "job_status" {
-            let job_id = input.index_id.as_deref()
-                .ok_or_else(|| McpError::invalid_params("index_id (job_id) required for job_status", None))?;
-            let jobs = self.jobs.lock()
-                .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-            let state = jobs.get(job_id)
-                .ok_or_else(|| McpError::invalid_params(format!("Unknown job_id: {job_id}"), None))?;
-            let content = serde_json::to_string_pretty(&state.status)
-                .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-            return Ok(CallToolResult::success(vec![Content::text(content)]));
+        let content = match &self.data_source {
+            DataSource::Remote(client) => {
+                fill_loc_from_cwd(&mut input.loc);
+                let result = client.manage(&input).await
+                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+                serde_json::to_string_pretty(&result)
+            }
+            DataSource::Local { store, jobs } => {
+                if input.action == "job_status" {
+                    let job_id = input.index_id.as_deref()
+                        .ok_or_else(|| McpError::invalid_params("index_id (job_id) required for job_status", None))?;
+                    let jobs = jobs.lock()
+                        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+                    let state = jobs.get(job_id)
+                        .ok_or_else(|| McpError::invalid_params(format!("Unknown job_id: {job_id}"), None))?;
+                    serde_json::to_string_pretty(&state.status)
+                } else {
+                    let mut store = store.lock()
+                        .map_err(|e| McpError::internal_error(format!("lock poisoned: {e}"), None))?;
+                    let output = llmx_manage_handler(&mut store, input)
+                        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+                    serde_json::to_string_pretty(&output)
+                }
+            }
         }
-
-        let mut store = self
-            .store
-            .lock()
-            .map_err(|e| {
-                McpError::internal_error(
-                    format!("IndexStore mutex poisoned - indicates a panic in a previous operation: {e}"),
-                    None,
-                )
-            })?;
-        let output = llmx_manage_handler(&mut store, input)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-
-        let content = serde_json::to_string_pretty(&output)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-
+        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         Ok(CallToolResult::success(vec![Content::text(content)]))
     }
 }
@@ -513,9 +676,18 @@ impl ServerHandler for LlmxServer {
             ));
         }
 
-        let output = self.status_snapshot()?;
-        let text = serde_json::to_string_pretty(&output)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let text = match &self.data_source {
+            DataSource::Local { .. } => {
+                let output = self.status_snapshot()?;
+                serde_json::to_string_pretty(&output)
+            }
+            DataSource::Remote(client) => {
+                let output = client.status().await
+                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+                serde_json::to_string_pretty(&output)
+            }
+        }
+        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
         Ok(ReadResourceResult {
             contents: vec![ResourceContents::TextResourceContents {
@@ -527,14 +699,24 @@ impl ServerHandler for LlmxServer {
     }
 
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            protocol_version: ProtocolVersion::V_2024_11_05,
-            capabilities: ServerCapabilities::builder()
+        // Only advertise listChanged in local mode where the file
+        // watcher can actually fire these notifications.
+        let capabilities = if matches!(self.data_source, DataSource::Local { .. }) {
+            ServerCapabilities::builder()
                 .enable_tools()
                 .enable_tool_list_changed()
                 .enable_resources()
                 .enable_resources_list_changed()
-                .build(),
+                .build()
+        } else {
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_resources()
+                .build()
+        };
+        ServerInfo {
+            protocol_version: ProtocolVersion::V_2024_11_05,
+            capabilities,
             server_info: Implementation {
                 name: "llmx".to_string(),
                 version: "2.1.0".to_string(),
@@ -544,11 +726,37 @@ impl ServerHandler for LlmxServer {
     }
 
     async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
-        self.sync_client_roots(context.peer).await;
+        match &self.data_source {
+            DataSource::Local { .. } => self.sync_client_roots(context.peer).await,
+            DataSource::Remote(client) => {
+                self.remember_peer(context.peer.clone());
+                if let Ok(roots_result) = context.peer.list_roots().await {
+                    let root_paths = parse_root_paths(&roots_result.roots);
+                    let root_uris: Vec<String> = root_paths
+                        .iter()
+                        .filter_map(|p| file_path_to_uri(p))
+                        .collect();
+                    let _ = client.post_roots(root_uris).await;
+                }
+            }
+        }
     }
 
     async fn on_roots_list_changed(&self, context: NotificationContext<RoleServer>) {
-        self.sync_client_roots(context.peer).await;
+        match &self.data_source {
+            DataSource::Local { .. } => self.sync_client_roots(context.peer).await,
+            DataSource::Remote(client) => {
+                self.remember_peer(context.peer.clone());
+                if let Ok(roots_result) = context.peer.list_roots().await {
+                    let root_paths = parse_root_paths(&roots_result.roots);
+                    let root_uris: Vec<String> = root_paths
+                        .iter()
+                        .filter_map(|p| file_path_to_uri(p))
+                        .collect();
+                    let _ = client.post_roots(root_uris).await;
+                }
+            }
+        }
     }
 }
 
@@ -575,15 +783,6 @@ fn normalize_paths(paths: &[PathBuf]) -> Vec<String> {
     normalized.sort();
     normalized.dedup();
     normalized
-}
-
-fn should_emit_resource_list_changed(event: &Event) -> bool {
-    matches!(
-        event.kind,
-        EventKind::Create(_)
-            | EventKind::Remove(_)
-            | EventKind::Modify(ModifyKind::Name(_))
-    )
 }
 
 fn refresh_impacted_indexes(
@@ -798,106 +997,757 @@ mod tests {
     }
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    // Setup logging to stderr
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_env_filter(
-            EnvFilter::from_default_env().add_directive("llmx_mcp=info".parse()?),
-        )
-        .init();
+const DEFAULT_SERVE_PORT: u16 = 19100;
+const TOKEN_FILENAME: &str = ".backend-token";
 
-    let args = Args::parse();
-
-    // Get storage directory from args, env, or default
-    let storage_dir = args.storage_dir
-        .or_else(|| env::var("LLMX_STORAGE_DIR").ok().map(PathBuf::from))
-        .unwrap_or_else(llmx_mcp::default_storage_dir);
-
-    tracing::info!("Starting LLMX MCP server, storage: {:?}", storage_dir);
-
-    let store = Arc::new(Mutex::new(IndexStore::new(storage_dir)?));
-    let jobs = new_job_store();
-
-    // Auto-index paths specified via --path
-    if !args.paths.is_empty() {
-        let path_strings: Vec<String> = args.paths.iter()
-            .map(|p| p.canonicalize().unwrap_or_else(|_| p.clone()).to_string_lossy().to_string())
-            .collect();
-        tracing::info!("Auto-indexing {} paths: {:?}", path_strings.len(), path_strings);
-        let input = IndexInput {
-            paths: path_strings,
-            options: None,
-        };
-        match run_index_work(&input) {
-            Ok((index, root_path, _)) => {
-                let mut store_guard = store.lock().unwrap();
-                let index_id = store_guard.save(index, root_path.clone())?;
-                tracing::info!("Auto-indexed {} as {}", root_path, index_id);
-            }
-            Err(e) => {
-                tracing::warn!("Failed to auto-index: {}", e);
-            }
+/// Fill in `loc` with the proxy process's cwd when unset, so the backend
+/// resolves indexes against the client's working directory rather than its own.
+fn fill_loc_from_cwd(loc: &mut Option<String>) {
+    if loc.is_none() {
+        if let Ok(cwd) = env::current_dir() {
+            *loc = Some(cwd.to_string_lossy().to_string());
         }
     }
+}
 
-    // Spawn cleanup task: remove completed/errored jobs older than 10 minutes
-    let cleanup_jobs = jobs.clone();
+/// Generate a cryptographically random 32-byte hex token for backend auth.
+fn generate_token() -> String {
+    let mut buf = [0u8; 32];
+    getrandom::fill(&mut buf).expect("OS entropy source unavailable");
+    hex::encode(buf)
+}
+
+/// Write token to storage_dir/.backend-token with restrictive permissions.
+/// Uses atomic write-to-temp + rename to avoid TOCTOU permission window.
+fn write_token_file(storage_dir: &std::path::Path, token: &str) -> anyhow::Result<()> {
+    use std::io::Write;
+    let target = storage_dir.join(TOKEN_FILENAME);
+    let tmp = storage_dir.join(".backend-token.tmp");
+    {
+        #[cfg(unix)]
+        let file = {
+            use std::os::unix::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&tmp)?
+        };
+        #[cfg(not(unix))]
+        let file = std::fs::File::create(&tmp)?;
+        let mut file = std::io::BufWriter::new(file);
+        file.write_all(token.as_bytes())?;
+        file.flush()?;
+    }
+    std::fs::rename(&tmp, &target)?;
+    Ok(())
+}
+
+/// Read token from storage_dir/.backend-token.
+fn read_token_file(storage_dir: &std::path::Path) -> Option<String> {
+    let path = storage_dir.join(TOKEN_FILENAME);
+    std::fs::read_to_string(&path).ok().map(|s| s.trim().to_string())
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+fn resolve_storage_dir(args_dir: Option<PathBuf>) -> PathBuf {
+    args_dir
+        .or_else(|| env::var("LLMX_STORAGE_DIR").ok().map(PathBuf::from))
+        .unwrap_or_else(llmx_mcp::default_storage_dir)
+}
+
+fn auto_index_paths(store: &Arc<Mutex<IndexStore>>, paths: &[PathBuf]) {
+    if paths.is_empty() {
+        return;
+    }
+    let path_strings: Vec<String> = paths
+        .iter()
+        .map(|p| p.canonicalize().unwrap_or_else(|_| p.clone()).to_string_lossy().to_string())
+        .collect();
+    tracing::info!("Auto-indexing {} paths: {:?}", path_strings.len(), path_strings);
+    let input = IndexInput { paths: path_strings, options: None };
+    match run_index_work(&input) {
+        Ok((index, root_path, _)) => {
+            let mut store_guard = store.lock().unwrap();
+            match store_guard.save(index, root_path.clone()) {
+                Ok(index_id) => tracing::info!("Auto-indexed {} as {}", root_path, index_id),
+                Err(e) => tracing::warn!("Failed to save auto-index: {}", e),
+            }
+        }
+        Err(e) => tracing::warn!("Failed to auto-index: {}", e),
+    }
+}
+
+fn spawn_job_cleanup(jobs: JobStore) {
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(60)).await;
-            if let Ok(mut jobs) = cleanup_jobs.lock() {
+            if let Ok(mut jobs) = jobs.lock() {
                 jobs.retain(|_, state| state.started_at.elapsed().as_secs() < 600);
             }
         }
     });
+}
 
-    if let Some(port) = args.http {
-        serve_http(store, jobs, port).await
-    } else {
-        let server = LlmxServer::new(store, jobs);
-        tracing::info!("Server ready, listening on stdio");
-        let service = server.serve(rmcp::transport::stdio()).await?;
-        service.waiting().await?;
-        Ok(())
-    }
+/// Spawn a background loop for --serve backend mode that discovers indexed
+/// roots and watches them via the shared `spawn_debounced_watcher`. No MCP
+/// peer notifications -- proxy sessions see fresh data on their next request.
+fn spawn_backend_watcher(
+    store: Arc<Mutex<IndexStore>>,
+    stale_paths: Arc<Mutex<BTreeSet<String>>>,
+) {
+    tokio::spawn(async move {
+        let mut current_watcher: Option<DebouncedWatcher> = None;
+        let mut consecutive_failures: u32 = 0;
+
+        loop {
+            let indexed_roots: Vec<PathBuf> = store
+                .lock()
+                .ok()
+                .and_then(|s| s.list().ok())
+                .unwrap_or_default()
+                .into_iter()
+                .map(|m| PathBuf::from(&m.root_path))
+                .filter(|p| p.exists())
+                .collect();
+
+            let need_update = match &current_watcher {
+                None => !indexed_roots.is_empty(),
+                Some(w) => {
+                    let old: BTreeSet<_> = w.watched_roots.iter().collect();
+                    let new: BTreeSet<_> = indexed_roots.iter().collect();
+                    old != new
+                }
+            };
+
+            if need_update {
+                match spawn_debounced_watcher(
+                    store.clone(),
+                    stale_paths.clone(),
+                    indexed_roots,
+                    None, // no MCP notifications in backend mode
+                ) {
+                    Ok(w) => {
+                        current_watcher = Some(w);
+                        consecutive_failures = 0;
+                    }
+                    Err(e) => {
+                        consecutive_failures += 1;
+                        if consecutive_failures >= 10 {
+                            tracing::error!("backend watcher failed {consecutive_failures} times, giving up");
+                            break;
+                        }
+                        tracing::warn!("backend watcher setup failed ({consecutive_failures}/10): {e}");
+                    }
+                }
+            }
+
+            // Re-scan every 30s for newly indexed roots
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        }
+    });
+}
+
+// ─── BackendClient ───────────────────────────────────────────────────────────
+
+#[cfg(feature = "mcp-http")]
+#[derive(Clone)]
+struct BackendClient {
+    client: hyper_util::client::legacy::Client<
+        hyper_util::client::legacy::connect::HttpConnector,
+        http_body_util::Full<bytes::Bytes>,
+    >,
+    base_url: String,
+    token: Option<String>,
 }
 
 #[cfg(feature = "mcp-http")]
-async fn serve_http(
+impl BackendClient {
+    fn new(port: u16, token: Option<String>) -> Self {
+        let client = hyper_util::client::legacy::Client::builder(
+            hyper_util::rt::TokioExecutor::new(),
+        )
+        .build_http();
+        Self {
+            client,
+            base_url: format!("http://127.0.0.1:{port}"),
+            token,
+        }
+    }
+
+    async fn health_check(&self) -> bool {
+        let check = async {
+            let resp: serde_json::Value = self.get("/api/health").await?;
+            Ok::<bool, anyhow::Error>(resp.get("ok").and_then(|v| v.as_bool()).unwrap_or(false))
+        };
+        tokio::time::timeout(Duration::from_millis(500), check)
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .unwrap_or(false)
+    }
+
+    async fn get<T: serde::de::DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
+        use http_body_util::BodyExt;
+        let uri: hyper::Uri = format!("{}{}", self.base_url, path).parse()?;
+        let mut builder = hyper::Request::get(uri);
+        if let Some(ref token) = self.token {
+            builder = builder.header("authorization", format!("Bearer {token}"));
+        }
+        let req = builder.body(http_body_util::Full::new(bytes::Bytes::new()))?;
+        let resp = self.client.request(req).await?;
+        let status = resp.status();
+        let body = resp.into_body().collect().await?.to_bytes();
+        if !status.is_success() {
+            let err_msg = serde_json::from_slice::<serde_json::Value>(&body)
+                .ok()
+                .and_then(|v| v.get("error")?.as_str().map(String::from))
+                .unwrap_or_else(|| format!("Backend returned {status}"));
+            anyhow::bail!(err_msg);
+        }
+        Ok(serde_json::from_slice(&body)?)
+    }
+
+    async fn post<I: serde::Serialize, O: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        input: &I,
+    ) -> anyhow::Result<O> {
+        use http_body_util::BodyExt;
+        let uri: hyper::Uri = format!("{}{}", self.base_url, path).parse()?;
+        let body = serde_json::to_vec(input)?;
+        let mut builder = hyper::Request::post(uri)
+            .header("content-type", "application/json");
+        if let Some(ref token) = self.token {
+            builder = builder.header("authorization", format!("Bearer {token}"));
+        }
+        let req = builder.body(http_body_util::Full::new(bytes::Bytes::from(body)))?;
+        let resp = self.client.request(req).await?;
+        let status = resp.status();
+        let body = resp.into_body().collect().await?.to_bytes();
+        if !status.is_success() {
+            let err_msg = serde_json::from_slice::<serde_json::Value>(&body)
+                .ok()
+                .and_then(|v| v.get("error")?.as_str().map(String::from))
+                .unwrap_or_else(|| format!("Backend returned {status}"));
+            anyhow::bail!(err_msg);
+        }
+        Ok(serde_json::from_slice(&body)?)
+    }
+
+    async fn status(&self) -> anyhow::Result<StatusOutput> {
+        self.get("/api/status").await
+    }
+
+    async fn search(&self, input: &SearchInput) -> anyhow::Result<serde_json::Value> {
+        self.post("/api/search", input).await
+    }
+
+    async fn index(&self, input: &IndexInput) -> anyhow::Result<serde_json::Value> {
+        self.post("/api/index", input).await
+    }
+
+    async fn explore(&self, input: &ExploreInput) -> anyhow::Result<serde_json::Value> {
+        self.post("/api/explore", input).await
+    }
+
+    async fn manage(&self, input: &ManageInput) -> anyhow::Result<serde_json::Value> {
+        self.post("/api/manage", input).await
+    }
+
+    async fn symbols(&self, input: &SymbolsInput) -> anyhow::Result<serde_json::Value> {
+        self.post("/api/symbols", input).await
+    }
+
+    async fn lookup(&self, input: &LookupInput) -> anyhow::Result<serde_json::Value> {
+        self.post("/api/lookup", input).await
+    }
+
+    async fn refs(&self, input: &RefsInput) -> anyhow::Result<serde_json::Value> {
+        self.post("/api/refs", input).await
+    }
+
+    async fn get_chunk(&self, input: &GetChunkInput) -> anyhow::Result<serde_json::Value> {
+        self.post("/api/get_chunk", input).await
+    }
+
+    async fn post_roots(&self, roots: Vec<String>) -> anyhow::Result<()> {
+        let _: serde_json::Value =
+            self.post("/api/roots", &serde_json::json!({ "roots": roots })).await?;
+        Ok(())
+    }
+
+    async fn storage_dir(&self) -> anyhow::Result<String> {
+        let resp: serde_json::Value = self.get("/api/config").await?;
+        resp.get("storage_dir")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .ok_or_else(|| anyhow::anyhow!("missing storage_dir in config response"))
+    }
+}
+
+#[cfg(not(feature = "mcp-http"))]
+#[derive(Clone)]
+struct BackendClient;
+
+#[cfg(not(feature = "mcp-http"))]
+impl BackendClient {
+    fn new(_port: u16, _token: Option<String>) -> Self { Self }
+    async fn health_check(&self) -> bool { false }
+}
+
+// ─── Auto-start ──────────────────────────────────────────────────────────────
+
+async fn detect_or_start_backend(port: u16, storage_dir: Option<&PathBuf>) -> Option<BackendClient> {
+    let expected_dir = storage_dir
+        .map(|d| resolve_storage_dir(Some(d.clone())))
+        .unwrap_or_else(|| resolve_storage_dir(None));
+    let token = read_token_file(&expected_dir);
+    let client = BackendClient::new(port, token);
+
+    if client.health_check().await {
+        // Verify storage-dir compatibility via authenticated /api/config.
+        // If auth fails the backend isn't ours -- fall back to standalone.
+        let expected = expected_dir.to_string_lossy().to_string();
+        match client.storage_dir().await {
+            Ok(backend_dir) if backend_dir == expected => {
+                tracing::info!("Connected to existing llmx backend on port {port}");
+                return Some(client);
+            }
+            Ok(backend_dir) => {
+                tracing::warn!(
+                    "Backend on port {port} uses storage {backend_dir}, \
+                     but this session expects {expected}. Falling back to standalone."
+                );
+                return None;
+            }
+            Err(e) => {
+                tracing::warn!("Backend auth/config check failed ({e}), falling back to standalone");
+                return None;
+            }
+        }
+    }
+
+    if env::var("LLMX_NO_AUTOSTART").map(|v| v == "1").unwrap_or(false) {
+        tracing::info!("Backend not found, auto-start disabled (LLMX_NO_AUTOSTART=1)");
+        return None;
+    }
+
+    tracing::info!("No backend found, auto-starting llmx-mcp --serve {port}");
+    let exe = match env::current_exe() {
+        Ok(exe) => exe,
+        Err(e) => {
+            tracing::warn!("Cannot determine own executable path: {e}");
+            return None;
+        }
+    };
+
+    let mut cmd = std::process::Command::new(&exe);
+    cmd.arg("--serve")
+        .arg(port.to_string());
+    if let Some(dir) = storage_dir {
+        cmd.arg("--storage-dir").arg(dir);
+    }
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::inherit());
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+
+    match cmd.spawn() {
+        Ok(_) => {}
+        Err(e) => {
+            tracing::warn!("Failed to spawn backend: {e}");
+            return None;
+        }
+    }
+
+    // Wait for backend to start, then re-read token it wrote
+    for i in 0..50 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        // Re-read token on each attempt (backend writes it on startup)
+        let fresh_token = read_token_file(&expected_dir);
+        let fresh_client = BackendClient::new(port, fresh_token);
+        if fresh_client.health_check().await {
+            tracing::info!(
+                "Backend started successfully on port {port} (took ~{}ms)",
+                (i + 1) * 100
+            );
+            return Some(fresh_client);
+        }
+    }
+
+    tracing::warn!("Backend failed to start within 5s, falling back to standalone");
+    None
+}
+
+// ─── REST Backend ────────────────────────────────────────────────────────────
+
+#[cfg(feature = "mcp-http")]
+async fn serve_rest(
     store: Arc<Mutex<IndexStore>>,
     jobs: JobStore,
+    stale_paths: Arc<Mutex<BTreeSet<String>>>,
     port: u16,
+    storage_dir: PathBuf,
 ) -> anyhow::Result<()> {
-    use rmcp::transport::streamable_http_server::{
-        StreamableHttpServerConfig, StreamableHttpService,
-        session::local::LocalSessionManager,
-    };
+    use hyper::body::Incoming;
+    use hyper::{Method, Request, Response, StatusCode};
     use hyper_util::rt::TokioIo;
-    use hyper_util::service::TowerToHyperService;
+    use http_body_util::{BodyExt, Full};
+    use bytes::Bytes;
     use std::net::SocketAddr;
 
-    let session_manager = Arc::new(LocalSessionManager::default());
-    let config = StreamableHttpServerConfig::default();
+    // Generate and persist auth token
+    let token = generate_token();
+    write_token_file(&storage_dir, &token)?;
+    let token = Arc::new(token);
 
-    let svc = StreamableHttpService::new(
-        move || Ok(LlmxServer::new(store.clone(), jobs.clone())),
-        session_manager,
-        config,
-    );
+    fn json_ok<T: serde::Serialize>(value: &T) -> Response<Full<Bytes>> {
+        let body = serde_json::to_vec(value).unwrap_or_default();
+        Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(Full::new(Bytes::from(body)))
+            .unwrap()
+    }
+
+    fn json_err(status: StatusCode, message: &str) -> Response<Full<Bytes>> {
+        let body =
+            serde_json::to_vec(&serde_json::json!({ "error": message })).unwrap_or_default();
+        Response::builder()
+            .status(status)
+            .header("content-type", "application/json")
+            .body(Full::new(Bytes::from(body)))
+            .unwrap()
+    }
+
+    async fn read_body(req: Request<Incoming>) -> Result<Bytes, Response<Full<Bytes>>> {
+        req.collect()
+            .await
+            .map(|collected| collected.to_bytes())
+            .map_err(|_| json_err(StatusCode::BAD_REQUEST, "Failed to read request body"))
+    }
+
+    async fn handle(
+        req: Request<Incoming>,
+        store: Arc<Mutex<IndexStore>>,
+        jobs: JobStore,
+        stale_paths: Arc<Mutex<BTreeSet<String>>>,
+        storage_dir: PathBuf,
+        expected_token: Arc<String>,
+    ) -> Result<Response<Full<Bytes>>, std::convert::Infallible> {
+        // Validate bearer token on every request (constant-time comparison)
+        let auth_ok = req.headers()
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .map(|t| {
+                let a = t.as_bytes();
+                let b = expected_token.as_bytes();
+                a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+            })
+            .unwrap_or(false);
+        if !auth_ok {
+            return Ok(json_err(StatusCode::UNAUTHORIZED, "Invalid or missing bearer token"));
+        }
+
+        let method = req.method().clone();
+        let path = req.uri().path().to_string();
+
+        let response = match (method, path.as_str()) {
+            (Method::GET, "/api/health") => json_ok(&serde_json::json!({ "ok": true })),
+
+            (Method::GET, "/api/config") => json_ok(&serde_json::json!({
+                "storage_dir": storage_dir.to_string_lossy(),
+            })),
+
+            (Method::GET, "/api/status") => {
+                match store.lock() {
+                    Ok(mut s) => match llmx_status_handler(&mut s, &jobs) {
+                        Ok(mut status) => {
+                            status.stale_files =
+                                stale_paths.lock().map(|p| p.len()).unwrap_or(0);
+                            json_ok(&status)
+                        }
+                        Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                    },
+                    Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                }
+            }
+
+            (Method::POST, "/api/search") => {
+                let body = match read_body(req).await {
+                    Ok(b) => b,
+                    Err(r) => return Ok(r),
+                };
+                let input: SearchInput = match serde_json::from_slice(&body) {
+                    Ok(v) => v,
+                    Err(e) => return Ok(json_err(StatusCode::BAD_REQUEST, &e.to_string())),
+                };
+                match store.lock() {
+                    Ok(mut s) => match llmx_search_handler(&mut s, input) {
+                        Ok(output) => json_ok(&output),
+                        Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                    },
+                    Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                }
+            }
+
+            (Method::POST, "/api/index") => {
+                let body = match read_body(req).await {
+                    Ok(b) => b,
+                    Err(r) => return Ok(r),
+                };
+                let input: IndexInput = match serde_json::from_slice(&body) {
+                    Ok(v) => v,
+                    Err(e) => return Ok(json_err(StatusCode::BAD_REQUEST, &e.to_string())),
+                };
+                if active_job_count(&jobs) >= MAX_CONCURRENT_JOBS {
+                    return Ok(json_err(
+                        StatusCode::TOO_MANY_REQUESTS,
+                        &format!("Too many active jobs (max {MAX_CONCURRENT_JOBS})"),
+                    ));
+                }
+                let job_id = new_job_id();
+                if let Ok(mut j) = jobs.lock() {
+                    j.insert(job_id.clone(), JobState::queued());
+                }
+                let store2 = store.clone();
+                let jobs2 = jobs.clone();
+                let jid = job_id.clone();
+                tokio::task::spawn_blocking(move || {
+                    if let Ok(mut j) = jobs2.lock() {
+                        if let Some(s) = j.get_mut(&jid) {
+                            s.status = JobStatus::Running;
+                        }
+                    }
+                    let result = run_index_work(&input);
+                    let final_status = match result {
+                        Ok((index, root_path, _)) => {
+                            let stats = IndexStatsOutput {
+                                total_files: index.stats.total_files,
+                                total_chunks: index.stats.total_chunks,
+                                avg_chunk_tokens: index.stats.avg_chunk_tokens,
+                            };
+                            let warnings = index.warnings.len();
+                            match store2.lock() {
+                                Ok(mut s) => match s.save(index, root_path) {
+                                    Ok(index_id) => {
+                                        JobStatus::Complete { index_id, stats, warnings }
+                                    }
+                                    Err(e) => JobStatus::Error { message: e.to_string() },
+                                },
+                                Err(e) => {
+                                    JobStatus::Error { message: format!("Store lock: {e}") }
+                                }
+                            }
+                        }
+                        Err(e) => JobStatus::Error { message: e.to_string() },
+                    };
+                    if let Ok(mut j) = jobs2.lock() {
+                        if let Some(s) = j.get_mut(&jid) {
+                            s.status = final_status;
+                        }
+                    }
+                });
+                json_ok(&serde_json::json!({
+                    "job_id": job_id,
+                    "status": "queued",
+                    "message": "Indexing started. Poll with llmx_manage(action='job_status')."
+                }))
+            }
+
+            (Method::POST, "/api/explore") => {
+                let body = match read_body(req).await {
+                    Ok(b) => b,
+                    Err(r) => return Ok(r),
+                };
+                let input: ExploreInput = match serde_json::from_slice(&body) {
+                    Ok(v) => v,
+                    Err(e) => return Ok(json_err(StatusCode::BAD_REQUEST, &e.to_string())),
+                };
+                match store.lock() {
+                    Ok(mut s) => match llmx_explore_handler(&mut s, input) {
+                        Ok(output) => json_ok(&output),
+                        Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                    },
+                    Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                }
+            }
+
+            (Method::POST, "/api/manage") => {
+                let body = match read_body(req).await {
+                    Ok(b) => b,
+                    Err(r) => return Ok(r),
+                };
+                let input: ManageInput = match serde_json::from_slice(&body) {
+                    Ok(v) => v,
+                    Err(e) => return Ok(json_err(StatusCode::BAD_REQUEST, &e.to_string())),
+                };
+                if input.action == "job_status" {
+                    let job_id = input.index_id.as_deref().unwrap_or("");
+                    match jobs.lock() {
+                        Ok(j) => match j.get(job_id) {
+                            Some(state) => json_ok(&state.status),
+                            None => json_err(
+                                StatusCode::NOT_FOUND,
+                                &format!("Unknown job_id: {job_id}"),
+                            ),
+                        },
+                        Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                    }
+                } else {
+                    match store.lock() {
+                        Ok(mut s) => match llmx_manage_handler(&mut s, input) {
+                            Ok(output) => json_ok(&output),
+                            Err(e) => {
+                                json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string())
+                            }
+                        },
+                        Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                    }
+                }
+            }
+
+            (Method::POST, "/api/symbols") => {
+                let body = match read_body(req).await {
+                    Ok(b) => b,
+                    Err(r) => return Ok(r),
+                };
+                let input: SymbolsInput = match serde_json::from_slice(&body) {
+                    Ok(v) => v,
+                    Err(e) => return Ok(json_err(StatusCode::BAD_REQUEST, &e.to_string())),
+                };
+                match store.lock() {
+                    Ok(mut s) => match llmx_symbols_handler(&mut s, input) {
+                        Ok(output) => json_ok(&output),
+                        Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                    },
+                    Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                }
+            }
+
+            (Method::POST, "/api/lookup") => {
+                let body = match read_body(req).await {
+                    Ok(b) => b,
+                    Err(r) => return Ok(r),
+                };
+                let input: LookupInput = match serde_json::from_slice(&body) {
+                    Ok(v) => v,
+                    Err(e) => return Ok(json_err(StatusCode::BAD_REQUEST, &e.to_string())),
+                };
+                match store.lock() {
+                    Ok(mut s) => match llmx_lookup_handler(&mut s, input) {
+                        Ok(output) => json_ok(&output),
+                        Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                    },
+                    Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                }
+            }
+
+            (Method::POST, "/api/refs") => {
+                let body = match read_body(req).await {
+                    Ok(b) => b,
+                    Err(r) => return Ok(r),
+                };
+                let input: RefsInput = match serde_json::from_slice(&body) {
+                    Ok(v) => v,
+                    Err(e) => return Ok(json_err(StatusCode::BAD_REQUEST, &e.to_string())),
+                };
+                match store.lock() {
+                    Ok(mut s) => match llmx_refs_handler(&mut s, input) {
+                        Ok(output) => json_ok(&output),
+                        Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                    },
+                    Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                }
+            }
+
+            (Method::POST, "/api/get_chunk") => {
+                let body = match read_body(req).await {
+                    Ok(b) => b,
+                    Err(r) => return Ok(r),
+                };
+                let input: GetChunkInput = match serde_json::from_slice(&body) {
+                    Ok(v) => v,
+                    Err(e) => return Ok(json_err(StatusCode::BAD_REQUEST, &e.to_string())),
+                };
+                match store.lock() {
+                    Ok(mut s) => match llmx_get_chunk_handler(&mut s, input) {
+                        Ok(output) => json_ok(&output),
+                        Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                    },
+                    Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+                }
+            }
+
+            (Method::POST, "/api/roots") => {
+                let body = match read_body(req).await {
+                    Ok(b) => b,
+                    Err(r) => return Ok(r),
+                };
+                let parsed: serde_json::Value = match serde_json::from_slice(&body) {
+                    Ok(v) => v,
+                    Err(e) => return Ok(json_err(StatusCode::BAD_REQUEST, &e.to_string())),
+                };
+                let roots: Vec<String> = parsed
+                    .get("roots")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
+                tracing::info!("Received {} root paths from proxy", roots.len());
+                // Auto-index root paths not already covered by an exact
+                // or ancestor index (avoids duplicate nested indexes).
+                let candidate_paths: Vec<PathBuf> = roots.iter()
+                    .filter_map(|uri| url::Url::parse(uri).ok())
+                    .filter_map(|u| u.to_file_path().ok())
+                    .collect();
+                let paths_to_index: Vec<PathBuf> = match store.lock() {
+                    Ok(s) => candidate_paths.into_iter()
+                        .filter(|p| s.find_by_path(p).is_none() && !s.has_ancestor_index(p))
+                        .collect(),
+                    Err(_) => candidate_paths,
+                };
+                if !paths_to_index.is_empty() {
+                    let store2 = store.clone();
+                    tokio::task::spawn_blocking(move || {
+                        auto_index_paths(&store2, &paths_to_index);
+                    });
+                }
+                json_ok(&serde_json::json!({ "ok": true, "roots": roots.len() }))
+            }
+
+            _ => json_err(StatusCode::NOT_FOUND, "Not Found"),
+        };
+
+        Ok(response)
+    }
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    tracing::info!("Server ready, listening on http://127.0.0.1:{port}");
+    tracing::info!("REST backend ready on http://127.0.0.1:{port}");
 
     loop {
         let (stream, _) = listener.accept().await?;
         let io = TokioIo::new(stream);
-        let svc = TowerToHyperService::new(svc.clone());
+        let store = store.clone();
+        let jobs = jobs.clone();
+        let stale_paths = stale_paths.clone();
+        let storage_dir = storage_dir.clone();
+        let token = token.clone();
+
         tokio::spawn(async move {
+            let service = hyper::service::service_fn(move |req| {
+                handle(req, store.clone(), jobs.clone(), stale_paths.clone(), storage_dir.clone(), token.clone())
+            });
             if let Err(err) = hyper::server::conn::http1::Builder::new()
-                .serve_connection(io, svc)
+                .serve_connection(io, service)
                 .await
             {
                 tracing::warn!("HTTP connection error: {err}");
@@ -907,10 +1757,79 @@ async fn serve_http(
 }
 
 #[cfg(not(feature = "mcp-http"))]
-async fn serve_http(
+async fn serve_rest(
     _store: Arc<Mutex<IndexStore>>,
     _jobs: JobStore,
+    _stale_paths: Arc<Mutex<BTreeSet<String>>>,
     _port: u16,
+    _storage_dir: PathBuf,
 ) -> anyhow::Result<()> {
-    anyhow::bail!("HTTP transport requires the 'mcp-http' feature. Rebuild with: cargo build --release --features mcp-http")
+    anyhow::bail!("REST backend requires the 'mcp-http' feature")
+}
+
+// ─── main ────────────────────────────────────────────────────────────────────
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_env_filter(
+            EnvFilter::from_default_env().add_directive("llmx_mcp=info".parse()?),
+        )
+        .init();
+
+    let args = Args::parse();
+
+    // --serve mode: run REST backend
+    if let Some(port) = args.serve {
+        let storage_dir = resolve_storage_dir(args.storage_dir);
+        tracing::info!("Starting LLMX REST backend, storage: {:?}", storage_dir);
+
+        let store = Arc::new(Mutex::new(IndexStore::new(storage_dir.clone())?));
+        let jobs = new_job_store();
+        let stale_paths = Arc::new(Mutex::new(BTreeSet::new()));
+
+        auto_index_paths(&store, &args.paths);
+        spawn_job_cleanup(jobs.clone());
+        spawn_backend_watcher(store.clone(), stale_paths.clone());
+
+        return serve_rest(store, jobs, stale_paths, port, storage_dir).await;
+    }
+
+    // Stdio mode: try backend, then fallback to standalone
+    let port = env::var("LLMX_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_SERVE_PORT);
+
+    let server = if let Some(client) = detect_or_start_backend(port, args.storage_dir.as_ref()).await {
+        tracing::info!("Running in proxy mode (backend on port {port})");
+        // Forward --path args to the backend for indexing
+        if !args.paths.is_empty() {
+            let path_strings: Vec<String> = args.paths.iter()
+                .map(|p| p.canonicalize().unwrap_or_else(|_| p.clone()).to_string_lossy().to_string())
+                .collect();
+            tracing::info!("Forwarding {} --path args to backend", path_strings.len());
+            let input = IndexInput { paths: path_strings, options: None };
+            if let Err(e) = client.index(&input).await {
+                tracing::warn!("Failed to forward --path to backend: {e}");
+            }
+        }
+        LlmxServer::new_remote(client)
+    } else {
+        tracing::info!("Running in standalone mode");
+        let storage_dir = resolve_storage_dir(args.storage_dir);
+        let store = Arc::new(Mutex::new(IndexStore::new(storage_dir)?));
+        let jobs = new_job_store();
+
+        auto_index_paths(&store, &args.paths);
+        spawn_job_cleanup(jobs.clone());
+
+        LlmxServer::new_local(store, jobs)
+    };
+
+    tracing::info!("Server ready, listening on stdio");
+    let service = server.serve(rmcp::transport::stdio()).await?;
+    service.waiting().await?;
+    Ok(())
 }

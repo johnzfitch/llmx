@@ -96,7 +96,14 @@ The repo includes `.mcp.json` for automatic MCP discovery. After installing:
 echo '{"mcpServers":{"llmx":{"command":"llmx-mcp"}}}' > .mcp.json
 ```
 
-Then restart your MCP client. The server provides:
+Then restart your MCP client. The first session auto-starts a shared backend on `localhost:19100` so multiple sessions share one index in memory instead of each loading its own copy.
+
+| Environment Variable | Effect |
+|---|---|
+| `LLMX_PORT` | Override backend port (default `19100`) |
+| `LLMX_NO_AUTOSTART=1` | Disable auto-start, run standalone per-session |
+
+The server provides:
 
 <dl>
   <dt><code>llmx_status</code></dt>

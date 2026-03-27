@@ -261,6 +261,29 @@ impl IndexStore {
         self.registry.indexes.get(&path_hash)
     }
 
+    /// Find a persistent index whose root is an ancestor of the given path.
+    ///
+    /// Returns the metadata and the relative path from the index root to the given path.
+    /// Prefers the deepest (most specific) ancestor match.
+    pub fn find_metadata_containing_path(&self, path: &Path) -> Option<(&IndexMetadata, String)> {
+        let normalized = path.to_string_lossy().replace('\\', "/");
+        let mut best: Option<(&IndexMetadata, String)> = None;
+
+        for meta in self.registry.indexes.values() {
+            let root = meta.root_path.trim_end_matches('/');
+            let prefix = format!("{}/", root);
+            if normalized.starts_with(&prefix) {
+                let relative = &normalized[prefix.len()..];
+                // Prefer deepest ancestor (longest root_path)
+                if best.as_ref().map_or(true, |(b, _)| meta.root_path.len() > b.root_path.len()) {
+                    best = Some((meta, relative.to_string()));
+                }
+            }
+        }
+
+        best
+    }
+
     /// Get mutable reference to cached index.
     pub fn get_mut(&mut self, id: &str) -> Option<&mut IndexFile> {
         self.cache.get_mut(id)
@@ -369,6 +392,22 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    /// Insert a fake metadata entry into the registry for testing lookups.
+    fn insert_metadata(store: &mut IndexStore, root_path: &str) {
+        let normalized = root_path.replace('\\', "/");
+        let path_hash = IndexStore::hash_path(&normalized);
+        store.registry.indexes.insert(
+            path_hash,
+            IndexMetadata {
+                id: format!("idx-{}", normalized.replace('/', "_")),
+                root_path: normalized,
+                created_at: 0,
+                file_count: 1,
+                chunk_count: 1,
+            },
+        );
+    }
+
     #[test]
     fn test_rejects_old_schema_versions() -> Result<()> {
         let temp_dir = tempdir()?;
@@ -389,6 +428,71 @@ mod tests {
         let message = err.to_string();
         assert!(message.contains("schema version 2"), "{message}");
         assert!(message.contains("Reindex"), "{message}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_find_metadata_containing_path_basic() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let mut store = IndexStore::new(temp_dir.path().to_path_buf())?;
+        insert_metadata(&mut store, "/home/user/project");
+
+        let result = store.find_metadata_containing_path(Path::new("/home/user/project/src/lib.rs"));
+        let (meta, relative) = result.expect("should find containing index");
+        assert_eq!(meta.root_path, "/home/user/project");
+        assert_eq!(relative, "src/lib.rs");
+        Ok(())
+    }
+
+    #[test]
+    fn test_find_metadata_containing_path_deepest_match() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let mut store = IndexStore::new(temp_dir.path().to_path_buf())?;
+        insert_metadata(&mut store, "/home/user/project");
+        insert_metadata(&mut store, "/home/user/project/packages/core");
+
+        let result = store.find_metadata_containing_path(
+            Path::new("/home/user/project/packages/core/src/main.rs"),
+        );
+        let (meta, relative) = result.expect("should find deepest ancestor");
+        assert_eq!(meta.root_path, "/home/user/project/packages/core");
+        assert_eq!(relative, "src/main.rs");
+        Ok(())
+    }
+
+    #[test]
+    fn test_find_metadata_containing_path_no_prefix_collision() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let mut store = IndexStore::new(temp_dir.path().to_path_buf())?;
+        insert_metadata(&mut store, "/proj/src");
+
+        // "/proj/src2/foo.rs" must NOT match "/proj/src" because the
+        // trailing '/' check prevents prefix collisions.
+        let result = store.find_metadata_containing_path(Path::new("/proj/src2/foo.rs"));
+        assert!(result.is_none(), "should not match /proj/src for /proj/src2/foo.rs");
+        Ok(())
+    }
+
+    #[test]
+    fn test_find_metadata_containing_path_exact_root_no_match() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let mut store = IndexStore::new(temp_dir.path().to_path_buf())?;
+        insert_metadata(&mut store, "/home/user/project");
+
+        // The exact root path should NOT match (it's not a subdirectory).
+        let result = store.find_metadata_containing_path(Path::new("/home/user/project"));
+        assert!(result.is_none(), "exact root path should not match as contained");
+        Ok(())
+    }
+
+    #[test]
+    fn test_find_metadata_containing_path_no_match() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let mut store = IndexStore::new(temp_dir.path().to_path_buf())?;
+        insert_metadata(&mut store, "/home/user/project");
+
+        let result = store.find_metadata_containing_path(Path::new("/home/user/other/file.rs"));
+        assert!(result.is_none());
         Ok(())
     }
 }
