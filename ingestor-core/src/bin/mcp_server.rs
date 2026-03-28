@@ -9,7 +9,7 @@ use llmx_mcp::mcp::{
 };
 use llmx_mcp::pathnorm::{normalize_root_path, relativize_path};
 use llmx_mcp::walk::{collect_files, read_file, WalkConfig};
-use llmx_mcp::{ingest_files_with_root, update_index_selective, IngestOptions};
+use llmx_mcp::{ingest_files_with_root, update_index_selective, IngestOptions, IndexFile};
 use rmcp::handler::server::{router::tool::ToolRouter, tool::Parameters};
 use rmcp::model::{ErrorData as McpError, *};
 use rmcp::{tool, tool_handler, tool_router, ServerHandler, ServiceExt};
@@ -209,6 +209,11 @@ struct LlmxServer {
     peer: Arc<Mutex<Option<Peer<RoleServer>>>>,
     watcher: Arc<Mutex<Option<DebouncedWatcher>>>,
     stale_paths: Arc<Mutex<BTreeSet<String>>>,
+    /// Client roots from MCP roots/list — the spec-recommended way to know
+    /// the client's project scope.  Updated by on_initialized and
+    /// on_roots_list_changed.  Used instead of env::current_dir() for index
+    /// resolution when loc is unset.
+    client_roots: Arc<Mutex<Vec<PathBuf>>>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -220,6 +225,7 @@ impl LlmxServer {
             peer: Arc::new(Mutex::new(None)),
             watcher: Arc::new(Mutex::new(None)),
             stale_paths: Arc::new(Mutex::new(BTreeSet::new())),
+            client_roots: Arc::new(Mutex::new(Vec::new())),
             tool_router: Self::tool_router(),
         }
     }
@@ -230,6 +236,7 @@ impl LlmxServer {
             peer: Arc::new(Mutex::new(None)),
             watcher: Arc::new(Mutex::new(None)),
             stale_paths: Arc::new(Mutex::new(BTreeSet::new())),
+            client_roots: Arc::new(Mutex::new(Vec::new())),
             tool_router: Self::tool_router(),
         }
     }
@@ -261,6 +268,47 @@ impl LlmxServer {
         }
     }
 
+    /// Fill `loc` from MCP client roots when unset, so index resolution uses
+    /// the client's project scope (per MCP spec) instead of the server process's cwd.
+    ///
+    /// When multiple roots exist, prefer one that has a matching index (exact
+    /// or ancestor) so multi-project workspaces resolve correctly.  Falls back
+    /// to the first root if none match, and to env::current_dir() only when
+    /// no roots are available at all.
+    fn fill_loc_from_roots(&self, loc: &mut Option<String>) {
+        if loc.is_some() {
+            return;
+        }
+        if let Ok(roots) = self.client_roots.lock() {
+            if roots.is_empty() {
+                // No roots yet -- fall through to cwd below
+            } else if roots.len() == 1 {
+                *loc = Some(roots[0].to_string_lossy().to_string());
+                return;
+            } else {
+                // Multiple roots: try to pick the one with a known index.
+                // Only possible in Local mode where we hold the store.
+                if let DataSource::Local { store, .. } = &self.data_source {
+                    if let Ok(store) = store.lock() {
+                        for root in roots.iter() {
+                            if store.find_by_path(root).is_some() {
+                                *loc = Some(root.to_string_lossy().to_string());
+                                return;
+                            }
+                        }
+                    }
+                }
+                // No indexed root found (or proxy mode) -- use the first root
+                *loc = Some(roots[0].to_string_lossy().to_string());
+                return;
+            }
+        }
+        // Fallback: no roots received yet (client may not support roots/list)
+        if let Ok(cwd) = env::current_dir() {
+            *loc = Some(cwd.to_string_lossy().to_string());
+        }
+    }
+
     async fn sync_client_roots(&self, peer: Peer<RoleServer>) {
         self.remember_peer(peer.clone());
 
@@ -271,6 +319,13 @@ impl LlmxServer {
         };
 
         let root_paths = parse_root_paths(&roots_result.roots);
+
+        // Cache client roots for index resolution (MCP spec: use roots, not cwd)
+        if let Ok(mut cached) = self.client_roots.lock() {
+            *cached = root_paths.clone();
+            tracing::info!("client roots updated: {:?}", cached);
+        }
+
         if let Err(err) = self.replace_watch_roots(root_paths) {
             tracing::warn!("failed to refresh root watchers: {err}");
             return;
@@ -472,7 +527,7 @@ impl LlmxServer {
     ) -> Result<CallToolResult, McpError> {
         let content = match &self.data_source {
             DataSource::Remote(client) => {
-                fill_loc_from_cwd(&mut input.loc);
+                self.fill_loc_from_roots(&mut input.loc);
                 let result = client.search(&input).await
                     .map_err(|e| McpError::internal_error(e.to_string(), None))?;
                 serde_json::to_string_pretty(&result)
@@ -496,7 +551,7 @@ impl LlmxServer {
     ) -> Result<CallToolResult, McpError> {
         let content = match &self.data_source {
             DataSource::Remote(client) => {
-                fill_loc_from_cwd(&mut input.loc);
+                self.fill_loc_from_roots(&mut input.loc);
                 let result = client.explore(&input).await
                     .map_err(|e| McpError::internal_error(e.to_string(), None))?;
                 serde_json::to_string_pretty(&result)
@@ -520,7 +575,7 @@ impl LlmxServer {
     ) -> Result<CallToolResult, McpError> {
         let content = match &self.data_source {
             DataSource::Remote(client) => {
-                fill_loc_from_cwd(&mut input.loc);
+                self.fill_loc_from_roots(&mut input.loc);
                 let result = client.symbols(&input).await
                     .map_err(|e| McpError::internal_error(e.to_string(), None))?;
                 serde_json::to_string_pretty(&result)
@@ -544,7 +599,7 @@ impl LlmxServer {
     ) -> Result<CallToolResult, McpError> {
         let content = match &self.data_source {
             DataSource::Remote(client) => {
-                fill_loc_from_cwd(&mut input.loc);
+                self.fill_loc_from_roots(&mut input.loc);
                 let result = client.lookup(&input).await
                     .map_err(|e| McpError::internal_error(e.to_string(), None))?;
                 serde_json::to_string_pretty(&result)
@@ -568,7 +623,7 @@ impl LlmxServer {
     ) -> Result<CallToolResult, McpError> {
         let content = match &self.data_source {
             DataSource::Remote(client) => {
-                fill_loc_from_cwd(&mut input.loc);
+                self.fill_loc_from_roots(&mut input.loc);
                 let result = client.refs(&input).await
                     .map_err(|e| McpError::internal_error(e.to_string(), None))?;
                 serde_json::to_string_pretty(&result)
@@ -592,7 +647,7 @@ impl LlmxServer {
     ) -> Result<CallToolResult, McpError> {
         let content = match &self.data_source {
             DataSource::Remote(client) => {
-                fill_loc_from_cwd(&mut input.loc);
+                self.fill_loc_from_roots(&mut input.loc);
                 let result = client.get_chunk(&input).await
                     .map_err(|e| McpError::internal_error(e.to_string(), None))?;
                 serde_json::to_string_pretty(&result)
@@ -616,7 +671,7 @@ impl LlmxServer {
     ) -> Result<CallToolResult, McpError> {
         let content = match &self.data_source {
             DataSource::Remote(client) => {
-                fill_loc_from_cwd(&mut input.loc);
+                self.fill_loc_from_roots(&mut input.loc);
                 let result = client.manage(&input).await
                     .map_err(|e| McpError::internal_error(e.to_string(), None))?;
                 serde_json::to_string_pretty(&result)
@@ -732,6 +787,11 @@ impl ServerHandler for LlmxServer {
                 self.remember_peer(context.peer.clone());
                 if let Ok(roots_result) = context.peer.list_roots().await {
                     let root_paths = parse_root_paths(&roots_result.roots);
+                    // Cache roots for index resolution in proxy mode too
+                    if let Ok(mut cached) = self.client_roots.lock() {
+                        *cached = root_paths.clone();
+                        tracing::info!("proxy client roots updated: {:?}", cached);
+                    }
                     let root_uris: Vec<String> = root_paths
                         .iter()
                         .filter_map(|p| file_path_to_uri(p))
@@ -749,6 +809,11 @@ impl ServerHandler for LlmxServer {
                 self.remember_peer(context.peer.clone());
                 if let Ok(roots_result) = context.peer.list_roots().await {
                     let root_paths = parse_root_paths(&roots_result.roots);
+                    // Cache roots for index resolution in proxy mode too
+                    if let Ok(mut cached) = self.client_roots.lock() {
+                        *cached = root_paths.clone();
+                        tracing::info!("proxy client roots updated: {:?}", cached);
+                    }
                     let root_uris: Vec<String> = root_paths
                         .iter()
                         .filter_map(|p| file_path_to_uri(p))
@@ -791,41 +856,70 @@ fn refresh_impacted_indexes(
     changed_paths: &[PathBuf],
 ) -> anyhow::Result<bool> {
     let normalized_changed = normalize_paths(changed_paths);
-    let mut store = store
-        .lock()
-        .map_err(|e| anyhow::anyhow!("IndexStore mutex poisoned: {e}"))?;
 
-    let indexes = store.list()?;
-    let mut any_changed = false;
-    let mut refreshed_roots = Vec::new();
+    // Phase 1: Hold the lock briefly to gather metadata and clone existing indexes.
+    // This avoids blocking HTTP handlers during the expensive file I/O + indexing below.
+    struct WorkItem {
+        root: PathBuf,
+        root_path_str: String,
+        existing: IndexFile,
+        impacted: Vec<PathBuf>,
+    }
 
-    for metadata in indexes {
-        let root = PathBuf::from(&metadata.root_path);
-        let impacted: Vec<PathBuf> = changed_paths
-            .iter()
-            .filter(|path| path.starts_with(&root))
-            .cloned()
-            .collect();
-        if impacted.is_empty() {
-            continue;
+    let work_items: Vec<WorkItem> = {
+        let mut store = store
+            .lock()
+            .map_err(|e| anyhow::anyhow!("IndexStore mutex poisoned: {e}"))?;
+        let indexes = store.list()?;
+        let mut items = Vec::new();
+        for metadata in indexes {
+            let root = PathBuf::from(&metadata.root_path);
+            let impacted: Vec<PathBuf> = changed_paths
+                .iter()
+                .filter(|path| path.starts_with(&root))
+                .cloned()
+                .collect();
+            if impacted.is_empty() {
+                continue;
+            }
+            let Some(index_id) = store.find_by_path(&root) else {
+                continue;
+            };
+            let existing = store.load(&index_id)?.clone();
+            items.push(WorkItem {
+                root,
+                root_path_str: metadata.root_path.clone(),
+                existing,
+                impacted,
+            });
         }
+        items
+    }; // lock released — heavy work below runs without blocking other threads
 
-        let Some(index_id) = store.find_by_path(&root) else {
-            continue;
-        };
+    if work_items.is_empty() {
+        return Ok(false);
+    }
 
-        let existing = store.load(&index_id)?.clone();
+    // Phase 2: File I/O and index computation (no lock held).
+    struct IndexResult {
+        root: PathBuf,
+        root_path_str: String,
+        updated: IndexFile,
+    }
+
+    let mut results = Vec::new();
+    for item in work_items {
         let mut files = Vec::new();
         let mut changed_relative = Vec::new();
         let mut requires_full_refresh = false;
 
-        for path in &impacted {
+        for path in &item.impacted {
             if path.is_file() {
-                if let Some(file) = read_file(path, &root)? {
+                if let Some(file) = read_file(path, &item.root)? {
                     changed_relative.push(file.path.clone());
                     files.push(file);
                 } else {
-                    changed_relative.push(relativize_path(path, &root));
+                    changed_relative.push(relativize_path(path, &item.root));
                 }
             } else {
                 requires_full_refresh = true;
@@ -840,24 +934,39 @@ fn refresh_impacted_indexes(
                 timeout_secs: 300,
                 respect_gitignore: true,
             };
-            let (all_files, _) = collect_files(&root, &root, &walk_config)?;
-            ingest_files_with_root(all_files, IngestOptions::default(), Some(root.as_path()))
+            let (all_files, _) = collect_files(&item.root, &item.root, &walk_config)?;
+            ingest_files_with_root(all_files, IngestOptions::default(), Some(item.root.as_path()))
         } else {
             let changed_relative_set: BTreeSet<String> = changed_relative.iter().cloned().collect();
-            let keep_paths = existing
+            let keep_paths = item.existing
                 .files
                 .iter()
                 .map(|file| file.path.clone())
                 .filter(|path| !changed_relative_set.contains(path))
                 .collect();
-            update_index_selective(existing, files, keep_paths, IngestOptions::default())
+            update_index_selective(item.existing, files, keep_paths, IngestOptions::default())
         };
 
-        store.save(updated, metadata.root_path.clone())?;
-        any_changed = true;
-        refreshed_roots.push(root);
+        results.push(IndexResult {
+            root: item.root,
+            root_path_str: item.root_path_str,
+            updated,
+        });
     }
 
+    // Phase 3: Brief lock to save results.
+    let mut refreshed_roots = Vec::new();
+    {
+        let mut store = store
+            .lock()
+            .map_err(|e| anyhow::anyhow!("IndexStore mutex poisoned: {e}"))?;
+        for result in results {
+            store.save(result.updated, result.root_path_str)?;
+            refreshed_roots.push(result.root);
+        }
+    }
+
+    let any_changed = !refreshed_roots.is_empty();
     if any_changed {
         let refreshed_paths: BTreeSet<String> = refreshed_roots
             .into_iter()
@@ -968,6 +1077,88 @@ mod tests {
         }
     }
 
+    /// Build an LlmxServer in local mode for testing fill_loc_from_roots.
+    fn make_test_server(store: Arc<Mutex<IndexStore>>, roots: Vec<PathBuf>) -> LlmxServer {
+        let jobs = llmx_mcp::mcp::new_job_store();
+        let server = LlmxServer::new_local(store, jobs);
+        *server.client_roots.lock().unwrap() = roots;
+        server
+    }
+
+    #[test]
+    fn test_fill_loc_from_roots_uses_single_root() {
+        let temp = tempdir().unwrap();
+        let store = Arc::new(Mutex::new(IndexStore::new(temp.path().to_path_buf()).unwrap()));
+        let server = make_test_server(store, vec![PathBuf::from("/home/user/project-a")]);
+
+        let mut loc = None;
+        server.fill_loc_from_roots(&mut loc);
+        assert_eq!(loc.as_deref(), Some("/home/user/project-a"));
+    }
+
+    #[test]
+    fn test_fill_loc_from_roots_does_not_overwrite_existing_loc() {
+        let temp = tempdir().unwrap();
+        let store = Arc::new(Mutex::new(IndexStore::new(temp.path().to_path_buf()).unwrap()));
+        let server = make_test_server(store, vec![PathBuf::from("/home/user/project-a")]);
+
+        let mut loc = Some("/explicit/path".to_string());
+        server.fill_loc_from_roots(&mut loc);
+        assert_eq!(loc.as_deref(), Some("/explicit/path"));
+    }
+
+    #[test]
+    fn test_fill_loc_from_roots_falls_back_to_cwd_when_no_roots() {
+        let temp = tempdir().unwrap();
+        let store = Arc::new(Mutex::new(IndexStore::new(temp.path().to_path_buf()).unwrap()));
+        let server = make_test_server(store, vec![]);
+
+        let mut loc = None;
+        server.fill_loc_from_roots(&mut loc);
+        // Should fall back to cwd -- just verify it's Some (exact value is process-dependent)
+        assert!(loc.is_some(), "should fall back to cwd when no roots");
+    }
+
+    #[test]
+    fn test_fill_loc_from_roots_prefers_indexed_root_among_multiple() {
+        let temp = tempdir().unwrap();
+        let store = Arc::new(Mutex::new(IndexStore::new(temp.path().join("store")).unwrap()));
+
+        // Index project-b but not project-a
+        let root_b = temp.path().join("project-b");
+        std::fs::create_dir_all(&root_b).unwrap();
+        std::fs::write(root_b.join("lib.rs"), "fn b() {}").unwrap();
+        let norm_b = normalize_root_path(&root_b);
+        store.lock().unwrap().save(
+            make_test_index(&norm_b, "lib.rs"),
+            norm_b.clone(),
+        ).unwrap();
+
+        let roots = vec![
+            temp.path().join("project-a"), // not indexed
+            root_b.clone(),                // indexed
+        ];
+        let server = make_test_server(store, roots);
+
+        let mut loc = None;
+        server.fill_loc_from_roots(&mut loc);
+        assert_eq!(loc.as_deref(), Some(root_b.to_str().unwrap()));
+    }
+
+    #[test]
+    fn test_fill_loc_from_roots_uses_first_when_none_indexed() {
+        let temp = tempdir().unwrap();
+        let store = Arc::new(Mutex::new(IndexStore::new(temp.path().to_path_buf()).unwrap()));
+        let server = make_test_server(store, vec![
+            PathBuf::from("/first/root"),
+            PathBuf::from("/second/root"),
+        ]);
+
+        let mut loc = None;
+        server.fill_loc_from_roots(&mut loc);
+        assert_eq!(loc.as_deref(), Some("/first/root"));
+    }
+
     #[test]
     fn test_refresh_impacted_indexes_updates_changed_file_and_clears_stale() {
         let temp = tempdir().unwrap();
@@ -1000,15 +1191,6 @@ mod tests {
 const DEFAULT_SERVE_PORT: u16 = 19100;
 const TOKEN_FILENAME: &str = ".backend-token";
 
-/// Fill in `loc` with the proxy process's cwd when unset, so the backend
-/// resolves indexes against the client's working directory rather than its own.
-fn fill_loc_from_cwd(loc: &mut Option<String>) {
-    if loc.is_none() {
-        if let Ok(cwd) = env::current_dir() {
-            *loc = Some(cwd.to_string_lossy().to_string());
-        }
-    }
-}
 
 /// Generate a cryptographically random 32-byte hex token for backend auth.
 fn generate_token() -> anyhow::Result<String> {
@@ -1163,6 +1345,8 @@ struct BackendClient {
     >,
     base_url: String,
     token: Option<String>,
+    /// Path to the token file so we can re-read after a backend restart.
+    token_path: Option<PathBuf>,
 }
 
 #[cfg(feature = "mcp-http")]
@@ -1172,7 +1356,7 @@ const BACKEND_MAX_RETRIES: usize = 2;
 
 #[cfg(feature = "mcp-http")]
 impl BackendClient {
-    fn new(port: u16, token: Option<String>) -> Self {
+    fn new(port: u16, token: Option<String>, token_path: Option<PathBuf>) -> Self {
         let client = hyper_util::client::legacy::Client::builder(
             hyper_util::rt::TokioExecutor::new(),
         )
@@ -1183,6 +1367,7 @@ impl BackendClient {
             client,
             base_url: format!("http://127.0.0.1:{port}"),
             token,
+            token_path,
         }
     }
 
@@ -1201,16 +1386,24 @@ impl BackendClient {
             || msg.contains("incomplete message")
     }
 
+    /// Re-read the token from disk if available and different from current.
+    fn try_refresh_token(token_path: &Option<PathBuf>, current: &Option<String>) -> Option<String> {
+        let path = token_path.as_ref()?;
+        let fresh = std::fs::read_to_string(path).ok().map(|s| s.trim().to_string());
+        if fresh != *current { fresh } else { None }
+    }
+
     async fn get<T: serde::de::DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
         use http_body_util::BodyExt;
         let uri: hyper::Uri = format!("{}{}", self.base_url, path).parse()?;
+        let mut current_token = self.token.clone();
         let mut last_err = None;
         for attempt in 0..=BACKEND_MAX_RETRIES {
             if attempt > 0 {
                 tokio::time::sleep(Duration::from_millis(100 * attempt as u64)).await;
             }
             let mut builder = hyper::Request::get(uri.clone());
-            if let Some(ref token) = self.token {
+            if let Some(ref token) = current_token {
                 builder = builder.header("authorization", format!("Bearer {token}"));
             }
             let req = builder.body(http_body_util::Full::new(bytes::Bytes::new()))?;
@@ -1223,6 +1416,14 @@ impl BackendClient {
                 Ok(Ok(resp)) => {
                     let status = resp.status();
                     let body = resp.into_body().collect().await?.to_bytes();
+                    // 401 after backend restart — try refreshing the token from disk.
+                    if status == hyper::StatusCode::UNAUTHORIZED && attempt < BACKEND_MAX_RETRIES {
+                        if let Some(fresh) = Self::try_refresh_token(&self.token_path, &current_token) {
+                            tracing::info!("Backend returned 401 on GET {path}, refreshing token");
+                            current_token = Some(fresh);
+                            continue;
+                        }
+                    }
                     if !status.is_success() {
                         let err_msg = serde_json::from_slice::<serde_json::Value>(&body)
                             .ok()
@@ -1235,14 +1436,14 @@ impl BackendClient {
                 Ok(Err(e)) => {
                     let err = anyhow::anyhow!(e);
                     if Self::is_transient(&err) && attempt < BACKEND_MAX_RETRIES {
-                        tracing::warn!("Backend request GET {path} failed (attempt {}): {err:#}; retrying", attempt + 1);
+                        tracing::warn!("Backend GET {path} failed (attempt {}): {err:#}; retrying", attempt + 1);
                         last_err = Some(err);
                         continue;
                     }
                     return Err(err.context(format!("GET {path} failed after {} attempt(s)", attempt + 1)));
                 }
                 Err(_) => {
-                    let err = anyhow::anyhow!("Backend request GET {path} timed out after {BACKEND_REQUEST_TIMEOUT:?}");
+                    let err = anyhow::anyhow!("Backend GET {path} timed out after {BACKEND_REQUEST_TIMEOUT:?}");
                     if attempt < BACKEND_MAX_RETRIES {
                         tracing::warn!("{err}; retrying (attempt {})", attempt + 1);
                         last_err = Some(err);
@@ -1263,6 +1464,7 @@ impl BackendClient {
         use http_body_util::BodyExt;
         let uri: hyper::Uri = format!("{}{}", self.base_url, path).parse()?;
         let input_bytes = serde_json::to_vec(input)?;
+        let mut current_token = self.token.clone();
         let mut last_err = None;
         for attempt in 0..=BACKEND_MAX_RETRIES {
             if attempt > 0 {
@@ -1270,7 +1472,7 @@ impl BackendClient {
             }
             let mut builder = hyper::Request::post(uri.clone())
                 .header("content-type", "application/json");
-            if let Some(ref token) = self.token {
+            if let Some(ref token) = current_token {
                 builder = builder.header("authorization", format!("Bearer {token}"));
             }
             let req = builder.body(http_body_util::Full::new(bytes::Bytes::from(input_bytes.clone())))?;
@@ -1283,6 +1485,14 @@ impl BackendClient {
                 Ok(Ok(resp)) => {
                     let status = resp.status();
                     let body = resp.into_body().collect().await?.to_bytes();
+                    // 401 after backend restart — try refreshing the token from disk.
+                    if status == hyper::StatusCode::UNAUTHORIZED && attempt < BACKEND_MAX_RETRIES {
+                        if let Some(fresh) = Self::try_refresh_token(&self.token_path, &current_token) {
+                            tracing::info!("Backend returned 401 on POST {path}, refreshing token");
+                            current_token = Some(fresh);
+                            continue;
+                        }
+                    }
                     if !status.is_success() {
                         let err_msg = serde_json::from_slice::<serde_json::Value>(&body)
                             .ok()
@@ -1295,14 +1505,14 @@ impl BackendClient {
                 Ok(Err(e)) => {
                     let err = anyhow::anyhow!(e);
                     if Self::is_transient(&err) && attempt < BACKEND_MAX_RETRIES {
-                        tracing::warn!("Backend request POST {path} failed (attempt {}): {err:#}; retrying", attempt + 1);
+                        tracing::warn!("Backend POST {path} failed (attempt {}): {err:#}; retrying", attempt + 1);
                         last_err = Some(err);
                         continue;
                     }
                     return Err(err.context(format!("POST {path} failed after {} attempt(s)", attempt + 1)));
                 }
                 Err(_) => {
-                    let err = anyhow::anyhow!("Backend request POST {path} timed out after {BACKEND_REQUEST_TIMEOUT:?}");
+                    let err = anyhow::anyhow!("Backend POST {path} timed out after {BACKEND_REQUEST_TIMEOUT:?}");
                     if attempt < BACKEND_MAX_RETRIES {
                         tracing::warn!("{err}; retrying (attempt {})", attempt + 1);
                         last_err = Some(err);
@@ -1372,7 +1582,7 @@ struct BackendClient;
 
 #[cfg(not(feature = "mcp-http"))]
 impl BackendClient {
-    fn new(_port: u16, _token: Option<String>) -> Self { Self }
+    fn new(_port: u16, _token: Option<String>, _token_path: Option<PathBuf>) -> Self { Self }
 }
 
 // ─── Auto-start ──────────────────────────────────────────────────────────────
@@ -1387,8 +1597,9 @@ async fn detect_or_start_backend(port: u16, storage_dir: Option<&PathBuf>) -> Op
     let expected_dir = storage_dir
         .map(|d| resolve_storage_dir(Some(d.clone())))
         .unwrap_or_else(|| resolve_storage_dir(None));
+    let token_file = expected_dir.join(TOKEN_FILENAME);
     let token = read_token_file(&expected_dir);
-    let client = BackendClient::new(port, token);
+    let client = BackendClient::new(port, token, Some(token_file.clone()));
 
     // Check if something is already listening on the port.
     let port_occupied = is_port_listening(port).await;
@@ -1477,7 +1688,7 @@ async fn detect_or_start_backend(port: u16, storage_dir: Option<&PathBuf>) -> Op
         if fresh_token.is_none() {
             continue; // token not written yet
         }
-        let fresh_client = BackendClient::new(port, fresh_token);
+        let fresh_client = BackendClient::new(port, fresh_token, Some(token_file.clone()));
         match fresh_client.storage_dir().await {
             Ok(dir) if dir == expected => {
                 tracing::info!(
