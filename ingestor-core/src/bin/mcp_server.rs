@@ -1166,11 +1166,18 @@ struct BackendClient {
 }
 
 #[cfg(feature = "mcp-http")]
+const BACKEND_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+#[cfg(feature = "mcp-http")]
+const BACKEND_MAX_RETRIES: usize = 2;
+
+#[cfg(feature = "mcp-http")]
 impl BackendClient {
     fn new(port: u16, token: Option<String>) -> Self {
         let client = hyper_util::client::legacy::Client::builder(
             hyper_util::rt::TokioExecutor::new(),
         )
+        .pool_idle_timeout(Duration::from_secs(10))
+        .pool_max_idle_per_host(2)
         .build_http();
         Self {
             client,
@@ -1179,25 +1186,73 @@ impl BackendClient {
         }
     }
 
+    /// Returns true if the error is a transient connection issue worth retrying
+    /// (connection refused, reset, broken pipe — i.e. backend restarted).
+    fn is_transient(err: &anyhow::Error) -> bool {
+        let msg = format!("{err:?}");
+        msg.contains("connection refused")
+            || msg.contains("Connection refused")
+            || msg.contains("connection reset")
+            || msg.contains("Connection reset")
+            || msg.contains("broken pipe")
+            || msg.contains("Broken pipe")
+            || msg.contains("channel closed")
+            || msg.contains("connection closed")
+            || msg.contains("incomplete message")
+    }
+
     async fn get<T: serde::de::DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
         use http_body_util::BodyExt;
         let uri: hyper::Uri = format!("{}{}", self.base_url, path).parse()?;
-        let mut builder = hyper::Request::get(uri);
-        if let Some(ref token) = self.token {
-            builder = builder.header("authorization", format!("Bearer {token}"));
+        let mut last_err = None;
+        for attempt in 0..=BACKEND_MAX_RETRIES {
+            if attempt > 0 {
+                tokio::time::sleep(Duration::from_millis(100 * attempt as u64)).await;
+            }
+            let mut builder = hyper::Request::get(uri.clone());
+            if let Some(ref token) = self.token {
+                builder = builder.header("authorization", format!("Bearer {token}"));
+            }
+            let req = builder.body(http_body_util::Full::new(bytes::Bytes::new()))?;
+            let result = tokio::time::timeout(
+                BACKEND_REQUEST_TIMEOUT,
+                self.client.request(req),
+            )
+            .await;
+            match result {
+                Ok(Ok(resp)) => {
+                    let status = resp.status();
+                    let body = resp.into_body().collect().await?.to_bytes();
+                    if !status.is_success() {
+                        let err_msg = serde_json::from_slice::<serde_json::Value>(&body)
+                            .ok()
+                            .and_then(|v| v.get("error")?.as_str().map(String::from))
+                            .unwrap_or_else(|| format!("Backend returned {status}"));
+                        anyhow::bail!(err_msg);
+                    }
+                    return Ok(serde_json::from_slice(&body)?);
+                }
+                Ok(Err(e)) => {
+                    let err = anyhow::anyhow!(e);
+                    if Self::is_transient(&err) && attempt < BACKEND_MAX_RETRIES {
+                        tracing::warn!("Backend request GET {path} failed (attempt {}): {err:#}; retrying", attempt + 1);
+                        last_err = Some(err);
+                        continue;
+                    }
+                    return Err(err.context(format!("GET {path} failed after {} attempt(s)", attempt + 1)));
+                }
+                Err(_) => {
+                    let err = anyhow::anyhow!("Backend request GET {path} timed out after {BACKEND_REQUEST_TIMEOUT:?}");
+                    if attempt < BACKEND_MAX_RETRIES {
+                        tracing::warn!("{err}; retrying (attempt {})", attempt + 1);
+                        last_err = Some(err);
+                        continue;
+                    }
+                    return Err(err);
+                }
+            }
         }
-        let req = builder.body(http_body_util::Full::new(bytes::Bytes::new()))?;
-        let resp = self.client.request(req).await?;
-        let status = resp.status();
-        let body = resp.into_body().collect().await?.to_bytes();
-        if !status.is_success() {
-            let err_msg = serde_json::from_slice::<serde_json::Value>(&body)
-                .ok()
-                .and_then(|v| v.get("error")?.as_str().map(String::from))
-                .unwrap_or_else(|| format!("Backend returned {status}"));
-            anyhow::bail!(err_msg);
-        }
-        Ok(serde_json::from_slice(&body)?)
+        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("GET {path} failed")))
     }
 
     async fn post<I: serde::Serialize, O: serde::de::DeserializeOwned>(
@@ -1207,24 +1262,57 @@ impl BackendClient {
     ) -> anyhow::Result<O> {
         use http_body_util::BodyExt;
         let uri: hyper::Uri = format!("{}{}", self.base_url, path).parse()?;
-        let body = serde_json::to_vec(input)?;
-        let mut builder = hyper::Request::post(uri)
-            .header("content-type", "application/json");
-        if let Some(ref token) = self.token {
-            builder = builder.header("authorization", format!("Bearer {token}"));
+        let input_bytes = serde_json::to_vec(input)?;
+        let mut last_err = None;
+        for attempt in 0..=BACKEND_MAX_RETRIES {
+            if attempt > 0 {
+                tokio::time::sleep(Duration::from_millis(100 * attempt as u64)).await;
+            }
+            let mut builder = hyper::Request::post(uri.clone())
+                .header("content-type", "application/json");
+            if let Some(ref token) = self.token {
+                builder = builder.header("authorization", format!("Bearer {token}"));
+            }
+            let req = builder.body(http_body_util::Full::new(bytes::Bytes::from(input_bytes.clone())))?;
+            let result = tokio::time::timeout(
+                BACKEND_REQUEST_TIMEOUT,
+                self.client.request(req),
+            )
+            .await;
+            match result {
+                Ok(Ok(resp)) => {
+                    let status = resp.status();
+                    let body = resp.into_body().collect().await?.to_bytes();
+                    if !status.is_success() {
+                        let err_msg = serde_json::from_slice::<serde_json::Value>(&body)
+                            .ok()
+                            .and_then(|v| v.get("error")?.as_str().map(String::from))
+                            .unwrap_or_else(|| format!("Backend returned {status}"));
+                        anyhow::bail!(err_msg);
+                    }
+                    return Ok(serde_json::from_slice(&body)?);
+                }
+                Ok(Err(e)) => {
+                    let err = anyhow::anyhow!(e);
+                    if Self::is_transient(&err) && attempt < BACKEND_MAX_RETRIES {
+                        tracing::warn!("Backend request POST {path} failed (attempt {}): {err:#}; retrying", attempt + 1);
+                        last_err = Some(err);
+                        continue;
+                    }
+                    return Err(err.context(format!("POST {path} failed after {} attempt(s)", attempt + 1)));
+                }
+                Err(_) => {
+                    let err = anyhow::anyhow!("Backend request POST {path} timed out after {BACKEND_REQUEST_TIMEOUT:?}");
+                    if attempt < BACKEND_MAX_RETRIES {
+                        tracing::warn!("{err}; retrying (attempt {})", attempt + 1);
+                        last_err = Some(err);
+                        continue;
+                    }
+                    return Err(err);
+                }
+            }
         }
-        let req = builder.body(http_body_util::Full::new(bytes::Bytes::from(body)))?;
-        let resp = self.client.request(req).await?;
-        let status = resp.status();
-        let body = resp.into_body().collect().await?.to_bytes();
-        if !status.is_success() {
-            let err_msg = serde_json::from_slice::<serde_json::Value>(&body)
-                .ok()
-                .and_then(|v| v.get("error")?.as_str().map(String::from))
-                .unwrap_or_else(|| format!("Backend returned {status}"));
-            anyhow::bail!(err_msg);
-        }
-        Ok(serde_json::from_slice(&body)?)
+        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("POST {path} failed")))
     }
 
     async fn status(&self) -> anyhow::Result<StatusOutput> {
