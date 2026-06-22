@@ -1,6 +1,5 @@
 [workspace]
 members = [
   "ingestor-core",
-  "ingestor-wasm",
 ]
 resolver = "2"

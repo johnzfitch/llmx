@@ -1,21 +1,21 @@
 /target/
 /.cargo/
-/web/pkg/
-/web/models/
+.DS_Store
+# Machine-specific MCP registration (paths differ per user); create your own per the README.
+/.mcp.json
 /http.log
 /server.log
 /server.pid
 /approval.log
 
-# Phase 6: Burn models (fetched at build time, not committed)
+# Native embedding model: committed under ingestor-core/models/ (source of truth).
+# Ignore the directory but keep the committed artifacts.
 /models/
-/ingestor-core/models/
-/ingestor-wasm/models/*
-!/ingestor-wasm/models/arctic-embed-s.bin
-!/ingestor-wasm/models/tokenizer.json
+/ingestor-core/models/*
+!/ingestor-core/models/mdbr-leaf-ir-f32.bin
+!/ingestor-core/models/mdbr-leaf-ir-q8.bin
+!/ingestor-core/models/tokenizer.json
 /ingestor-core/target/
-/ingestor-wasm/target/
-/ingestor-wasm/test_burn_import.rs
 
 # Local scratch notes
 /claude_Model selection for current project_2026-01-17.md

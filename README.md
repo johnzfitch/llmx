@@ -2,9 +2,7 @@
 
 **Local-first codebase indexer with semantic search and chunk exports for agent consumption**
 
-Transform large codebases into searchable, intelligently-chunked datasets with real neural network embeddings running entirely in your browser via WebGPU. No server-side indexing, no code upload, and no data leaving your machine.
-
-[Demo](https://llm.cat)
+Transform large codebases into searchable, intelligently-chunked datasets with real neural-network embeddings running entirely on-device. llmx ships as a native MCP server and CLI: no server-side indexing, no code upload, and no data leaving your machine.
 
 **Proof:** [7,147 files indexed in 31 MB -> 1,625 tokens retrieved (99.98% savings)](#-real-world-example-apple-hig-corpus) | [180+ tests](ingestor-core/tests/) | [MCP server](ingestor-core/src/bin/mcp_server.rs)
 
@@ -12,13 +10,12 @@ Transform large codebases into searchable, intelligently-chunked datasets with r
 
 ## ![lightning](.github/assets/icons/lightning-24x24.png) Key Features
 
-- **![search](.github/assets/icons/search-24x24.png) Neural Semantic Search** - Burn-powered `mdbr-leaf-ir` embeddings with WebGPU acceleration and CPU fallback
+- **![search](.github/assets/icons/search-24x24.png) Neural Semantic Search** - Burn-powered `mdbr-leaf-ir` embeddings running on-device (CPU by default, optional GPU acceleration)
 - **![lightning](.github/assets/icons/lightning-24x24.png) Hybrid Search** - Combines BM25 + vector search with RRF (Reciprocal Rank Fusion) for best results
 - **![hierarchy](.github/assets/icons/hierarchy-24x24.png) Smart Chunking** - Deterministic chunking by file type (functions, headings, JSON keys)
 - **![document](.github/assets/icons/businessicons-png-24-file-1-business-office-ui-24x24.png) Semantic Exports** - Hierarchical outline format with function names and heading breadcrumbs
-- **![lock](.github/assets/icons/lock-24x24.png) Privacy-First** - Your code stays local; optional model and tokenizer fetches are public static assets cached in-browser
-- **![lightning](.github/assets/icons/lightning-24x24.png) Fast** - Sub-second indexing, ~50ms embedding inference with GPU acceleration
-- **![download](.github/assets/icons/down-24x24.png) Agent-Ready** - Exports designed for selective retrieval, not bulk ingestion
+- **![lock](.github/assets/icons/lock-24x24.png) Privacy-First** - Your code stays local; the embedding model ships with the binary, so indexing makes zero network calls
+- **![download](.github/assets/icons/down-24x24.png) Agent-Ready** - MCP tools and exports designed for selective retrieval, not bulk ingestion
 
 ---
 
@@ -34,9 +31,9 @@ LLMs have limited context windows. Loading an entire codebase is:
 llmx builds a **searchable index** with **semantic chunk exports** that enable agents to:
 
 1. **Scan** the manifest (`llm.md`) to understand structure
-2. **Search** for relevant concepts using BM25
+2. **Search** for relevant concepts using BM25, vectors, or symbol lookup
 3. **Retrieve** only the specific chunks needed
-4. **Navigate** via function names, heading hierarchies, and file paths
+4. **Navigate** via function names, heading hierarchies, and the call/import graph
 
 ---
 
@@ -89,10 +86,9 @@ All methods install both `llmx` (CLI) and `llmx-mcp` (MCP server).
 <details>
 <summary>MCP Server Setup (Claude Code, Cursor, etc.)</summary>
 
-The repo includes `.mcp.json` for automatic MCP discovery. After installing:
+Create a `.mcp.json` in your project root for MCP discovery:
 
 ```bash
-# Clone the repo (for .mcp.json) or create your own:
 echo '{"mcpServers":{"llmx":{"command":"llmx-mcp"}}}' > .mcp.json
 ```
 
@@ -102,6 +98,7 @@ Then restart your MCP client. The first session auto-starts a shared backend on 
 |---|---|
 | `LLMX_PORT` | Override backend port (default `19100`) |
 | `LLMX_NO_AUTOSTART=1` | Disable auto-start, run standalone per-session |
+| `LLMX_STORAGE_DIR` | Override index storage location |
 
 The server provides:
 
@@ -109,11 +106,13 @@ The server provides:
   <dt><code>llmx_status</code></dt>
   <dd>Index readiness, file counts, and background task progress</dd>
   <dt><code>llmx_search</code></dt>
-  <dd>Semantic search with token-budgeted inline content</dd>
+  <dd>Semantic / keyword / hybrid search with token-budgeted inline content</dd>
   <dt><code>llmx_lookup</code></dt>
-  <dd>Exact symbol resolution by name</dd>
+  <dd>Exact or prefix symbol resolution by name</dd>
   <dt><code>llmx_refs</code></dt>
   <dd>Graph traversal &mdash; callers, callees, imports, type references</dd>
+  <dt><code>llmx_explore</code> / <code>llmx_symbols</code> / <code>llmx_get_chunk</code> / <code>llmx_index</code> / <code>llmx_manage</code></dt>
+  <dd>Structure browsing, symbol tables, full-chunk fetch, and index lifecycle</dd>
 </dl>
 
 </details>
@@ -124,10 +123,18 @@ The server provides:
 ```bash
 git clone https://github.com/johnzfitch/llmx.git
 cd llmx
-cargo build --release --features cli,mcp
+
+# Default build: GPU-capable embeddings (wgpu/Metal/Vulkan) with CPU fallback
+cargo build --release -p llmx-mcp --bin llmx --bin llmx-mcp
+
+# CPU-only build: lighter and faster to compile, embeddings run on CPU
+cargo build --release -p llmx-mcp --bin llmx --bin llmx-mcp \
+  --no-default-features --features treesitter,mcp,mcp-http,cli,ndarray-backend
 ```
 
-Binaries output to `target/release/llmx` and `target/release/llmx-mcp`.
+Binaries output to `target/release/llmx` and `target/release/llmx-mcp`. The embedding
+model is committed under `ingestor-core/models/`, so builds are fully offline -- no model
+download step.
 
 </details>
 
@@ -152,32 +159,12 @@ llmx explore symbols --path src/
 llmx export --format zip -o ./export.zip
 ```
 
-<details>
-<summary>Web UI Setup</summary>
+### MCP Usage (agents)
 
-### Build WASM
-
-```bash
-cd ingestor-wasm
-wasm-pack build --target web --out-dir ../web/pkg
-```
-
-### Run Web UI
-
-```bash
-python3 -m http.server 8001 --bind 127.0.0.1 --directory web
-```
-
-Open `http://127.0.0.1:8001` in your browser.
-
-### Index a Codebase (Web UI)
-
-1. **Select folder** (Chromium) or **drag files** (Firefox/all browsers)
-2. **Wait for indexing** (sub-second for typical repos)
-3. **Search** using the query box
-4. **Export** -> Download an export bundle named after the selected folder (e.g. `my-repo.llmx-1a2b3c4d.zip`)
-
-</details>
+Once registered (see *MCP Server Setup* above), an agent calls `llmx_status` to check
+index readiness, then `llmx_search` / `llmx_lookup` / `llmx_refs` to retrieve only the
+chunks it needs. Indexing runs as a background job and the server stays responsive,
+returning the best available results as the index warms up.
 
 ---
 
@@ -200,13 +187,12 @@ llmx-export/
 1. Read `llm.md` for the compact workflow and artifact pointers
 2. Scan `manifest.llm.tsv` to identify relevant files/chunks by label
 3. Open only the matching `chunks/<ref>.md` files
-4. Download `*.index.json` from the UI only if you need the full index structure
 
 ### For Humans
 
-- **Browse** the web UI for real-time search
+- **Search** from the CLI or via your MCP-enabled editor
 - **Export** for offline analysis
-- **Share** the downloaded `*.llmx-<id8>.zip` bundle with team members (no server needed)
+- **Share** the exported `*.llmx-<id8>.zip` bundle with team members (no server needed)
 
 ---
 
@@ -215,7 +201,7 @@ llmx-export/
 ```mermaid
 flowchart LR
     A[Codebase] --> B[Chunker]
-    B --> C[Index + BM25]
+    B --> C[Index + BM25 + Embeddings]
     C --> D[llm.md manifest]
     D --> E[Agent queries]
     E --> F[Relevant chunks only]
@@ -228,6 +214,7 @@ llmx chunks files **deterministically by type**:
 | File Type | Chunking Method |
 |-----------|----------------|
 | **JavaScript/TypeScript** | Function/class declarations (via tree-sitter or fallback) |
+| **Rust / Python / Go / Java / C / C++ / C#** | Symbol-aware via tree-sitter |
 | **Markdown** | Heading boundaries with ancestry preserved |
 | **JSON** | Top-level keys or array ranges (max 50 elements) |
 | **HTML** | Heading tags, scripts/styles stripped |
@@ -238,24 +225,12 @@ llmx chunks files **deterministically by type**:
 
 **Hybrid search** combining two approaches:
 
-1. **BM25 (Keyword Search)**:
-   - Term frequency (TF)
-   - Inverse document frequency (IDF)
-   - Document length normalization
-   - Fast lexical matching
+1. **BM25 (Keyword Search)** - TF/IDF with document-length normalization; fast lexical matching.
+2. **Neural Semantic Search** - `mdbr-leaf-ir` via Burn (`768` dimensions, INT8 `Q8S` quantized), running on-device. Understands meaning, not just keywords.
+3. **RRF Fusion** - Reciprocal Rank Fusion combines both rankings for results better than either method alone.
 
-2. **Neural Semantic Search**:
-   - `mdbr-leaf-ir` via Burn (`768` dimensions, browser `Q8S` artifact)
-   - WebGPU-accelerated inference with CPU fallback when GPU is unavailable or disabled
-   - Public model and tokenizer assets are SHA-256 verified and cached in IndexedDB
-   - Understands meaning, not just keywords
-
-3. **RRF Fusion**:
-   - Reciprocal Rank Fusion combines both rankings
-   - Weighted blending for optimal results
-   - Better than either method alone
-
-Runs fully client-side in **WASM** with GPU acceleration.
+Embeddings run natively: CPU by default, or GPU-accelerated (wgpu over Metal/Vulkan/DX12)
+when built with the `wgpu-backend` feature.
 
 ### Export Formats
 
@@ -286,56 +261,21 @@ Tested on the **Apple Human Interface Guidelines archive** (1980-2009):
 | Scan manifest (`llm.md`) | ~208,000 | **97%** |
 | Targeted search (3 queries) | ~1,625 | **99.98%** |
 
-### Agent Workflow Demo
-
-An agent answering *"How did Apple's feedback guidelines evolve from Lisa to Aqua?"* retrieved:
-
-**Search: "user feedback error message design"**
-```
-[1] 1992 Macintosh Human Interface Guidelines
-    Heading: Human Interface Design Principles > Feedback and Dialog
-    "Keep users informed... Most people would not know what to do
-    if they saw 'The computer unexpectedly crashed. ID = 13.'"
-
-[2] 1980 Lisa UI Standards
-    "The LISA User Interface has two main goals, simplicity and
-    integration. We want LISA to be easy to learn and easy to use..."
-
-[3] 2001 Aqua Human Interface Guidelines
-    "Do not use sheets for dialogs that apply to several windows..."
-```
-
 The agent found relevant content spanning **4 decades** using **0.02%** of the total corpus tokens.
 
 ---
 
 ## ![gear](.github/assets/icons/gear-24x24.png) Technical Details
 
-- **Language**: Rust (core), JavaScript (WASM bindings, web UI)
-- **Architecture**: Client-only, no server required
-- **ML Framework**: Burn (Rust-native, compiles to WASM)
-- **Embedding Model**: `mdbr-leaf-ir` (`768`-dim output; browser `q8` artifact plus native `f32` and `q8` artifacts)
-- **Storage**: IndexedDB (persistent) or in-memory
+- **Language**: Rust
+- **Architecture**: Native MCP server + CLI, with an auto-started local REST backend so multiple sessions share one in-memory index
+- **ML Framework**: Burn (Rust-native)
+- **Embedding Model**: `mdbr-leaf-ir` (`768`-dim output; native `f32` and `q8` artifacts committed under `ingestor-core/models/`)
+- **Embedding Backends**: `ndarray` (CPU) or `wgpu` (GPU via Metal/Vulkan/DX12)
+- **Storage**: On-disk index store (default `~/.local/share/llmx/indexes`, configurable via `LLMX_STORAGE_DIR`)
 - **Search**: Hybrid (BM25 + neural embeddings) with RRF fusion
 - **Chunking**: Deterministic, content-hash based IDs
-- **Performance**:
-  - Indexing: ~500ms for 10MB codebase
-  - Embeddings: ~50ms per query (WebGPU)
-  - Package: 2.4 MB WASM (model weights loaded separately from CDN)
-
-### Browser Compatibility
-
-#### File Selection
-- **Chromium** (Chrome, Edge): Full support (`showDirectoryPicker`)
-- **WebKit** (Safari): Folder input via `webkitdirectory`
-- **Firefox**: File selection or drag-and-drop (no folder picker)
-
-#### Semantic Search
-- **WebGPU** (Chrome 113+, Edge 113+): GPU-accelerated embeddings (~50ms)
-- **CPU Fallback**: All modern browsers with WASM support (~100-200ms)
-- **BM25 Only**: Always available as final fallback
-
-Module workers fall back to main thread if unavailable.
+- **Integrity**: The model id/SHA-256 is derived at build time; indexes record the model they were built with and reject mismatches (re-index after a model change)
 
 ---
 
@@ -345,59 +285,22 @@ Module workers fall back to main thread if unavailable.
 
 ```
 llmx/
-├── ingestor-core/      # Rust library (chunking, indexing, search, RRF)
+├── ingestor-core/      # Rust crate: chunking, indexing, search, RRF, MCP + CLI
 │   ├── src/
-│   │   ├── chunk.rs         # Chunking logic
 │   │   ├── index.rs         # Indexing + hybrid search
-│   │   ├── rrf.rs           # Reciprocal Rank Fusion
-│   │   ├── embeddings.rs    # Embedding abstractions
-│   │   └── mcp/             # MCP server tools
-├── ingestor-wasm/      # WASM bindings + Burn embeddings
-│   ├── src/
-│   │   ├── lib.rs           # WASM exports
-│   │   └── embeddings_burn.rs  # Burn-based neural embeddings
-│   ├── build.rs         # ONNX model download & conversion
-│   └── .cargo/          # WASM build configuration
-├── web/                # Browser UI
-│   ├── app.js          # Main UI logic
-│   ├── worker.js       # Web Worker for WASM
-│   └── pkg/            # Built WASM artifacts
-└── docs/               # Specifications and usage guides
+│   │   ├── chunk/           # Per-language chunkers (tree-sitter)
+│   │   ├── embeddings*.rs    # Native Burn embeddings
+│   │   ├── mcp/             # MCP server tools
+│   │   └── bin/
+│   │       ├── mcp_server.rs # llmx-mcp (MCP server + REST backend)
+│   │       └── llmx.rs       # llmx (CLI)
+│   ├── models/         # Committed mdbr-leaf-ir artifacts (f32 + q8 + tokenizer)
+│   └── build.rs        # Verifies committed model + emits model id/sha256
+├── docs/               # Specifications and usage guides
+└── pkg/                # Packaging (Homebrew, AUR)
 ```
 
-### Build
-
-```bash
-# Set model URL (required for WASM builds with embeddings)
-export LLMX_EMBEDDING_MODEL_URL="https://your-cdn.com/mdbr-leaf-ir.bin"
-
-# Build WASM (includes neural embedding support)
-cd ingestor-wasm
-wasm-pack build --target web --release
-
-# Development build (faster, larger)
-wasm-pack build --target web --dev
-
-# Run tests
-cd ingestor-core
-cargo test
-```
-
-**Security Note on Model URLs:**
-- The `LLMX_EMBEDDING_MODEL_URL` is embedded into the WASM binary at build time
-- Use **only public, non-authenticated URLs** (e.g., HuggingFace, public CDN)
-- Never use signed URLs or URLs with authentication tokens
-- The URL will be visible to anyone inspecting the WASM binary
-- For production, host models on a public CDN or use HuggingFace directly
-
-**Build-time Model Download:**
-The build script automatically downloads and converts the model:
-1. Downloads `mdbr-leaf-ir` safetensors from HuggingFace (if not cached)
-2. Converts them into a Burn binary with INT8 `Q8S` quantization for the browser path
-3. Stores in `ingestor-wasm/models/` directory
-4. Model is loaded at runtime from the CDN URL specified above
-
-### Testing
+### Build & Test
 
 ```bash
 # Core library tests
@@ -416,24 +319,11 @@ cargo test --features mcp
 
 ## ![lock](.github/assets/icons/lock-24x24.png) Privacy & Security
 
-### Runtime Privacy
-- **Zero network calls during indexing** - Your code never leaves your machine
+- **Zero network calls during indexing** - Your code never leaves your machine, and the embedding model ships with the binary (no runtime download)
 - **No external dependencies** for core indexing functionality
-- **Content treated as untrusted** - Prompt injection resistant UI
+- **Content treated as untrusted** - prompt-injection-resistant handling
 - **Deterministic output** - Same input = same index every time
-- **IndexedDB caching** - Model weights and tokenizer are cached locally after first download
-
-### Build-Time Security
-- **Model URLs embedded at build time** - URLs are visible in WASM binary
-  - Only use **public, non-authenticated URLs** for model sources
-  - Current setup uses public HuggingFace model repositories
-  - Never embed signed URLs or authentication tokens
-- **Model integrity verification** - SHA-256 validation prevents tampering
-- **Supply chain security** - Models loaded from trusted sources (HuggingFace)
-- **Quantization** - INT8 `Q8S` browser artifacts reduce transfer and storage cost with minimal quality loss
-
-### Security Notes
-⚠️ **WASM binaries are inspectable** - Any URLs or constants in the build are visible to users. This is by design for transparency, but means secrets must never be embedded. Our current architecture uses only public model repositories and is safe for production use.
+- **Model integrity verification** - the build derives a SHA-256 for the committed model; indexes are tagged with their model and refuse to serve semantic results on a mismatch
 
 ---
 
@@ -495,39 +385,10 @@ MIT License - See LICENSE file for details
 
 Contributions welcome! Please:
 
-1. Read the [INGESTION_SPEC.md](docs/INGESTION_SPEC.md) for architecture
+1. Read the specs under [docs/](docs/) for architecture
 2. Check existing issues before opening new ones
 3. Run tests before submitting PRs
 4. Follow the existing code style
-
----
-
-## Roadmap
-
-### Phase 6 (Complete)
-- [x] Neural semantic search with Burn framework
-- [x] WebGPU-accelerated embeddings
-- [x] Hybrid search with RRF fusion
-- [x] WASM build pipeline
-- [x] Model quantization (INT8)
-- [x] IndexedDB caching for models
-- [x] CLI for headless indexing (`llmx index`, `search`, `explore`, `export`)
-- [x] MCP server for external agent retrieval
-
-### Phase 7 (Current - Security Hardening)
-- [x] Implement SHA-256 model integrity verification
-- [x] Add download size limits and rate limiting
-- [ ] Improve error handling in MCP server (remove panics)
-- [ ] Add cancellation support for async operations
-- [ ] Browser integration testing across all platforms
-
-### Future Phases
-- [ ] Performance optimizations (fused QKV, attention mask broadcasting)
-- [ ] Model configuration flexibility (support multiple model sizes)
-- [ ] Add LSP/tree-sitter symbol extraction for more languages
-- [ ] Support image OCR for screenshot indexing
-- [ ] MCP server hardening and production deployment
-- [ ] Support for more file types (Python, Go, Rust, etc.)
 
 ---
 

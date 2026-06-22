@@ -661,11 +661,6 @@ ingestor-core/
     fixtures/
       projects/           # Multi-file test repos
       filetypes/          # Single-file per-language fixtures
-
-ingestor-wasm/
-  Cargo.toml
-  src/lib.rs
-  tests/structural_parity_tests.rs
 ```
 
 ---
@@ -795,9 +790,9 @@ plus precise cross-file resolution for top languages (stack graphs).
 - Track G (graph): E3-05 → E3-06 → E3-07 → E3-08
 - Track H (ranking): E3-09 → E3-10 → E3-11 → E3-12 → E3-13
 
-### Phase 4: WASM + Extended Languages + Polish
+### Phase 4: Extended Languages + Polish
 
-**Objective**: WASM support, language quality matrix, query pack refinement.
+**Objective**: Extended language coverage, language quality matrix, query pack refinement.
 
 | ID | Work Item | Depends On | Acceptance |
 |----|-----------|------------|------------|
@@ -806,9 +801,6 @@ plus precise cross-file resolution for top languages (stack graphs).
 | E4-03 | C# query pack | E2-04 | Definitions, namespace resolution |
 | E4-04 | Python query pack (Tier 2 fallback) | E2-04 | For stack-graphs-is-too-slow cases |
 | E4-05 | Cross-language tests | E4-01..E4-04 | Each Tier 2 ≥ Tier 3 quality on fixtures |
-| E4-06 | WASM Mode A: ship core parsers | E3-01 | <5MB gzipped, generic adapter only |
-| E4-07 | WASM Mode B: accept pre-indexed SCIP | E3-01 | Deserialize SCIP index, no parser needed |
-| E4-08 | WASM capability metadata + parity tests | E4-06/E4-07 | Honest tier reporting |
 | E4-09 | Extended language grammars (batched) | E2-05 | Batch A-D: JVM, scripting, infra, specialized |
 | E4-10 | Language quality matrix + maintenance policy | E4-09 | Published `LANGUAGE_SUPPORT.md` |
 
@@ -905,13 +897,11 @@ agent → (adapts) llmx_search(query="check_permissions fn", intent="symbol")
 
 3. **SCIP version stability.** Pin to a specific SCIP spec version.
 
-4. **WASM binary size.** Mode A target <5MB gzipped. If blown, default to Mode B.
-
-5. **Embedding model.** Current: mdbr-leaf-ir. Consider Voyage-Code-3 (13-17%
+4. **Embedding model.** Current: mdbr-leaf-ir. Consider Voyage-Code-3 (13-17%
    improvement on code retrieval) or CodeSage Large V2 (open-weights, 1.3B params,
    trained on The Stack V2). This is a config swap, not an architectural change.
 
-6. **MCP transport.** Current: stdio. Consider adding streamable HTTP transport for
+5. **MCP transport.** Current: stdio. Consider adding streamable HTTP transport for
    remote deployment (CI/CD indexing server that multiple agents connect to).
 
 ---
@@ -930,5 +920,4 @@ This specification is fully implemented when:
 8. Hybrid retrieval (structural + graph + semantic) outperforms flat BM25.
 9. Filesystem watching keeps the index fresh without manual re-indexing.
 10. Path filters are stable and root-relative.
-11. WASM exposes documented structural core pack.
-12. Language quality matrix is published.
+11. Language quality matrix is published.

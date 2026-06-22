@@ -139,9 +139,6 @@ assert_cmd = "2"
 predicates = "3"
 
 [build-dependencies]
-burn = { version = "0.21.0-pre.2", default-features = false }
-burn-ndarray = { version = "0.21.0-pre.2" }
-burn-store = { version = "0.21.0-pre.2" }
 sha2 = "0.10"
 
 [[bench]]
