@@ -33,6 +33,7 @@ zip = { version = "0.6", default-features = false, features = ["deflate"] }
 # Dynamic search dependencies
 ignore = "0.4"  # .gitignore-aware file walking (same as ripgrep)
 lru = "0.16"    # LRU cache for dynamic index caching
+fs2 = "0.4"     # cross-process advisory file lock for the shared index registry
 notify = "6"
 url = "2"
 strsim = "0.11" # Fuzzy string matching for command suggestions

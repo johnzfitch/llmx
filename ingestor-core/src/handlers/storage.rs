@@ -1,5 +1,6 @@
 //! Index storage with in-memory cache and persistent disk backing.
 
+use crate::registry_lock::{write_registry_atomic, RegistryLock};
 use crate::{
     build_inverted_index, compute_stats, embedding_store, graph::build_structural_indexes, EdgeIndex,
     FileMeta, IndexFile, IndexStats, SymbolTable, INDEX_VERSION,
@@ -194,28 +195,36 @@ impl IndexStore {
         // Update cache
         self.cache.put(index.index_id.clone(), index.clone());
 
-        // Update registry, cleaning up any orphaned index file from a previous ID
+        // Update registry under an exclusive lock, re-reading the current
+        // on-disk state so a concurrent process can't clobber this entry.
         let path_hash = Self::hash_path(&root_path);
-        if let Some(old_meta) = self.registry.indexes.get(&path_hash) {
-            if old_meta.id != index.index_id {
-                let old_file = self.storage_dir.join(format!("{}.json", old_meta.id));
-                let _ = fs::remove_file(&old_file);
-                let old_embeddings = embedding_store::sidecar_path(&self.storage_dir, &old_meta.id);
-                let _ = fs::remove_file(&old_embeddings);
-                self.cache.pop(&old_meta.id);
+        let index_id = index.index_id.clone();
+        let new_meta = IndexMetadata {
+            id: index.index_id.clone(),
+            root_path,
+            created_at: stored.created_at,
+            file_count: index.files.len(),
+            chunk_count: index.chunks.len(),
+        };
+        let mut orphan_id: Option<String> = None;
+        self.update_registry(|registry| {
+            // Detect an index file orphaned by a previous ID for this path.
+            if let Some(old_meta) = registry.indexes.get(&path_hash) {
+                if old_meta.id != index_id {
+                    orphan_id = Some(old_meta.id.clone());
+                }
             }
+            registry.indexes.insert(path_hash, new_meta);
+        })?;
+
+        // Clean up the orphaned index file/sidecar/cache outside the lock.
+        if let Some(old_id) = orphan_id {
+            let old_file = self.storage_dir.join(format!("{}.json", old_id));
+            let _ = fs::remove_file(&old_file);
+            let old_embeddings = embedding_store::sidecar_path(&self.storage_dir, &old_id);
+            let _ = fs::remove_file(&old_embeddings);
+            self.cache.pop(&old_id);
         }
-        self.registry.indexes.insert(
-            path_hash,
-            IndexMetadata {
-                id: index.index_id.clone(),
-                root_path,
-                created_at: stored.created_at,
-                file_count: index.files.len(),
-                chunk_count: index.chunks.len(),
-            },
-        );
-        self.save_registry()?;
 
         Ok(index.index_id)
     }
@@ -238,8 +247,9 @@ impl IndexStore {
         }
 
         self.cache.pop(id);
-        self.registry.indexes.retain(|_, meta| meta.id != id);
-        self.save_registry()?;
+        self.update_registry(|registry| {
+            registry.indexes.retain(|_, meta| meta.id != id);
+        })?;
 
         Ok(())
     }
@@ -308,14 +318,16 @@ impl IndexStore {
         }
     }
 
-    fn save_registry(&self) -> Result<()> {
-        let temp = self.storage_dir.join("registry.json.tmp");
-        let target = self.storage_dir.join("registry.json");
-
-        let json = serde_json::to_vec(&self.registry).context("Failed to serialize registry")?;
-        fs::write(&temp, json).context("Failed to write temp registry")?;
-        fs::rename(temp, target).context("Failed to rename temp registry")?;
-
+    /// Apply `mutate` to the registry under an exclusive cross-process lock,
+    /// re-reading the current on-disk registry first so concurrent `llmx`
+    /// processes (the CLI and the MCP backend) can't overwrite each other's
+    /// entries with a stale snapshot. The lock is released when the guard drops.
+    fn update_registry<F: FnOnce(&mut Registry)>(&mut self, mutate: F) -> Result<()> {
+        let _lock = RegistryLock::acquire(&self.storage_dir)?;
+        let mut registry = Self::load_registry(&self.storage_dir)?;
+        mutate(&mut registry);
+        write_registry_atomic(&self.storage_dir, &registry)?;
+        self.registry = registry;
         Ok(())
     }
 

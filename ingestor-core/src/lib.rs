@@ -7,6 +7,7 @@ pub mod handlers;
 mod index;
 mod model;
 pub mod pathnorm;
+mod registry_lock;
 pub mod util;
 pub mod walk;
 
