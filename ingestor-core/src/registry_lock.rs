@@ -43,7 +43,8 @@ impl RegistryLock {
     /// CLI and the MCP backend serialize against each other.
     pub fn acquire(storage_dir: &Path) -> Result<Self> {
         // The storage dir may not exist yet on a first run.
-        fs::create_dir_all(storage_dir).ok();
+        fs::create_dir_all(storage_dir)
+            .with_context(|| format!("Failed to create storage dir {}", storage_dir.display()))?;
         let path = storage_dir.join("registry.lock");
         let file = OpenOptions::new()
             .create(true)
@@ -79,7 +80,7 @@ pub fn write_registry_atomic<T: Serialize>(storage_dir: &Path, registry: &T) -> 
     let result = (|| -> Result<()> {
         let mut file = File::create(&temp).context("Failed to create temp registry")?;
         file.write_all(&json).context("Failed to write temp registry")?;
-        file.sync_all().ok();
+        file.sync_all().context("Failed to fsync temp registry")?;
         drop(file);
         fs::rename(&temp, storage_dir.join("registry.json"))
             .context("Failed to rename temp registry")?;
