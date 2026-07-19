@@ -7,6 +7,7 @@ pub mod handlers;
 mod index;
 mod model;
 pub mod pathnorm;
+mod registry_lock;
 pub mod util;
 pub mod walk;
 
@@ -115,6 +116,20 @@ fn migrate_legacy_store(src: &Path, dest: &Path) {
         }
     };
 
+    // Serialize the dest read-merge-write against other llmx processes: a
+    // first-run CLI and MCP backend can migrate concurrently. Same lock file as
+    // the storage writers, so every registry mutation serializes.
+    let _lock = match crate::registry_lock::RegistryLock::acquire(dest) {
+        Ok(lock) => lock,
+        Err(e) => {
+            eprintln!(
+                "llmx: skipping migration into {}: cannot lock registry: {e}",
+                dest.display(),
+            );
+            return;
+        }
+    };
+
     // Load or create dest registry
     let mut dest_registry: serde_json::Value = std::fs::read_to_string(&dest_registry_path)
         .ok()
@@ -187,23 +202,11 @@ fn migrate_legacy_store(src: &Path, dest: &Path) {
         }
     }
 
-    // Write merged registry
-    match serde_json::to_string_pretty(&dest_registry) {
-        Ok(data) => {
-            // Atomic write: write to temp then rename
-            let tmp_path = dest.join(".registry.json.tmp");
-            if std::fs::write(&tmp_path, &data).is_ok() {
-                if let Err(e) = std::fs::rename(&tmp_path, &dest_registry_path) {
-                    eprintln!("llmx: failed to write merged registry: {e}");
-                    let _ = std::fs::remove_file(&tmp_path);
-                    return;
-                }
-            }
-        }
-        Err(e) => {
-            eprintln!("llmx: failed to serialize merged registry: {e}");
-            return;
-        }
+    // Write the merged registry atomically (unique temp + rename) under the lock
+    // acquired above, rather than via a shared fixed `.registry.json.tmp`.
+    if let Err(e) = crate::registry_lock::write_registry_atomic(dest, &dest_registry) {
+        eprintln!("llmx: failed to write merged registry: {e}");
+        return;
     }
 
     // Clean up source: remove registry and try to remove empty directory
