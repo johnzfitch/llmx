@@ -200,6 +200,7 @@ enum DataSource {
         store: Arc<Mutex<IndexStore>>,
         jobs: JobStore,
     },
+    #[cfg_attr(not(feature = "mcp-http"), allow(dead_code))]
     Remote(BackendClient),
 }
 
@@ -230,6 +231,7 @@ impl LlmxServer {
         }
     }
 
+    #[cfg(feature = "mcp-http")]
     fn new_remote(client: BackendClient) -> Self {
         Self {
             data_source: DataSource::Remote(client),
@@ -1188,11 +1190,14 @@ mod tests {
     }
 }
 
+#[cfg(feature = "mcp-http")]
 const DEFAULT_SERVE_PORT: u16 = 19100;
+#[cfg(feature = "mcp-http")]
 const TOKEN_FILENAME: &str = ".backend-token";
 
 
 /// Generate a cryptographically random 32-byte hex token for backend auth.
+#[cfg(feature = "mcp-http")]
 fn generate_token() -> anyhow::Result<String> {
     let mut buf = [0u8; 32];
     getrandom::fill(&mut buf).map_err(|e| anyhow::anyhow!("OS entropy source unavailable: {e}"))?;
@@ -1202,6 +1207,7 @@ fn generate_token() -> anyhow::Result<String> {
 /// Write token to storage_dir/.backend-token with restrictive permissions.
 /// Uses atomic write-to-temp + rename to avoid TOCTOU permission window.
 /// Calls fsync before rename to guarantee visibility to readers on all filesystems.
+#[cfg(feature = "mcp-http")]
 fn write_token_file(storage_dir: &std::path::Path, token: &str) -> anyhow::Result<()> {
     use std::io::Write;
     let target = storage_dir.join(TOKEN_FILENAME);
@@ -1229,6 +1235,7 @@ fn write_token_file(storage_dir: &std::path::Path, token: &str) -> anyhow::Resul
 }
 
 /// Read token from storage_dir/.backend-token.
+#[cfg(feature = "mcp-http")]
 fn read_token_file(storage_dir: &std::path::Path) -> Option<String> {
     let path = storage_dir.join(TOKEN_FILENAME);
     std::fs::read_to_string(&path).ok().map(|s| s.trim().to_string())
@@ -1580,9 +1587,49 @@ impl BackendClient {
 #[derive(Clone)]
 struct BackendClient;
 
+// Without the `mcp-http` feature there is no remote backend: the server runs
+// purely in local mode and never constructs a `DataSource::Remote`, so these
+// proxy methods are compile-only stubs that fail loudly if ever reached. They
+// let the shared tool-handler code (which branches on Local vs Remote) compile
+// unchanged.
 #[cfg(not(feature = "mcp-http"))]
+#[allow(dead_code)]
 impl BackendClient {
     fn new(_port: u16, _token: Option<String>, _token_path: Option<PathBuf>) -> Self { Self }
+
+    async fn status(&self) -> anyhow::Result<StatusOutput> {
+        anyhow::bail!("remote backend requires the 'mcp-http' feature")
+    }
+    async fn search(&self, _input: &SearchInput) -> anyhow::Result<serde_json::Value> {
+        anyhow::bail!("remote backend requires the 'mcp-http' feature")
+    }
+    async fn index(&self, _input: &IndexInput) -> anyhow::Result<serde_json::Value> {
+        anyhow::bail!("remote backend requires the 'mcp-http' feature")
+    }
+    async fn explore(&self, _input: &ExploreInput) -> anyhow::Result<serde_json::Value> {
+        anyhow::bail!("remote backend requires the 'mcp-http' feature")
+    }
+    async fn manage(&self, _input: &ManageInput) -> anyhow::Result<serde_json::Value> {
+        anyhow::bail!("remote backend requires the 'mcp-http' feature")
+    }
+    async fn symbols(&self, _input: &SymbolsInput) -> anyhow::Result<serde_json::Value> {
+        anyhow::bail!("remote backend requires the 'mcp-http' feature")
+    }
+    async fn lookup(&self, _input: &LookupInput) -> anyhow::Result<serde_json::Value> {
+        anyhow::bail!("remote backend requires the 'mcp-http' feature")
+    }
+    async fn refs(&self, _input: &RefsInput) -> anyhow::Result<serde_json::Value> {
+        anyhow::bail!("remote backend requires the 'mcp-http' feature")
+    }
+    async fn get_chunk(&self, _input: &GetChunkInput) -> anyhow::Result<serde_json::Value> {
+        anyhow::bail!("remote backend requires the 'mcp-http' feature")
+    }
+    async fn post_roots(&self, _roots: Vec<String>) -> anyhow::Result<()> {
+        anyhow::bail!("remote backend requires the 'mcp-http' feature")
+    }
+    async fn storage_dir(&self) -> anyhow::Result<String> {
+        anyhow::bail!("remote backend requires the 'mcp-http' feature")
+    }
 }
 
 // ─── Auto-start ──────────────────────────────────────────────────────────────
@@ -1593,6 +1640,7 @@ impl BackendClient {
 /// checks the backend's storage-dir matches ours.  If the port is occupied
 /// by a stale or incompatible backend we skip auto-start (can't bind anyway)
 /// and fall back to standalone mode.
+#[cfg(feature = "mcp-http")]
 async fn detect_or_start_backend(port: u16, storage_dir: Option<&PathBuf>) -> Option<BackendClient> {
     let expected_dir = storage_dir
         .map(|d| resolve_storage_dir(Some(d.clone())))
@@ -1709,6 +1757,7 @@ async fn detect_or_start_backend(port: u16, storage_dir: Option<&PathBuf>) -> Op
 }
 
 /// Quick TCP probe to check if a port is already listening.
+#[cfg(feature = "mcp-http")]
 async fn is_port_listening(port: u16) -> bool {
     tokio::time::timeout(
         Duration::from_millis(200),
@@ -1724,12 +1773,14 @@ async fn is_port_listening(port: u16) -> bool {
 
 /// Simple sliding-window rate limiter: allows `capacity` requests per `window`.
 /// Shared across all connections via Arc.
+#[cfg(feature = "mcp-http")]
 struct RateLimiter {
     timestamps: Mutex<std::collections::VecDeque<std::time::Instant>>,
     capacity: usize,
     window: Duration,
 }
 
+#[cfg(feature = "mcp-http")]
 impl RateLimiter {
     fn new(capacity: usize, window: Duration) -> Self {
         Self {
@@ -2263,28 +2314,46 @@ async fn main() -> anyhow::Result<()> {
         return serve_rest(store, jobs, stale_paths, port, storage_dir).await;
     }
 
-    // Stdio mode: try backend, then fallback to standalone
-    let port = env::var("LLMX_PORT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(DEFAULT_SERVE_PORT);
+    // Stdio mode. With `mcp-http` we try to attach to (or auto-start) a shared
+    // REST backend and proxy to it, falling back to a local store. Without
+    // `mcp-http` there is no backend, so we always run a local standalone store.
+    #[cfg(feature = "mcp-http")]
+    let server = {
+        let port = env::var("LLMX_PORT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFAULT_SERVE_PORT);
 
-    let server = if let Some(client) = detect_or_start_backend(port, args.storage_dir.as_ref()).await {
-        tracing::info!("Running in proxy mode (backend on port {port})");
-        // Forward --path args to the backend for indexing
-        if !args.paths.is_empty() {
-            let path_strings: Vec<String> = args.paths.iter()
-                .map(|p| p.canonicalize().unwrap_or_else(|_| p.clone()).to_string_lossy().to_string())
-                .collect();
-            tracing::info!("Forwarding {} --path args to backend", path_strings.len());
-            let input = IndexInput { paths: path_strings, options: None };
-            if let Err(e) = client.index(&input).await {
-                tracing::warn!("Failed to forward --path to backend: {e}");
+        if let Some(client) = detect_or_start_backend(port, args.storage_dir.as_ref()).await {
+            tracing::info!("Running in proxy mode (backend on port {port})");
+            // Forward --path args to the backend for indexing
+            if !args.paths.is_empty() {
+                let path_strings: Vec<String> = args.paths.iter()
+                    .map(|p| p.canonicalize().unwrap_or_else(|_| p.clone()).to_string_lossy().to_string())
+                    .collect();
+                tracing::info!("Forwarding {} --path args to backend", path_strings.len());
+                let input = IndexInput { paths: path_strings, options: None };
+                if let Err(e) = client.index(&input).await {
+                    tracing::warn!("Failed to forward --path to backend: {e}");
+                }
             }
+            LlmxServer::new_remote(client)
+        } else {
+            tracing::info!("Running in standalone mode");
+            let storage_dir = resolve_storage_dir(args.storage_dir);
+            let store = Arc::new(Mutex::new(IndexStore::new(storage_dir)?));
+            let jobs = new_job_store();
+
+            auto_index_paths(&store, &args.paths);
+            spawn_job_cleanup(jobs.clone());
+
+            LlmxServer::new_local(store, jobs)
         }
-        LlmxServer::new_remote(client)
-    } else {
-        tracing::info!("Running in standalone mode");
+    };
+
+    #[cfg(not(feature = "mcp-http"))]
+    let server = {
+        tracing::info!("Running in standalone mode (built without mcp-http)");
         let storage_dir = resolve_storage_dir(args.storage_dir);
         let store = Arc::new(Mutex::new(IndexStore::new(storage_dir)?));
         let jobs = new_job_store();
